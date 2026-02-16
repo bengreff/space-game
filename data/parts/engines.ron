@@ -1,0 +1,183 @@
+// Engine Part Definitions
+
+(
+    parts: [
+        // Small liquid engine - starter engine
+        (
+            id: "engine_small",
+            name: "LV-909 Terrier",
+            description: "A small, efficient vacuum engine",
+            category: Propulsion,
+
+            mass: 0.5,  // tonnes
+            cost: 390,
+
+            size: Small,
+
+            attachments: (
+                top: Some((size: Small)),
+                bottom: None,
+                radial: false,
+            ),
+
+            engine: Some((
+                thrust_vac: 60.0,    // kN
+                thrust_asl: 14.8,    // kN (reduced at sea level)
+                isp_vac: 345.0,      // seconds
+                isp_asl: 85.0,       // seconds
+                throttleable: true,
+            )),
+
+            resources: {},
+        ),
+
+        // Medium liquid engine - workhorse
+        (
+            id: "engine_medium",
+            name: "LV-T45 Swivel",
+            description: "A reliable medium thrust engine with gimbal",
+            category: Propulsion,
+
+            mass: 1.5,
+            cost: 1200,
+
+            size: Medium,
+
+            attachments: (
+                top: Some((size: Medium)),
+                bottom: None,
+                radial: false,
+            ),
+
+            engine: Some((
+                thrust_vac: 215.0,
+                thrust_asl: 167.9,
+                isp_vac: 320.0,
+                isp_asl: 250.0,
+                throttleable: true,
+            )),
+
+            resources: {},
+        ),
+
+        // Large liquid engine - heavy lifter
+        (
+            id: "engine_large",
+            name: "RE-M3 Mainsail",
+            description: "A powerful engine for heavy payloads",
+            category: Propulsion,
+
+            mass: 6.0,
+            cost: 13000,
+
+            size: Large,
+
+            attachments: (
+                top: Some((size: Large)),
+                bottom: None,
+                radial: false,
+            ),
+
+            engine: Some((
+                thrust_vac: 1500.0,
+                thrust_asl: 1379.0,
+                isp_vac: 310.0,
+                isp_asl: 285.0,
+                throttleable: true,
+            )),
+
+            resources: {},
+        ),
+
+        // Nuclear engine - high efficiency
+        (
+            id: "engine_nuclear",
+            name: "LV-N Nerv",
+            description: "Nuclear thermal engine, extremely efficient but heavy",
+            category: Propulsion,
+
+            mass: 3.0,
+            cost: 10000,
+
+            size: Small,
+
+            attachments: (
+                top: Some((size: Small)),
+                bottom: None,
+                radial: false,
+            ),
+
+            engine: Some((
+                thrust_vac: 60.0,
+                thrust_asl: 13.9,
+                isp_vac: 800.0,
+                isp_asl: 185.0,
+                throttleable: true,
+            )),
+
+            resources: {},
+        ),
+
+        // Interstellar drive - for star travel
+        (
+            id: "engine_interstellar",
+            name: "Daedalus Torch Drive",
+            description: "Fusion-powered engine for interstellar travel. Extremely efficient but low thrust.",
+            category: Propulsion,
+
+            mass: 15.0,
+            cost: 500000,
+
+            size: Large,
+            tech_required: "interstellar_propulsion",
+
+            attachments: (
+                top: Some((size: Large)),
+                bottom: None,
+                radial: false,
+            ),
+
+            engine: Some((
+                thrust_vac: 100.0,
+                thrust_asl: 0.0,  // Cannot operate in atmosphere
+                isp_vac: 15000.0, // Extremely high
+                isp_asl: 0.0,
+                throttleable: true,
+            )),
+
+            resources: {},
+        ),
+
+        // Solid rocket booster
+        (
+            id: "srb_small",
+            name: "RT-10 Hammer",
+            description: "A small solid rocket booster. Not throttleable.",
+            category: Propulsion,
+
+            mass: 0.75,   // Dry mass
+            cost: 400,
+
+            size: Small,
+
+            attachments: (
+                top: Some((size: Small)),
+                bottom: None,
+                radial: true,
+            ),
+
+            engine: Some((
+                thrust_vac: 227.0,
+                thrust_asl: 197.9,
+                isp_vac: 195.0,
+                isp_asl: 170.0,
+                throttleable: false,  // SRBs cannot throttle
+            )),
+
+            // SRBs include their own fuel
+            resources: {
+                "solid_fuel": 375.0,
+            },
+        ),
+    ],
+)

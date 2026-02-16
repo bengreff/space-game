@@ -1,0 +1,398 @@
+use crate::bodies::{SolarSystem, G};
+use super::{Ship, BINARY_SEARCH_ITERATIONS};
+
+impl Ship {
+    /// Get velocity of a body in absolute coordinates
+    pub(crate) fn get_body_velocity(&self, body_index: usize, solar_system: &SolarSystem) -> [f64; 2] {
+        let body = &solar_system.bodies[body_index];
+
+        match (body.parent, &body.orbit) {
+            (Some(parent_idx), Some(orbit)) => {
+                let parent_mass = solar_system.bodies[parent_idx].mass;
+
+                let body_pos = solar_system.body_position(body_index);
+                let parent_pos = solar_system.body_position(parent_idx);
+
+                let dx = body_pos[0] - parent_pos[0];
+                let dy = body_pos[1] - parent_pos[1];
+                let r = (dx * dx + dy * dy).sqrt();
+
+                let mu = G * parent_mass;
+                let v_mag = (mu * (2.0 / r - 1.0 / orbit.semi_major_axis)).sqrt();
+
+                let angle = dy.atan2(dx);
+                let v_angle = angle + std::f64::consts::FRAC_PI_2;
+
+                let parent_velocity = self.get_body_velocity(parent_idx, solar_system);
+
+                [
+                    parent_velocity[0] + v_mag * v_angle.cos(),
+                    parent_velocity[1] + v_mag * v_angle.sin(),
+                ]
+            }
+            _ => [0.0, 0.0],
+        }
+    }
+
+    /// Check for SOI transitions when on rails (with precise timing)
+    pub(crate) fn check_soi_transition_on_rails(&mut self, solar_system: &SolarSystem) {
+        let current_body = &solar_system.bodies[self.soi_body];
+        let dist_from_current = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
+
+        // Check if we've exited current SOI
+        if dist_from_current > current_body.soi_radius {
+            if let Some(parent_idx) = current_body.parent {
+                let soi_body_pos = self.get_body_position_at_time(self.soi_body, solar_system.time, solar_system);
+                let soi_body_vel = self.get_body_velocity_at_time(self.soi_body, solar_system.time, solar_system);
+
+                self.rel_position = [
+                    self.rel_position[0] + soi_body_pos[0],
+                    self.rel_position[1] + soi_body_pos[1],
+                ];
+                self.rel_velocity = [
+                    self.rel_velocity[0] + soi_body_vel[0],
+                    self.rel_velocity[1] + soi_body_vel[1],
+                ];
+
+                self.soi_body = parent_idx;
+
+                if let Some(new_orbit) = self.calculate_orbit_with_anomaly(solar_system) {
+                    self.cached_orbit = Some(new_orbit);
+                } else {
+                    self.on_rails = false;
+                }
+
+                println!("SOI: Entered {} SOI", solar_system.bodies[parent_idx].name);
+                return;
+            }
+        }
+
+        // Check if we've entered a child body's SOI
+        // Skip this check if current body has no children (e.g., Moon)
+        let has_children = solar_system.bodies.iter().any(|b| b.parent == Some(self.soi_body));
+        if !has_children {
+            return;
+        }
+
+        if let Some(ref ship_orbit) = self.cached_orbit {
+            let parent = &solar_system.bodies[ship_orbit.parent_idx];
+
+            let intersection = self.find_soi_intersection(
+                &ship_orbit.orbit,
+                ship_orbit.parent_idx,
+                ship_orbit.mean_anomaly,
+                ship_orbit.retrograde,
+                solar_system,
+                solar_system.time,
+            );
+
+            if let Some((intersect_ta, intersect_time, child_idx, true)) = intersection {
+                let child_pos = self.get_body_position_at_time(child_idx, solar_system.time, solar_system);
+                let dx = self.rel_position[0] - child_pos[0];
+                let dy = self.rel_position[1] - child_pos[1];
+                let dist = (dx * dx + dy * dy).sqrt();
+
+                if dist < solar_system.bodies[child_idx].soi_radius {
+                    let intersect_mean_anomaly = self.true_to_mean_anomaly(&ship_orbit.orbit, intersect_ta);
+
+                    let ship_pos_at_cross = ship_orbit.orbit.position_from_mean_anomaly(intersect_mean_anomaly, parent.mass);
+                    let ship_vel_at_cross = ship_orbit.orbit.velocity_from_mean_anomaly_with_direction(
+                        intersect_mean_anomaly,
+                        parent.mass,
+                        ship_orbit.retrograde,
+                    );
+
+                    let exact_cross_time = solar_system.time + intersect_time;
+                    let child_pos_at_cross = self.get_body_position_at_time(child_idx, exact_cross_time, solar_system);
+                    let child_vel_at_cross = self.get_body_velocity_at_time(child_idx, exact_cross_time, solar_system);
+
+                    self.rel_position = [
+                        ship_pos_at_cross[0] - child_pos_at_cross[0],
+                        ship_pos_at_cross[1] - child_pos_at_cross[1],
+                    ];
+                    self.rel_velocity = [
+                        ship_vel_at_cross[0] - child_vel_at_cross[0],
+                        ship_vel_at_cross[1] - child_vel_at_cross[1],
+                    ];
+
+                    self.soi_body = child_idx;
+
+                    if let Some(new_orbit) = self.calculate_orbit_with_anomaly(solar_system) {
+                        self.cached_orbit = Some(new_orbit);
+                    } else {
+                        self.on_rails = false;
+                    }
+
+                    println!("SOI: Entered {} SOI", solar_system.bodies[child_idx].name);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Check for SOI transitions with precise interpolation (physics mode)
+    pub(crate) fn check_soi_transition_precise(
+        &mut self,
+        solar_system: &SolarSystem,
+        prev_rel_pos: [f64; 2],
+        prev_rel_vel: [f64; 2],
+        dt: f64,
+    ) {
+        let current_body = &solar_system.bodies[self.soi_body];
+        let prev_dist = (prev_rel_pos[0].powi(2) + prev_rel_pos[1].powi(2)).sqrt();
+        let curr_dist = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
+
+        // Check for leaving current SOI
+        if curr_dist > current_body.soi_radius && prev_dist <= current_body.soi_radius {
+            if let Some(parent_idx) = current_body.parent {
+                let crossing_fraction = self.find_soi_exit_fraction(
+                    prev_rel_pos,
+                    self.rel_position,
+                    current_body.soi_radius,
+                );
+
+                let crossing_time = solar_system.time + dt * crossing_fraction;
+
+                let cross_rel_pos = [
+                    prev_rel_pos[0] + crossing_fraction * (self.rel_position[0] - prev_rel_pos[0]),
+                    prev_rel_pos[1] + crossing_fraction * (self.rel_position[1] - prev_rel_pos[1]),
+                ];
+                let cross_rel_vel = [
+                    prev_rel_vel[0] + crossing_fraction * (self.rel_velocity[0] - prev_rel_vel[0]),
+                    prev_rel_vel[1] + crossing_fraction * (self.rel_velocity[1] - prev_rel_vel[1]),
+                ];
+
+                let soi_body_pos_at_cross = self.get_body_position_at_time(self.soi_body, crossing_time, solar_system);
+                let soi_body_vel_at_cross = self.get_body_velocity_at_time(self.soi_body, crossing_time, solar_system);
+
+                let new_rel_pos = [
+                    cross_rel_pos[0] + soi_body_pos_at_cross[0],
+                    cross_rel_pos[1] + soi_body_pos_at_cross[1],
+                ];
+                let new_rel_vel = [
+                    cross_rel_vel[0] + soi_body_vel_at_cross[0],
+                    cross_rel_vel[1] + soi_body_vel_at_cross[1],
+                ];
+
+                let remaining_dt = dt * (1.0 - crossing_fraction);
+                self.rel_position = [
+                    new_rel_pos[0] + new_rel_vel[0] * remaining_dt,
+                    new_rel_pos[1] + new_rel_vel[1] * remaining_dt,
+                ];
+                self.rel_velocity = new_rel_vel;
+                self.soi_body = parent_idx;
+
+                println!("SOI: Entered {} SOI", solar_system.bodies[parent_idx].name);
+                return;
+            }
+        }
+
+        // Check for entering child SOI
+        for (i, body) in solar_system.bodies.iter().enumerate() {
+            if body.parent != Some(self.soi_body) {
+                continue;
+            }
+
+            let child_pos_start = self.get_body_position_at_time(i, solar_system.time, solar_system);
+            let child_pos_end = self.get_body_position_at_time(i, solar_system.time + dt, solar_system);
+            let soi_body_pos = solar_system.body_position(self.soi_body);
+
+            let prev_abs_pos = [
+                soi_body_pos[0] + prev_rel_pos[0],
+                soi_body_pos[1] + prev_rel_pos[1],
+            ];
+            let curr_abs_pos = [
+                soi_body_pos[0] + self.rel_position[0],
+                soi_body_pos[1] + self.rel_position[1],
+            ];
+
+            let prev_dx = prev_abs_pos[0] - child_pos_start[0];
+            let prev_dy = prev_abs_pos[1] - child_pos_start[1];
+            let prev_dist_to_child = (prev_dx * prev_dx + prev_dy * prev_dy).sqrt();
+
+            let curr_dx = curr_abs_pos[0] - child_pos_end[0];
+            let curr_dy = curr_abs_pos[1] - child_pos_end[1];
+            let curr_dist_to_child = (curr_dx * curr_dx + curr_dy * curr_dy).sqrt();
+
+            if curr_dist_to_child < body.soi_radius && prev_dist_to_child >= body.soi_radius {
+                let crossing_fraction = self.find_soi_entry_fraction_moving(
+                    prev_abs_pos,
+                    curr_abs_pos,
+                    child_pos_start,
+                    child_pos_end,
+                    body.soi_radius,
+                );
+
+                let crossing_time = solar_system.time + dt * crossing_fraction;
+
+                let child_pos_cross = self.get_body_position_at_time(i, crossing_time, solar_system);
+                let child_vel_cross = self.get_body_velocity_at_time(i, crossing_time, solar_system);
+
+                let cross_rel_pos = [
+                    prev_rel_pos[0] + crossing_fraction * (self.rel_position[0] - prev_rel_pos[0]),
+                    prev_rel_pos[1] + crossing_fraction * (self.rel_position[1] - prev_rel_pos[1]),
+                ];
+                let cross_rel_vel = [
+                    prev_rel_vel[0] + crossing_fraction * (self.rel_velocity[0] - prev_rel_vel[0]),
+                    prev_rel_vel[1] + crossing_fraction * (self.rel_velocity[1] - prev_rel_vel[1]),
+                ];
+
+                let new_rel_pos = [
+                    cross_rel_pos[0] - child_pos_cross[0],
+                    cross_rel_pos[1] - child_pos_cross[1],
+                ];
+                let new_rel_vel = [
+                    cross_rel_vel[0] - child_vel_cross[0],
+                    cross_rel_vel[1] - child_vel_cross[1],
+                ];
+
+                let remaining_dt = dt * (1.0 - crossing_fraction);
+                self.rel_position = [
+                    new_rel_pos[0] + new_rel_vel[0] * remaining_dt,
+                    new_rel_pos[1] + new_rel_vel[1] * remaining_dt,
+                ];
+                self.rel_velocity = new_rel_vel;
+                self.soi_body = i;
+
+                println!("SOI: Entered {} SOI", body.name);
+                return;
+            }
+        }
+    }
+
+    /// Find the fraction of the timestep where ship exits current SOI
+    fn find_soi_exit_fraction(&self, prev_pos: [f64; 2], curr_pos: [f64; 2], soi_radius: f64) -> f64 {
+        let mut lo = 0.0;
+        let mut hi = 1.0;
+
+        for _ in 0..BINARY_SEARCH_ITERATIONS {
+            let mid = (lo + hi) / 2.0;
+            let pos = [
+                prev_pos[0] + mid * (curr_pos[0] - prev_pos[0]),
+                prev_pos[1] + mid * (curr_pos[1] - prev_pos[1]),
+            ];
+            let dist = (pos[0] * pos[0] + pos[1] * pos[1]).sqrt();
+
+            if dist < soi_radius {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+
+        (lo + hi) / 2.0
+    }
+
+    /// Find the fraction of the timestep where ship enters child SOI
+    fn find_soi_entry_fraction_moving(
+        &self,
+        ship_pos_start: [f64; 2],
+        ship_pos_end: [f64; 2],
+        body_pos_start: [f64; 2],
+        body_pos_end: [f64; 2],
+        soi_radius: f64,
+    ) -> f64 {
+        let mut lo = 0.0;
+        let mut hi = 1.0;
+
+        for _ in 0..BINARY_SEARCH_ITERATIONS {
+            let mid = (lo + hi) / 2.0;
+
+            let ship_pos = [
+                ship_pos_start[0] + mid * (ship_pos_end[0] - ship_pos_start[0]),
+                ship_pos_start[1] + mid * (ship_pos_end[1] - ship_pos_start[1]),
+            ];
+
+            let body_pos = [
+                body_pos_start[0] + mid * (body_pos_end[0] - body_pos_start[0]),
+                body_pos_start[1] + mid * (body_pos_end[1] - body_pos_start[1]),
+            ];
+
+            let dx = ship_pos[0] - body_pos[0];
+            let dy = ship_pos[1] - body_pos[1];
+            let dist = (dx * dx + dy * dy).sqrt();
+
+            if dist >= soi_radius {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+
+        (lo + hi) / 2.0
+    }
+
+    /// Get position of a body relative to another body
+    pub(crate) fn get_body_position_relative(&self, body_idx: usize, relative_to: usize, solar_system: &SolarSystem) -> [f64; 2] {
+        let body_pos = solar_system.body_position(body_idx);
+        let relative_pos = solar_system.body_position(relative_to);
+        [body_pos[0] - relative_pos[0], body_pos[1] - relative_pos[1]]
+    }
+
+    /// Get body position at a future time, relative to its parent
+    pub(crate) fn get_body_position_at_time(&self, body_idx: usize, time: f64, solar_system: &SolarSystem) -> [f64; 2] {
+        let body = &solar_system.bodies[body_idx];
+        if let (Some(parent_idx), Some(ref orbit)) = (body.parent, &body.orbit) {
+            let parent = &solar_system.bodies[parent_idx];
+            orbit.position_at(time, parent.mass)
+        } else {
+            solar_system.body_position(body_idx)
+        }
+    }
+
+    /// Get body velocity at a future time, relative to its parent
+    pub(crate) fn get_body_velocity_at_time(&self, body_idx: usize, time: f64, solar_system: &SolarSystem) -> [f64; 2] {
+        let body = &solar_system.bodies[body_idx];
+        if let (Some(parent_idx), Some(ref orbit)) = (body.parent, &body.orbit) {
+            let parent = &solar_system.bodies[parent_idx];
+            let mean_anomaly = orbit.mean_anomaly_at(time, parent.mass);
+            orbit.velocity_from_mean_anomaly(mean_anomaly, parent.mass)
+        } else {
+            self.get_body_velocity(body_idx, solar_system)
+        }
+    }
+
+    /// Convert state vectors when entering a child body's SOI
+    pub(crate) fn convert_to_child_frame(
+        &self,
+        pos: [f64; 2],
+        vel: [f64; 2],
+        _old_parent_idx: usize,
+        new_parent_idx: usize,
+        time: f64,
+        solar_system: &SolarSystem,
+    ) -> ([f64; 2], [f64; 2], bool) {
+        let child_pos = self.get_body_position_at_time(new_parent_idx, time, solar_system);
+        let child_vel = self.get_body_velocity_at_time(new_parent_idx, time, solar_system);
+
+        let new_pos = [pos[0] - child_pos[0], pos[1] - child_pos[1]];
+        let new_vel = [vel[0] - child_vel[0], vel[1] - child_vel[1]];
+
+        let h = new_pos[0] * new_vel[1] - new_pos[1] * new_vel[0];
+        let retrograde = h < 0.0;
+
+        (new_pos, new_vel, retrograde)
+    }
+
+    /// Convert state vectors when exiting to parent body's SOI
+    pub(crate) fn convert_to_parent_frame(
+        &self,
+        pos: [f64; 2],
+        vel: [f64; 2],
+        old_parent_idx: usize,
+        _new_parent_idx: usize,
+        time: f64,
+        solar_system: &SolarSystem,
+    ) -> ([f64; 2], [f64; 2], bool) {
+        let old_parent_pos = self.get_body_position_at_time(old_parent_idx, time, solar_system);
+        let old_parent_vel = self.get_body_velocity_at_time(old_parent_idx, time, solar_system);
+
+        let new_pos = [pos[0] + old_parent_pos[0], pos[1] + old_parent_pos[1]];
+        let new_vel = [vel[0] + old_parent_vel[0], vel[1] + old_parent_vel[1]];
+
+        let h = new_pos[0] * new_vel[1] - new_pos[1] * new_vel[0];
+        let retrograde = h < 0.0;
+
+        (new_pos, new_vel, retrograde)
+    }
+}

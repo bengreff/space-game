@@ -1,0 +1,240 @@
+// Home Star System - Scaled down (similar to Kerbol system)
+// All distances and sizes at ~1/10 real scale for gameplay
+
+(
+    name: "Kerbol System",
+
+    bodies: [
+        // Central star
+        (
+            id: 0,
+            name: "Kerbol",
+            parent: None,
+            body_type: Star,
+
+            physical: (
+                mass: 1.756e28,        // kg
+                radius: 261_600_000.0, // m
+                rotation_period: 432_000.0,  // seconds
+                surface_gravity: 17.1,
+            ),
+
+            orbit: None,  // Stars don't orbit (in this system)
+
+            atmosphere: None,
+
+            surface_color: (1.0, 0.9, 0.3),
+        ),
+
+        // Inner rocky planet
+        (
+            id: 1,
+            name: "Moho",
+            parent: Some(0),
+            body_type: Planet,
+
+            physical: (
+                mass: 2.526e21,
+                radius: 250_000.0,
+                rotation_period: 1_210_000.0,
+                surface_gravity: 2.7,
+            ),
+
+            orbit: Some((
+                semi_major_axis: 5_263_138_304.0,
+                eccentricity: 0.2,
+                argument_of_periapsis: 0.25,
+                mean_anomaly_at_epoch: 3.14,
+                epoch: 0.0,
+            )),
+
+            atmosphere: None,
+
+            surface_color: (0.5, 0.35, 0.25),
+        ),
+
+        // Venus-like planet
+        (
+            id: 2,
+            name: "Eve",
+            parent: Some(0),
+            body_type: Planet,
+
+            physical: (
+                mass: 1.224e23,
+                radius: 700_000.0,
+                rotation_period: 80_500.0,
+                surface_gravity: 16.7,
+            ),
+
+            orbit: Some((
+                semi_major_axis: 9_832_684_544.0,
+                eccentricity: 0.01,
+                argument_of_periapsis: 0.0,
+                mean_anomaly_at_epoch: 0.9,
+                epoch: 0.0,
+            )),
+
+            atmosphere: Some((
+                surface_pressure: 506_625.0,
+                scale_height: 7_000.0,
+                drag_coefficient: 0.2,
+            )),
+
+            surface_color: (0.4, 0.2, 0.5),
+        ),
+
+        // Home planet
+        (
+            id: 3,
+            name: "Kerbin",
+            parent: Some(0),
+            body_type: Planet,
+
+            physical: (
+                mass: 5.292e22,
+                radius: 600_000.0,
+                rotation_period: 21_549.0,
+                surface_gravity: 9.81,
+            ),
+
+            orbit: Some((
+                semi_major_axis: 13_599_840_256.0,
+                eccentricity: 0.0,
+                argument_of_periapsis: 0.0,
+                mean_anomaly_at_epoch: 0.0,
+                epoch: 0.0,
+            )),
+
+            atmosphere: Some((
+                surface_pressure: 101_325.0,
+                scale_height: 5_600.0,
+                drag_coefficient: 0.2,
+            )),
+
+            surface_color: (0.2, 0.5, 0.3),
+
+            is_home_world: true,
+        ),
+
+        // Kerbin's moon
+        (
+            id: 4,
+            name: "Mun",
+            parent: Some(3),
+            body_type: Moon,
+
+            physical: (
+                mass: 9.76e20,
+                radius: 200_000.0,
+                rotation_period: 138_984.0,
+                surface_gravity: 1.63,
+            ),
+
+            orbit: Some((
+                semi_major_axis: 12_000_000.0,
+                eccentricity: 0.0,
+                argument_of_periapsis: 0.0,
+                mean_anomaly_at_epoch: 1.7,
+                epoch: 0.0,
+            )),
+
+            atmosphere: None,
+
+            surface_color: (0.5, 0.5, 0.5),
+        ),
+
+        // Kerbin's small moon
+        (
+            id: 5,
+            name: "Minmus",
+            parent: Some(3),
+            body_type: Moon,
+
+            physical: (
+                mass: 2.646e19,
+                radius: 60_000.0,
+                rotation_period: 40_400.0,
+                surface_gravity: 0.491,
+            ),
+
+            orbit: Some((
+                semi_major_axis: 47_000_000.0,
+                eccentricity: 0.0,
+                argument_of_periapsis: 0.0,
+                mean_anomaly_at_epoch: 0.0,
+                epoch: 0.0,
+            )),
+
+            atmosphere: None,
+
+            surface_color: (0.6, 0.7, 0.65),
+        ),
+
+        // Mars-like planet
+        (
+            id: 6,
+            name: "Duna",
+            parent: Some(0),
+            body_type: Planet,
+
+            physical: (
+                mass: 4.515e21,
+                radius: 320_000.0,
+                rotation_period: 65_518.0,
+                surface_gravity: 2.94,
+            ),
+
+            orbit: Some((
+                semi_major_axis: 20_726_155_264.0,
+                eccentricity: 0.051,
+                argument_of_periapsis: 0.0,
+                mean_anomaly_at_epoch: 0.0,
+                epoch: 0.0,
+            )),
+
+            atmosphere: Some((
+                surface_pressure: 6_755.0,
+                scale_height: 3_000.0,
+                drag_coefficient: 0.2,
+            )),
+
+            surface_color: (0.7, 0.4, 0.3),
+        ),
+
+        // Duna's moon
+        (
+            id: 7,
+            name: "Ike",
+            parent: Some(6),
+            body_type: Moon,
+
+            physical: (
+                mass: 2.782e20,
+                radius: 130_000.0,
+                rotation_period: 65_518.0,
+                surface_gravity: 1.1,
+            ),
+
+            orbit: Some((
+                semi_major_axis: 3_200_000.0,
+                eccentricity: 0.03,
+                argument_of_periapsis: 0.0,
+                mean_anomaly_at_epoch: 1.7,
+                epoch: 0.0,
+            )),
+
+            atmosphere: None,
+
+            surface_color: (0.4, 0.35, 0.35),
+        ),
+    ],
+
+    // Default starting location
+    start: (
+        body: 3,  // Kerbin
+        latitude: 0.0,
+        longitude: -74.5,  // KSC longitude
+        altitude: 100.0,
+    ),
+)

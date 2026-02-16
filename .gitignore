@@ -1,0 +1,25 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Game saves and user data
+/saves/
+/blueprints/user/
+
+# Build artifacts
+*.log
+
+# Editor backups
+*.bak
