@@ -59,30 +59,7 @@
 
 ---
 
-## 3. Map View
-
-### MVP
-- Toggle between flight view and map view
-- Show current vessel orbit (ellipse/hyperbola)
-- Zoom levels: vessel → planet → system
-- Single maneuver node with prograde/retrograde handles
-- Predicted trajectory after maneuver
-- Body selection/focus (click to center camera)
-
-### Later
-- Multiple sequential maneuver nodes
-- Encounter prediction (show SOI entry points)
-- Interstellar map layer (system-to-system view)
-- Normal/anti-normal maneuver handles
-- Radial in/out maneuver handles
-
-### Never
-- 3D orbit visualization
-- Porkchop plot generation
-
----
-
-## 4. Celestial Bodies
+## 3. Celestial Bodies
 
 ### MVP
 - Data-driven body definitions (loaded from config files)
@@ -105,7 +82,7 @@
 
 ---
 
-## 5. Planet Scaling
+## 4. Planet Scaling
 
 ### MVP
 - Single global scale factor (config value)
@@ -124,7 +101,7 @@
 
 ---
 
-## 6. Interstellar Travel
+## 5. Interstellar Travel
 
 ### MVP
 - High-ISP engine type (fusion/torch drive, Isp > 10000s)
@@ -145,7 +122,7 @@
 
 ---
 
-## 7. Colonies
+## 6. Colonies
 
 ### MVP
 - Deployable colony module (single part, landed vessel becomes colony)
@@ -169,7 +146,7 @@
 
 ---
 
-## 8. Crew System
+## 7. Crew System
 
 ### MVP
 - Crew count: single integer per vessel
@@ -191,7 +168,7 @@
 
 ---
 
-## 9. Spaceplanes
+## 8. Spaceplanes
 
 ### MVP
 - Wing parts: have lift coefficient property
@@ -213,7 +190,7 @@
 
 ---
 
-## 10. Career Mode (Groundwork Only)
+## 9. Career Mode (Groundwork Only)
 
 ### MVP
 - Tech tree: data structure with nodes and dependencies
@@ -236,7 +213,7 @@
 
 ---
 
-## 11. Parts Suite
+## 10. Parts Suite
 
 ### MVP Parts (~25 total)
 
@@ -285,7 +262,7 @@
 
 ---
 
-## 12. Resources
+## 11. Resources
 
 ### MVP Resources
 
@@ -306,12 +283,11 @@ Combine Fuel + Oxidizer into single "Propellant" resource to reduce complexity.
 
 ---
 
-## 13. UI Requirements
+## 12. UI Requirements
 
 ### MVP
 - Flight HUD: velocity, altitude, fuel, throttle
 - Navball or heading indicator
-- Map view controls
 - Part info tooltips in editor
 - Resource bars
 - Staging list
@@ -326,7 +302,7 @@ Combine Fuel + Oxidizer into single "Propellant" resource to reduce complexity.
 
 ---
 
-## 14. Save/Load
+## 13. Save/Load
 
 ### MVP
 - Save game state to file

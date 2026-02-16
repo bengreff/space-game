@@ -245,18 +245,37 @@ impl SaveFile {
 
 ```
 src/
-├── main.rs                 # Entry point, event loop, render coordination
+├── main.rs                 # Entry point, event loop, game state
+│                           # Keyboard/mouse input handling
+│                           # Time warp control with auto-reduction
 ├── lib.rs                  # Library root, re-exports
 │
 ├── bodies.rs               # CelestialBody, Orbit, SolarSystem
 │                           # Keplerian orbital mechanics
-│                           # Full solar system with 20 bodies
+│                           # Sun, Earth, Moon (real-life scale)
+│
+├── ship/                   # Ship module
+│   ├── mod.rs              # Ship struct, physics update, gravity
+│   │                       # Velocity Verlet integration
+│   │                       # Thrust and rotation handling
+│   ├── orbit.rs            # Orbital calculations from state vectors
+│   │                       # State → orbital elements conversion
+│   │                       # Handles elliptical and hyperbolic orbits
+│   ├── patched_conics.rs   # Trajectory prediction across SOIs
+│   │                       # Predicts SOI entries/exits
+│   │                       # Optimized for bodies without children
+│   └── soi.rs              # SOI transition detection and execution
+│                           # Frame conversion between bodies
+│                           # On-rails time warp mode
 │
 └── render/
-    ├── mod.rs              # Re-exports RenderState, OrbitRenderData
-    ├── state.rs            # RenderState, Camera, body/orbit rendering
-    │                       # wgpu setup, MSAA, egui integration
-    │                       # Hit testing, hover detection
+    ├── mod.rs              # Re-exports
+    ├── camera.rs           # Camera struct, pan/zoom, body tracking
+    ├── state.rs            # RenderState, wgpu setup, MSAA
+    │                       # Body, orbit, ship rendering
+    │                       # HUD with egui (velocity, altitude, orbit info)
+    ├── types.rs            # OrbitRenderData, TrajectorySegment
+    │                       # Render data structures
     └── shader.wgsl         # Vertex/fragment shaders
                             # Camera-relative coordinate transform
 ```
@@ -397,33 +416,34 @@ fn check_soi_transition(vessel: &Vessel, bodies: &BodyRegistry, time: f64) -> Op
 
 ```rust
 const WARP_LEVELS: &[f64] = &[
-    1.0,        // Real-time
-    5.0,
+    1.0,           // Real-time
     10.0,
-    50.0,
     100.0,
     1_000.0,
     10_000.0,
-    100_000.0,   // Interplanetary
-    1_000_000.0, // Interstellar
+    100_000.0,
+    1_000_000.0,
+    10_000_000.0,
+    100_000_000.0,
+    1_000_000_000.0,  // 1 billion x - interstellar
 ];
+```
 
-fn max_warp_for_situation(vessel: &Vessel) -> usize {
-    match vessel.state {
-        VesselState::Flying { .. } => 0,     // Real-time only when in atmo
-        VesselState::Landed { .. } => 7,     // Up to 100,000x
-        VesselState::Orbiting { body, .. } => {
-            let altitude = vessel.altitude_above(body);
-            let soi = bodies.get(body).soi_radius;
-            if altitude < soi * 0.1 {
-                4  // Close to body, limit warp
-            } else {
-                8  // Full warp available
-            }
-        }
-        _ => 0,
-    }
-}
+### Time Warp Auto-Reduction
+
+When approaching an SOI boundary:
+- If time to boundary < 0.5 seconds (at current warp)
+- And current warp > 1000x
+- Automatically reduce to highest safe warp level
+
+This prevents overshooting SOI transitions at high warp.
+
+### On-Rails Mode
+
+At high time warp (>1x), the ship uses on-rails propagation:
+- Position calculated from orbital elements + elapsed time
+- No numerical integration (avoids accumulated error)
+- SOI transitions detected analytically from orbit parameters
 ```
 
 ---

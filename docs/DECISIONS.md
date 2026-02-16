@@ -156,38 +156,25 @@ Record significant technical and design decisions with rationale. This helps mai
 
 ---
 
-## DEC-008: 1/4 Scale Physics (KSP-Style)
+## DEC-008: Real-Scale Physics
 
-**Date**: 2026-02-15
-**Status**: Accepted
+**Date**: 2026-02-16
+**Status**: Accepted (supersedes previous 1/4 scale decision)
 
-**Context**: Real-scale solar system requires ~9.4 km/s to reach Earth orbit, which is challenging for gameplay. KSP uses ~1/10 scale to reduce this to ~3.4 km/s.
+**Context**: Initially considered 1/4 scale physics to reduce delta-v requirements, similar to KSP's approach.
 
-**Decision**: Use true 1/4 scale physics with PHYSICS_SCALE = 0.25 in bodies.rs.
+**Decision**: Use real-scale physics with actual values for all celestial bodies.
 
 **Rationale**:
-- Delta-v requirements are halved (~4.7 km/s to Earth orbit)
-- Surface gravity remains ~1g (mass scaled by 1/16, radius by 1/4)
-- Difficulty is between KSP (~3.4 km/s) and real life (~9.4 km/s)
-- Orbital distances remain real (familiar solar system layout)
-- Visual BODY_SCALE = 4.0 restores apparent body sizes
+- More educational and accurate simulation
+- Simplified solar system (Sun, Earth, Moon only) reduces complexity
+- Players can appreciate real orbital mechanics
+- LEO velocity of ~7.8 km/s matches real-life data
 
 **Implementation**:
-- Body radii: real_radius × 0.25
-- Body masses: real_mass × 0.0625 (0.25²)
-- Orbital semi-major axes: real_sma × 0.25
-- Surface gravity: g = GM/r² → unchanged (both M and r² scale by 1/16)
-- Orbital velocity: v = √(GM/r) → v × 0.5 (half of real)
-- Orbital periods: T = 2π√(a³/GM) → T × 0.5 (half of real)
-- Visual BODY_SCALE = 4.0 in main.rs for display
-
-**Physics Results**:
-| Property | Real | 1/4 Scale |
-|----------|------|-----------|
-| Earth LEO velocity | 7.8 km/s | 3.9 km/s |
-| Earth escape velocity | 11.2 km/s | 5.6 km/s |
-| Moon orbital period | 27.3 days | 13.6 days |
-| Earth orbital period | 365 days | 182 days |
+- All body radii, masses, and orbital distances are real values
+- Gravitational constant G = 6.674e-11 m³/(kg·s²)
+- Simplified to Sun, Earth, Moon for Phase 1
 
 ---
 
@@ -274,6 +261,75 @@ Record significant technical and design decisions with rationale. This helps mai
 - egui rendered in separate pass after main geometry (no MSAA)
 - Body labels shown on hover using painter.text()
 - Screen coordinates converted from world via camera transform
+
+---
+
+## DEC-013: Velocity Verlet Integration
+
+**Date**: 2026-02-16
+**Status**: Accepted
+
+**Context**: Need numerical integration for active ship physics (thrust applied).
+
+**Decision**: Use Velocity Verlet integration instead of RK4.
+
+**Rationale**:
+- Symplectic integrator preserves orbital energy better
+- Second-order accuracy with simple implementation
+- No intermediate velocity storage needed
+- Widely used in orbital mechanics simulations
+
+**Implementation**:
+- Position update: x += v*dt + 0.5*a*dt²
+- New acceleration: a_new from gravity at new position
+- Velocity update: v += 0.5*(a + a_new)*dt
+
+---
+
+## DEC-014: On-Rails Time Warp
+
+**Date**: 2026-02-16
+**Status**: Accepted
+
+**Context**: High time warp (up to 1 billion x) causes accumulated integration error and performance issues.
+
+**Decision**: Use on-rails propagation during time warp (>1x).
+
+**Rationale**:
+- Keplerian orbits are exact (no numerical error)
+- O(1) computation regardless of warp factor
+- Position calculated analytically from orbital elements + elapsed time
+- Switch back to active physics when thrust applied
+
+**Implementation**:
+- Ship stores orbital elements when entering on-rails mode
+- Position derived from: mean_anomaly = M0 + n*t, solve Kepler, get position
+- SOI transitions detected analytically from orbit parameters
+- Auto-reduce warp when approaching SOI boundary (< 0.5 seconds)
+
+---
+
+## DEC-015: Patched Conics Trajectory Prediction
+
+**Date**: 2026-02-16
+**Status**: Accepted
+
+**Context**: Players need to see their future trajectory, including SOI transitions.
+
+**Decision**: Implement patched conics trajectory prediction showing multiple segments across SOI boundaries.
+
+**Rationale**:
+- Shows complete trajectory through multiple SOIs
+- Each segment has its own orbital elements
+- Matches KSP's trajectory display approach
+- Enables maneuver planning in future phases
+
+**Implementation**:
+- Predict current orbit in current SOI
+- Find SOI entry/exit points analytically
+- On SOI transition: convert frame, recalculate orbit
+- Recursively predict future segments
+- Render each segment in its parent body's frame
 
 ---
 

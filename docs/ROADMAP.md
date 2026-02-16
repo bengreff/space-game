@@ -26,32 +26,29 @@
 - [x] Orbital elements struct
 - [x] Kepler equation solver (mean → true anomaly)
 - [x] Position from orbital elements and time
-- [ ] Velocity from orbital elements and time
-- [ ] State vectors ↔ orbital elements conversion
+- [x] Velocity from orbital elements and time
+- [x] State vectors ↔ orbital elements conversion
 - [x] Basic SOI detection
 
 ### Week 5-6: Basic Flight
-- [ ] Vessel struct with position/velocity
-- [ ] Numerical integration (RK4 or similar)
-- [ ] Gravity calculation
-- [ ] Thrust application
-- [ ] Basic time warp (variable timestep)
-- [ ] Simple HUD with egui (velocity, altitude)
+- [x] Vessel struct with position/velocity
+- [x] Numerical integration (Velocity Verlet)
+- [x] Gravity calculation
+- [x] Thrust application
+- [x] Time warp (on-rails, up to 1 billion x)
+- [x] Auto time warp reduction near SOI boundaries
+- [x] Simple HUD with egui (velocity, altitude, orbital info)
+- [x] Patched conics trajectory prediction
+- [x] SOI transitions with frame conversion
+- [x] Hyperbolic orbit rendering (prograde and retrograde)
 
-**Phase 1 Milestone**: A point-mass vessel can orbit a planet, apply thrust, and transfer to another body.
+**Phase 1 Milestone**: A point-mass vessel can orbit a planet, apply thrust, and transfer to another body. ✓ COMPLETE
 
 ---
 
 ## Phase 2: Playable Foundation (Weeks 7-14)
 
-### Week 7-8: Map View
-- [ ] Flight view / map view toggle
-- [x] Render orbit as ellipse/hyperbola
-- [x] Multiple zoom levels (vessel → system scale)
-- [x] Click to select/focus celestial body (double-click)
-- [x] Camera follows focused body
-
-### Week 9-10: Maneuver Planning
+### Week 7-8: Maneuver Planning
 - [ ] Place maneuver node on orbit
 - [ ] Maneuver node: prograde/retrograde delta-v
 - [ ] Predict trajectory after maneuver burn
@@ -197,11 +194,10 @@
 
 ## Current Status
 
-**Phase**: 1 (Core Engine)
-**Week**: ~3
-**Last Updated**: 2026-02-15
+**Phase**: 1 (Core Engine) - COMPLETE
+**Last Updated**: 2026-02-16
 
-### Completed
+### Phase 1 Completed Features
 - [x] Project scope defined
 - [x] Architecture planned
 - [x] Documentation structure created
@@ -215,24 +211,28 @@
 - [x] Orbital elements struct
 - [x] Kepler equation solver (mean → true anomaly via Newton-Raphson)
 - [x] Position from orbital elements and time
-- [x] Basic SOI detection (calculated but not yet used for transitions)
-- [x] Full solar system: Sun, 8 planets, Earth's Moon, Mars's moons, Jupiter's 4 Galilean moons, Saturn's 4 largest moons
+- [x] Velocity from orbital elements and time
+- [x] State vectors ↔ orbital elements conversion
+- [x] Basic SOI detection and transitions
+- [x] Simplified solar system: Sun, Earth, Moon (real-life scale)
 - [x] Double-click to focus/track celestial body
 - [x] Camera follows focused body smoothly
-- [x] Render orbit as ellipse (with eccentricity and argument of periapsis)
-- [x] Indicator circles for small bodies when zoomed out
-- [x] Hover labels using egui
-- [x] Conditional orbit line visibility based on body pixel size
+- [x] Render orbit as ellipse/hyperbola (with eccentricity and argument of periapsis)
+- [x] Flyable spaceship starting in Low Earth Orbit
+- [x] Ship controls (WASDZ/X for thrust/rotation)
+- [x] Velocity Verlet physics integration
+- [x] Gravity calculation from parent body
+- [x] Patched conics trajectory prediction across SOI boundaries
+- [x] SOI transitions with precise frame conversion
+- [x] On-rails time warp up to 1 billion x
+- [x] Auto time warp reduction near SOI boundaries (< 0.5 seconds)
+- [x] Hyperbolic orbit rendering (prograde and retrograde)
+- [x] HUD with velocity, altitude, throttle, orbital info
 
-### In Progress
-- [ ] Velocity from orbital elements and time
-- [ ] State vectors ↔ orbital elements conversion
-
-### Next Steps
-1. Implement velocity calculation from orbital elements
-2. Add vessel struct with position/velocity
-3. Add numerical integration (RK4)
-4. Add thrust application
+### Next Phase: Phase 2 (Playable Foundation)
+1. Maneuver node system
+2. Vehicle editor
+3. Core game loop (launch, staging, fuel, save/load)
 
 ---
 

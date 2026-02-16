@@ -1,19 +1,24 @@
 # Space Game
 
-A 2D space exploration game combining Spaceflight Simulator's accessible mechanics with KSP 2's scope: multiple star systems, colonies, and interstellar travel.
+A 2D space exploration game with realistic orbital mechanics, inspired by Kerbal Space Program and Spaceflight Simulator.
 
 ## Project Status
 
-**Phase**: 1 - Core Engine
-**Current**: Solar system visualization with orbital mechanics complete
+**Phase**: 1 - Core Engine (Complete)
+**Current**: Flyable ship with patched conics trajectory prediction
 
 ### What Works
-- Full solar system: Sun, 8 planets, and 12 major moons
-- 1/4 scale physics (KSP-style): ~4.7 km/s to Earth orbit
-- Accurate Keplerian orbital mechanics (half real orbital periods)
-- Pan/zoom camera with smooth body tracking
-- Double-click to focus and follow any body
-- Orbit lines with conditional visibility
+- Flyable spaceship in Low Earth Orbit
+- Real-scale solar system (Sun, Earth, Moon)
+- Accurate Keplerian orbital mechanics
+- Velocity Verlet physics integration
+- Patched conics trajectory prediction across SOI boundaries
+- SOI transitions with precise frame conversion
+- On-rails time warp up to 1 billion x
+- Auto time warp reduction near SOI boundaries
+- Hyperbolic orbit rendering (prograde and retrograde)
+- HUD with velocity, altitude, throttle, orbital info
+- Pan/zoom camera with body tracking
 
 ## Quick Start
 
@@ -30,10 +35,17 @@ cargo run
 
 | Action | Input |
 |--------|-------|
+| Increase throttle | W |
+| Decrease throttle | S |
+| Full throttle | Z |
+| Cut throttle | X |
+| Rotate left | A |
+| Rotate right | D |
+| Focus on ship | ` (backtick) |
 | Pan camera | Left mouse drag |
 | Zoom | Scroll wheel |
 | Focus on body | Double-click |
-| Exit | Close window |
+| Time warp | Click buttons at top |
 
 ## Documentation
 
@@ -49,20 +61,29 @@ cargo run
 
 ```
 space-game/
-├── src/               # Rust source code
-├── data/              # Game data files (RON format)
-│   ├── bodies/        # Celestial body definitions
-│   └── parts/         # Part definitions
-├── docs/              # Documentation
-│   └── features/      # Detailed feature specs
-├── Cargo.toml         # Rust dependencies
-└── README.md
+├── src/
+│   ├── main.rs           # Entry point, game loop
+│   ├── lib.rs            # Library root
+│   ├── bodies.rs         # Celestial bodies, orbits
+│   ├── ship/             # Ship module
+│   │   ├── mod.rs        # Ship struct, physics
+│   │   ├── orbit.rs      # Orbital calculations
+│   │   ├── patched_conics.rs  # Trajectory prediction
+│   │   └── soi.rs        # SOI transitions
+│   └── render/           # Rendering module
+│       ├── mod.rs        # Re-exports
+│       ├── camera.rs     # Camera system
+│       ├── state.rs      # Render state, wgpu
+│       └── types.rs      # Render data types
+├── data/                 # Game data files (RON)
+├── docs/                 # Documentation
+└── Cargo.toml
 ```
 
 ## Tech Stack
 
 - **Language**: Rust
-- **Rendering**: wgpu + lyon
+- **Rendering**: wgpu (triangle fans, 4x MSAA)
 - **Windowing**: winit
 - **UI**: egui
 - **Serialization**: serde + ron
