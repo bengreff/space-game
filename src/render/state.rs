@@ -1195,43 +1195,56 @@ impl RenderState {
                             }
                         }
 
-                        // Draw periapsis marker for hyperbolic trajectory
-                        // Periapsis is at true anomaly = 0
-                        let a_abs = segment.semi_major_axis.abs();
-                        let p = a_abs * (e * e - 1.0);
-                        let pe_r = p / (1.0 + e); // Distance at periapsis
-                        let pe_x = segment.parent_x + pe_r * arg_peri.cos();
-                        let pe_y = segment.parent_y + pe_r * arg_peri.sin();
+                        // Check if periapsis (true anomaly = 0) will be reached
+                        // For hyperbolic orbits, the ship travels monotonically from start_ta to end_ta
+                        // Prograde: ta increases, so Pe is reached if start_ta <= 0 <= end_ta
+                        // Retrograde: ta decreases, so Pe is reached if start_ta >= 0 >= end_ta
+                        let pe_will_be_reached = if segment.retrograde {
+                            start_ta >= 0.0 && end_ta <= 0.0
+                        } else {
+                            start_ta <= 0.0 && end_ta >= 0.0
+                        };
 
-                        // Use dimmer color for future segments
-                        let alpha = if segment.is_first_segment { 1.0 } else { 0.6 };
-                        let pe_color = [0.3, 0.8, 1.0, alpha];
+                        // Only draw periapsis marker if it will be reached
+                        if pe_will_be_reached {
+                            // Draw periapsis marker for hyperbolic trajectory
+                            // Periapsis is at true anomaly = 0
+                            let a_abs = segment.semi_major_axis.abs();
+                            let p = a_abs * (e * e - 1.0);
+                            let pe_r = p / (1.0 + e); // Distance at periapsis
+                            let pe_x = segment.parent_x + pe_r * arg_peri.cos();
+                            let pe_y = segment.parent_y + pe_r * arg_peri.sin();
 
-                        let pe_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex {
-                            position: [(pe_x - cam_x) as f32, (pe_y - cam_y) as f32],
-                            color: pe_color,
-                        });
-                        for i in 0..marker_segments {
-                            let angle = (i as f64 / marker_segments as f64) * std::f64::consts::TAU;
+                            // Use dimmer color for future segments
+                            let alpha = if segment.is_first_segment { 1.0 } else { 0.6 };
+                            let pe_color = [0.3, 0.8, 1.0, alpha];
+
+                            let pe_base = all_vertices.len() as u32;
                             all_vertices.push(Vertex {
-                                position: [
-                                    (pe_x + marker_radius * angle.cos() - cam_x) as f32,
-                                    (pe_y + marker_radius * angle.sin() - cam_y) as f32,
-                                ],
+                                position: [(pe_x - cam_x) as f32, (pe_y - cam_y) as f32],
                                 color: pe_color,
                             });
-                        }
-                        for i in 0..marker_segments {
-                            all_indices.push(pe_base);
-                            all_indices.push(pe_base + 1 + i);
-                            all_indices.push(pe_base + 1 + (i + 1) % marker_segments);
-                        }
+                            for i in 0..marker_segments {
+                                let angle = (i as f64 / marker_segments as f64) * std::f64::consts::TAU;
+                                all_vertices.push(Vertex {
+                                    position: [
+                                        (pe_x + marker_radius * angle.cos() - cam_x) as f32,
+                                        (pe_y + marker_radius * angle.sin() - cam_y) as f32,
+                                    ],
+                                    color: pe_color,
+                                });
+                            }
+                            for i in 0..marker_segments {
+                                all_indices.push(pe_base);
+                                all_indices.push(pe_base + 1 + i);
+                                all_indices.push(pe_base + 1 + (i + 1) % marker_segments);
+                            }
 
-                        // Store position and altitude for UI hover
-                        // pe_r is in scaled units, convert to meters then subtract body radius
-                        let pe_altitude = (pe_r / segment.render_scale) - segment.parent_body_radius;
-                        self.pe_markers.push(([pe_x - cam_x, pe_y - cam_y], pe_altitude));
+                            // Store position and altitude for UI hover
+                            // pe_r is in scaled units, convert to meters then subtract body radius
+                            let pe_altitude = (pe_r / segment.render_scale) - segment.parent_body_radius;
+                            self.pe_markers.push(([pe_x - cam_x, pe_y - cam_y], pe_altitude));
+                        }
 
                         continue; // Skip ellipse drawing code
                     }

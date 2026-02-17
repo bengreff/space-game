@@ -190,10 +190,13 @@ impl Orbit {
 /// Gravitational constant
 pub const G: f64 = 6.67430e-11; // m³/(kg·s²)
 
-/// Physics scale factor - 1.0 means real-life values
+/// Physics scale factor for 1:1 real-scale solar system simulation
+/// At PHYSICS_SCALE = 1.0, all values match real life exactly:
+/// - Earth radius: 6,371 km
 /// - Earth LEO velocity: ~7.8 km/s
 /// - Moon distance: ~384,400 km
-/// - All orbital mechanics match reality
+/// - Earth-Sun distance: ~150 million km (1 AU)
+/// - All masses, radii, and orbital parameters are real values
 pub const PHYSICS_SCALE: f64 = 1.0;
 
 /// Calculate sphere of influence radius

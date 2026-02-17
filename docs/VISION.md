@@ -2,7 +2,7 @@
 
 ## One-Line Summary
 
-A 2D space exploration game combining Spaceflight Simulator's accessible mechanics with KSP 2's scope: multiple star systems, colonies, and interstellar travel.
+A 2D space exploration game with **1:1 real-scale** orbital mechanics, combining Spaceflight Simulator's accessible interface with KSP 2's scope: multiple star systems, colonies, and interstellar travel.
 
 ## Core Experience
 
@@ -40,7 +40,10 @@ Flexible part system that rewards creative engineering.
 - **Individual named crew**: Tracking crew count only, not individuals
 - **Procedural planet generation**: Fixed/configured celestial bodies
 - **Multiplayer**: Single-player only
-- **Realistic scale by default**: Scaled-down systems (with scale multiplier option)
+
+## Design Decisions
+
+- **1:1 Real Scale**: Unlike KSP's 1/10 scale, all physics use real-world values (Earth LEO = 7.8 km/s, not 3.4 km/s)
 
 ## Inspiration Sources
 

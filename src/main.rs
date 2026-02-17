@@ -11,14 +11,15 @@ use space_game::bodies::SolarSystem;
 use space_game::render::{RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, OrbitSegmentData};
 use space_game::ship::{Ship, ShipInput, SHIP_SIZE};
 
-// Scale: 1 world unit = 1 billion meters (1e9 m)
-// This makes Moon orbit radius ~0.38 world units
+// 1:1 Real-Scale Solar System Simulation
+// All physics use real-world values: masses, radii, distances, orbital velocities
+// Rendering scale: 1 world unit = 1 billion meters (1e9 m)
 const SCALE: f64 = 1e-9;
 
 // Time warp levels (simulation seconds per real second)
 const WARP_LEVELS: &[f64] = &[1.0, 2.0, 3.0, 5.0, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, 10000000.0, 100000000.0, 1000000000.0];
 
-// Visual scale factor for bodies (1.0 = real proportions)
+// Visual scale factor for bodies (1.0 = real proportions, no artificial enlargement)
 const BODY_SCALE: f64 = 1.0;
 
 fn main() {
@@ -39,8 +40,8 @@ fn main() {
     println!("  Time warp: Click buttons at top of screen");
     println!("  Close window to exit");
     println!();
-    println!("Physics: Real-life scale");
-    println!("Earth LEO velocity: ~7.8 km/s");
+    println!("Physics: 1:1 real-scale solar system");
+    println!("Earth LEO velocity: ~7.8 km/s (real value)");
 
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);

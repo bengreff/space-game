@@ -156,25 +156,34 @@ Record significant technical and design decisions with rationale. This helps mai
 
 ---
 
-## DEC-008: Real-Scale Physics
+## DEC-008: 1:1 Real-Scale Physics
 
 **Date**: 2026-02-16
 **Status**: Accepted (supersedes previous 1/4 scale decision)
 
-**Context**: Initially considered 1/4 scale physics to reduce delta-v requirements, similar to KSP's approach.
+**Context**: KSP uses ~1/10 scale planets to reduce delta-v requirements (~3.4 km/s to LEO). Considered similar scaling but decided against it.
 
-**Decision**: Use real-scale physics with actual values for all celestial bodies.
+**Decision**: Use 1:1 real-scale physics with actual values for all celestial bodies.
 
 **Rationale**:
 - More educational and accurate simulation
-- Simplified solar system (Sun, Earth, Moon only) reduces complexity
-- Players can appreciate real orbital mechanics
-- LEO velocity of ~7.8 km/s matches real-life data
+- Players experience real orbital mechanics as they exist
+- No need to mentally convert between "Kerbal scale" and reality
+- Challenging but rewarding gameplay
 
 **Implementation**:
 - All body radii, masses, and orbital distances are real values
 - Gravitational constant G = 6.674e-11 m³/(kg·s²)
-- Simplified to Sun, Earth, Moon for Phase 1
+- Earth LEO velocity: 7.8 km/s (vs KSP's 3.4 km/s)
+- Moon distance: 384,400 km (real value)
+- Earth radius: 6,371 km (real value)
+
+**Comparison to KSP**:
+| Property | This Game (1:1) | KSP (~1/10) |
+|----------|-----------------|-------------|
+| Earth/Kerbin radius | 6,371 km | 600 km |
+| LEO velocity | 7.8 km/s | 3.4 km/s |
+| Moon/Mun distance | 384,400 km | 12,000 km |
 
 ---
 

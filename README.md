@@ -1,6 +1,13 @@
 # Space Game
 
-A 2D space exploration game with realistic orbital mechanics, inspired by Kerbal Space Program and Spaceflight Simulator.
+A 2D space exploration game with **1:1 real-scale** orbital mechanics. Unlike Kerbal Space Program's 1/10 scale planets, this simulation uses actual solar system values - real masses, real distances, real orbital velocities.
+
+## 1:1 Real Scale
+
+- **Earth orbital velocity**: 7.8 km/s (not KSP's 3.4 km/s)
+- **Moon distance**: 384,400 km (real value)
+- **Earth radius**: 6,371 km (real value)
+- **All physics**: Exact real-world values
 
 ## Project Status
 
@@ -8,8 +15,8 @@ A 2D space exploration game with realistic orbital mechanics, inspired by Kerbal
 **Current**: Flyable ship with patched conics trajectory prediction
 
 ### What Works
-- Flyable spaceship in Low Earth Orbit
-- Real-scale solar system (Sun, Earth, Moon)
+- Flyable spaceship in Low Earth Orbit (400 km altitude)
+- 1:1 real-scale solar system (Sun, Earth, Moon)
 - Accurate Keplerian orbital mechanics
 - Velocity Verlet physics integration
 - Patched conics trajectory prediction across SOI boundaries
