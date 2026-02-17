@@ -5,9 +5,39 @@ use super::{
     MIN_INTERSECTION_TIME, SOI_REFINE_ITERATIONS, HYPERBOLIC_ANGLE_MARGIN,
 };
 
+/// How often to recalculate trajectory (in frames, ~0.5 seconds at 60fps)
+const TRAJECTORY_CACHE_FRAMES: u64 = 30;
+
 impl Ship {
-    /// Calculate patched conics trajectory predicting future SOI changes
-    pub fn calculate_patched_trajectory(&self, solar_system: &SolarSystem) -> Option<PatchedTrajectory> {
+    /// Get patched conics trajectory, using cache when possible
+    pub fn get_patched_trajectory(&mut self, solar_system: &SolarSystem) -> Option<PatchedTrajectory> {
+        // Increment frame counter
+        self.frame_counter += 1;
+
+        // Invalidate cache if:
+        // 1. Ship is thrusting (orbit changing)
+        // 2. SOI body changed
+        // 3. Enough frames have passed
+        let frames_since_calc = self.frame_counter.saturating_sub(self.trajectory_calc_frame);
+        let cache_valid = self.throttle == 0.0
+            && self.soi_body == self.trajectory_soi_body
+            && frames_since_calc < TRAJECTORY_CACHE_FRAMES
+            && self.cached_trajectory.is_some();
+
+        if cache_valid {
+            return self.cached_trajectory.clone();
+        }
+
+        // Recalculate and cache
+        let trajectory = self.calculate_patched_trajectory_internal(solar_system);
+        self.cached_trajectory = trajectory.clone();
+        self.trajectory_calc_frame = self.frame_counter;
+        self.trajectory_soi_body = self.soi_body;
+        trajectory
+    }
+
+    /// Calculate patched conics trajectory predicting future SOI changes (internal, uncached)
+    fn calculate_patched_trajectory_internal(&self, solar_system: &SolarSystem) -> Option<PatchedTrajectory> {
         if matches!(self.state, ShipState::Landed { .. }) {
             return None;
         }
@@ -251,10 +281,28 @@ impl Ship {
         let apoapsis = orbit.semi_major_axis * (1.0 + orbit.eccentricity);
         let orbit_escapes = parent.parent.is_some() && apoapsis > parent.soi_radius;
 
-        // Count child bodies that could be entered
+        // Ship's orbital range (periapsis to apoapsis)
+        let ship_periapsis = orbit.semi_major_axis * (1.0 - orbit.eccentricity);
+        let ship_apoapsis = orbit.semi_major_axis * (1.0 + orbit.eccentricity);
+
+        // Only check child bodies whose orbits could potentially intersect with ship's orbit
         let child_bodies: Vec<usize> = solar_system.bodies.iter()
             .enumerate()
             .filter(|(_, b)| b.parent == Some(parent_idx))
+            .filter(|(_, b)| {
+                // Check if child's orbital range overlaps with ship's orbital range
+                if let Some(ref child_orbit) = b.orbit {
+                    let child_periapsis = child_orbit.semi_major_axis * (1.0 - child_orbit.eccentricity);
+                    let child_apoapsis = child_orbit.semi_major_axis * (1.0 + child_orbit.eccentricity);
+                    // Add SOI radius as margin for intersection check
+                    let child_inner = child_periapsis - b.soi_radius;
+                    let child_outer = child_apoapsis + b.soi_radius;
+                    // Orbits can intersect if ranges overlap
+                    ship_apoapsis >= child_inner && ship_periapsis <= child_outer
+                } else {
+                    true // No orbit data, include to be safe
+                }
+            })
             .map(|(i, _)| i)
             .collect();
         let has_children = !child_bodies.is_empty();

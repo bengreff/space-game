@@ -10,23 +10,29 @@ pub const SHIP_SIZE: f64 = 10.0;
 /// Maximum thrust acceleration in m/s²
 pub const MAX_THRUST_ACCELERATION: f64 = 20.0;
 
-/// Rotation speed in radians/second
+/// Rotation acceleration in radians/second² (30 degrees/s/s)
+pub const ROTATION_ACCEL: f64 = 30.0 * std::f64::consts::PI / 180.0;
+
+/// Rotation drag (natural deceleration) in radians/second² (9 degrees/s/s)
+pub const ROTATION_DRAG: f64 = 9.0 * std::f64::consts::PI / 180.0;
+
+/// Maximum rotation speed in radians/second (for reference, kept for compatibility)
 pub const ROTATION_SPEED: f64 = 2.0;
 
 /// Throttle change rate per second (0-1 scale)
 pub const THROTTLE_RATE: f64 = 0.5;
 
-/// Time warp threshold for on-rails mode
-pub const RAILS_WARP_THRESHOLD: f64 = 10.0;
+/// Time warp threshold for on-rails mode (max physics warp)
+pub const RAILS_WARP_THRESHOLD: f64 = 100.0;
 
 /// Maximum physics timestep for accurate integration (seconds)
 const MAX_PHYSICS_DT: f64 = 0.01;
 
 /// Maximum number of SOI changes to predict in patched conics
-pub const MAX_PATCHED_CONICS: usize = 3;
+pub const MAX_PATCHED_CONICS: usize = 1;
 
 /// Number of samples for SOI intersection detection
-pub(crate) const SOI_INTERSECTION_SAMPLES: usize = 2000;
+pub(crate) const SOI_INTERSECTION_SAMPLES: usize = 200;
 
 /// SOI exit detection threshold (fraction of SOI radius)
 pub(crate) const SOI_EXIT_THRESHOLD: f64 = 0.99;
@@ -111,12 +117,21 @@ pub struct Ship {
     pub rel_position: [f64; 2],
     pub rel_velocity: [f64; 2],
     pub rotation: f64,
+    pub rotational_velocity: f64,  // rad/s
     pub throttle: f64,
     pub state: ShipState,
     pub color: [f32; 4],
     pub soi_body: usize,
     pub on_rails: bool,
     pub(crate) cached_orbit: Option<ShipOrbit>,
+    /// Cached patched trajectory to avoid recalculating every frame
+    pub(crate) cached_trajectory: Option<PatchedTrajectory>,
+    /// Frame counter when trajectory was last calculated
+    pub(crate) trajectory_calc_frame: u64,
+    /// SOI body when trajectory was calculated (for cache invalidation)
+    pub(crate) trajectory_soi_body: usize,
+    /// Current frame counter (incremented each update)
+    pub(crate) frame_counter: u64,
 }
 
 impl Ship {
@@ -154,12 +169,17 @@ impl Ship {
             rel_position,
             rel_velocity,
             rotation,
+            rotational_velocity: 0.0,
             throttle: 0.0,
             state: ShipState::Flying,
             color: [1.0, 0.2, 0.2, 1.0],
             soi_body: earth_index,
             on_rails: false,
             cached_orbit: None,
+            cached_trajectory: None,
+            trajectory_calc_frame: 0,
+            trajectory_soi_body: earth_index,
+            frame_counter: 0,
         }
     }
 
@@ -292,14 +312,29 @@ impl Ship {
 
     /// Update while flying (physics simulation with sub-stepping)
     fn update_flying(&mut self, dt: f64, input: &ShipInput, solar_system: &SolarSystem) {
+        // Rotation with acceleration model
         if input.rotate_left {
-            self.rotation += ROTATION_SPEED * dt;
+            self.rotational_velocity += ROTATION_ACCEL * dt;
+        } else if input.rotate_right {
+            self.rotational_velocity -= ROTATION_ACCEL * dt;
+        } else {
+            // Apply drag when no rotation input
+            if self.rotational_velocity.abs() > 0.0 {
+                let drag = ROTATION_DRAG * dt;
+                if self.rotational_velocity > drag {
+                    self.rotational_velocity -= drag;
+                } else if self.rotational_velocity < -drag {
+                    self.rotational_velocity += drag;
+                } else {
+                    self.rotational_velocity = 0.0;
+                }
+            }
         }
-        if input.rotate_right {
-            self.rotation -= ROTATION_SPEED * dt;
-        }
+        self.rotation += self.rotational_velocity * dt;
 
-        let num_steps = ((dt / MAX_PHYSICS_DT).ceil() as usize).max(1);
+        // Cap physics substeps to prevent lag at high time warp when not on rails
+        const MAX_SUBSTEPS: usize = 1000;
+        let num_steps = ((dt / MAX_PHYSICS_DT).ceil() as usize).max(1).min(MAX_SUBSTEPS);
         let sub_dt = dt / num_steps as f64;
 
         for _ in 0..num_steps {
@@ -391,12 +426,25 @@ impl Ship {
             self.rel_velocity = [0.0, 0.0];
         }
 
+        // Rotation with acceleration model (same as flying)
         if input.rotate_left {
-            self.rotation += ROTATION_SPEED * dt;
+            self.rotational_velocity += ROTATION_ACCEL * dt;
+        } else if input.rotate_right {
+            self.rotational_velocity -= ROTATION_ACCEL * dt;
+        } else {
+            // Apply drag when no rotation input
+            if self.rotational_velocity.abs() > 0.0 {
+                let drag = ROTATION_DRAG * dt;
+                if self.rotational_velocity > drag {
+                    self.rotational_velocity -= drag;
+                } else if self.rotational_velocity < -drag {
+                    self.rotational_velocity += drag;
+                } else {
+                    self.rotational_velocity = 0.0;
+                }
+            }
         }
-        if input.rotate_right {
-            self.rotation -= ROTATION_SPEED * dt;
-        }
+        self.rotation += self.rotational_velocity * dt;
     }
 
     /// Check for collisions with bodies
@@ -462,5 +510,217 @@ impl Ship {
         }
 
         None
+    }
+
+    /// Calculate a predicted trajectory from a given state (for maneuver node predictions)
+    /// Returns segments similar to patched conics trajectory
+    pub fn calculate_predicted_trajectory(
+        &self,
+        pos: [f64; 2],
+        vel: [f64; 2],
+        parent_idx: usize,
+        solar_system: &SolarSystem,
+    ) -> Option<PatchedTrajectory> {
+        let parent = &solar_system.bodies[parent_idx];
+
+        let (orbit, true_anomaly, retrograde) = self.calculate_orbit_from_state(pos, vel, parent.mass)?;
+
+        let mut segments = Vec::new();
+
+        // Handle hyperbolic orbit
+        if orbit.eccentricity >= 1.0 {
+            let e = orbit.eccentricity;
+            let a_abs = orbit.semi_major_axis.abs();
+            let p = a_abs * (e * e - 1.0);
+
+            let soi_radius = parent.soi_radius;
+            let cos_nu_exit = (p / soi_radius - 1.0) / e;
+
+            let exit_true_anomaly = if cos_nu_exit.abs() <= 1.0 {
+                let ta = cos_nu_exit.acos();
+                if retrograde { -ta } else { ta }
+            } else {
+                let ta = (-1.0 / e).acos() - HYPERBOLIC_ANGLE_MARGIN;
+                if retrograde { -ta } else { ta }
+            };
+
+            segments.push(PatchedConicSegment {
+                orbit,
+                parent_idx,
+                retrograde,
+                start_true_anomaly: true_anomaly,
+                end_true_anomaly: Some(exit_true_anomaly),
+                start_time: 0.0,
+                end_time: None,
+            });
+
+            // Continue to parent body after SOI exit
+            if let Some(grandparent_idx) = parent.parent {
+                let exit_mean_anomaly = self.true_to_mean_anomaly(&orbit, exit_true_anomaly);
+
+                let exit_pos = orbit.position_from_mean_anomaly(exit_mean_anomaly, parent.mass);
+                let exit_vel = orbit.velocity_from_mean_anomaly_with_direction(
+                    exit_mean_anomaly,
+                    parent.mass,
+                    retrograde,
+                );
+
+                let (new_pos, new_vel, _) = self.convert_to_parent_frame(
+                    exit_pos, exit_vel,
+                    parent_idx,
+                    grandparent_idx,
+                    solar_system.time,
+                    solar_system,
+                );
+
+                let grandparent = &solar_system.bodies[grandparent_idx];
+                if let Some((new_orbit, new_ta, new_retro)) = self.calculate_orbit_from_state(
+                    new_pos, new_vel, grandparent.mass,
+                ) {
+                    // Check if this orbit also escapes or enters another SOI
+                    let new_e = new_orbit.eccentricity;
+                    let end_ta = if new_e >= 1.0 {
+                        let a_abs = new_orbit.semi_major_axis.abs();
+                        let p = a_abs * (new_e * new_e - 1.0);
+                        let soi = grandparent.soi_radius;
+                        let cos_exit = (p / soi - 1.0) / new_e;
+                        if cos_exit.abs() <= 1.0 {
+                            let ta = cos_exit.acos();
+                            Some(if new_retro { -ta } else { ta })
+                        } else {
+                            None
+                        }
+                    } else {
+                        // Check for SOI exit for elliptical orbit
+                        let apoapsis = new_orbit.semi_major_axis * (1.0 + new_e);
+                        if grandparent.parent.is_some() && apoapsis > grandparent.soi_radius {
+                            // Will exit SOI - calculate where
+                            let p = new_orbit.semi_major_axis * (1.0 - new_e * new_e);
+                            let cos_exit = (p / grandparent.soi_radius - 1.0) / new_e;
+                            if cos_exit.abs() <= 1.0 {
+                                let ta = cos_exit.acos();
+                                Some(if new_retro { -ta } else { ta })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    };
+
+                    segments.push(PatchedConicSegment {
+                        orbit: new_orbit,
+                        parent_idx: grandparent_idx,
+                        retrograde: new_retro,
+                        start_true_anomaly: new_ta,
+                        end_true_anomaly: end_ta,
+                        start_time: 0.0,
+                        end_time: None,
+                    });
+                }
+            }
+
+            return Some(PatchedTrajectory { segments });
+        }
+
+        // Elliptical orbit - check for SOI transitions
+        let mean_anomaly = self.true_to_mean_anomaly(&orbit, true_anomaly);
+
+        let intersection = self.find_soi_intersection(
+            &orbit,
+            parent_idx,
+            mean_anomaly,
+            retrograde,
+            solar_system,
+            solar_system.time,
+        );
+
+        match intersection {
+            Some((intersect_true_anomaly, intersect_time, new_parent_idx, entry)) => {
+                segments.push(PatchedConicSegment {
+                    orbit,
+                    parent_idx,
+                    retrograde,
+                    start_true_anomaly: true_anomaly,
+                    end_true_anomaly: Some(intersect_true_anomaly),
+                    start_time: 0.0,
+                    end_time: Some(intersect_time),
+                });
+
+                let intersect_mean_anomaly = self.true_to_mean_anomaly(&orbit, intersect_true_anomaly);
+                let int_pos = orbit.position_from_mean_anomaly(intersect_mean_anomaly, parent.mass);
+                let int_vel = orbit.velocity_from_mean_anomaly_with_direction(
+                    intersect_mean_anomaly,
+                    parent.mass,
+                    retrograde,
+                );
+
+                let absolute_intersect_time = solar_system.time + intersect_time;
+                let (new_pos, new_vel, _) = if entry {
+                    self.convert_to_child_frame(
+                        int_pos, int_vel,
+                        parent_idx,
+                        new_parent_idx,
+                        absolute_intersect_time,
+                        solar_system,
+                    )
+                } else {
+                    self.convert_to_parent_frame(
+                        int_pos, int_vel,
+                        parent_idx,
+                        new_parent_idx,
+                        absolute_intersect_time,
+                        solar_system,
+                    )
+                };
+
+                let new_parent = &solar_system.bodies[new_parent_idx];
+                if let Some((new_orbit, new_ta, new_retro)) = self.calculate_orbit_from_state(
+                    new_pos, new_vel, new_parent.mass,
+                ) {
+                    let end_ta = if new_orbit.eccentricity >= 1.0 {
+                        let e = new_orbit.eccentricity;
+                        let a_abs = new_orbit.semi_major_axis.abs();
+                        let p = a_abs * (e * e - 1.0);
+                        let soi = new_parent.soi_radius;
+                        let cos_exit = (p / soi - 1.0) / e;
+                        if cos_exit.abs() <= 1.0 {
+                            Some(if new_retro { -cos_exit.acos() } else { cos_exit.acos() })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    segments.push(PatchedConicSegment {
+                        orbit: new_orbit,
+                        parent_idx: new_parent_idx,
+                        retrograde: new_retro,
+                        start_true_anomaly: new_ta,
+                        end_true_anomaly: end_ta,
+                        start_time: intersect_time,
+                        end_time: None,
+                    });
+                }
+            }
+            None => {
+                segments.push(PatchedConicSegment {
+                    orbit,
+                    parent_idx,
+                    retrograde,
+                    start_true_anomaly: true_anomaly,
+                    end_true_anomaly: None,
+                    start_time: 0.0,
+                    end_time: None,
+                });
+            }
+        }
+
+        if segments.is_empty() {
+            None
+        } else {
+            Some(PatchedTrajectory { segments })
+        }
     }
 }

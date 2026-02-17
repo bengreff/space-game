@@ -5,7 +5,7 @@ use egui_wgpu::ScreenDescriptor;
 
 use super::camera::Camera;
 use super::types::{
-    BodyData, OrbitRenderData, ShipOrbitData, ShipRenderData, Vertex,
+    AutopilotTarget, BodyData, ManeuverNode, OrbitRenderData, ShipOrbitData, ShipRenderData, Vertex,
     HYPERBOLIC_RENDER_MARGIN, HYPERBOLIC_SKIP_MARGIN,
 };
 
@@ -35,8 +35,21 @@ pub struct RenderState {
     pub ship_throttle: f64,    // Current throttle (0.0 to 1.0)
     pub ship_soi_name: String, // Current SOI body name
     pub ship_time_to_intercept: Option<f64>, // Time to next SOI transition (seconds)
+    pub ship_acceleration: f64,            // Ship's max thrust acceleration (m/s^2)
+    pub ship_current_true_anomaly: f64,    // Ship's current position in its orbit (radians)
     pub ap_markers: Vec<([f64; 2], f64)>, // Apoapsis markers: (world pos relative to camera, altitude)
     pub pe_markers: Vec<([f64; 2], f64)>, // Periapsis markers: (world pos relative to camera, altitude)
+    // Maneuver node state
+    pub pending_orbit_click: Option<(f64, usize)>,  // (true_anomaly, segment_idx) - awaiting node creation
+    pub selected_maneuver_node: Option<u64>,        // ID of selected node
+    pub maneuver_nodes: Vec<ManeuverNode>,
+    pub next_node_id: u64,
+    pub maneuver_node_screen_positions: Vec<(u64, [f32; 2])>, // (node_id, screen_pos) for click detection
+    pub current_trajectory: Vec<super::types::OrbitSegmentData>, // Stored for click detection
+    pub predicted_trajectories: Vec<Vec<super::types::OrbitSegmentData>>, // Predicted trajectories after maneuver burns (one per node)
+    pub dragging_maneuver_node: Option<u64>, // ID of node being dragged
+    // Autopilot state
+    pub autopilot_target: AutopilotTarget,
     // Egui state
     pub egui_ctx: egui::Context,
     pub egui_state: egui_winit::State,
@@ -260,8 +273,19 @@ impl RenderState {
             ship_throttle: 0.0,
             ship_soi_name: String::new(),
             ship_time_to_intercept: None,
+            ship_acceleration: 20.0,  // Default max thrust acceleration
+            ship_current_true_anomaly: 0.0,
             ap_markers: Vec::new(),
             pe_markers: Vec::new(),
+            pending_orbit_click: None,
+            selected_maneuver_node: None,
+            maneuver_nodes: Vec::new(),
+            next_node_id: 1,
+            maneuver_node_screen_positions: Vec::new(),
+            current_trajectory: Vec::new(),
+            predicted_trajectories: Vec::new(),
+            dragging_maneuver_node: None,
+            autopilot_target: AutopilotTarget::Off,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -454,8 +478,19 @@ impl RenderState {
         let ship_time_to_intercept = self.ship_time_to_intercept;
         let ap_markers = self.ap_markers.clone();
         let pe_markers = self.pe_markers.clone();
+        let pending_orbit_click = self.pending_orbit_click;
+        let selected_maneuver_node = self.selected_maneuver_node;
+        let maneuver_nodes = self.maneuver_nodes.clone();
+        let current_trajectory = self.current_trajectory.clone();
+        let current_autopilot = self.autopilot_target;
 
         let mut new_warp_index = current_warp_index;
+        let mut create_node_at: Option<(f64, usize)> = None;
+        let mut delete_node_id: Option<u64> = None;
+        let mut close_maneuver_panel = false;
+        let mut prograde_delta: f64 = 0.0;
+        let mut radial_delta: f64 = 0.0;
+        let mut new_autopilot_target = current_autopilot;
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
@@ -475,8 +510,8 @@ impl RenderState {
                         };
 
                         let is_selected = i == current_warp_index;
-                        // Block selecting warp > 10x while thrusting
-                        let blocked_throttle = ship_throttle > 0.0 && warp > 10.0;
+                        // Block selecting warp > 100x while thrusting (max physics warp)
+                        let blocked_throttle = ship_throttle > 0.0 && warp > 100.0;
                         // Block warps that would reach SOI boundary in < 0.5 seconds
                         let blocked_intercept = ship_time_to_intercept
                             .map(|t| t / warp < 0.5)
@@ -545,7 +580,7 @@ impl RenderState {
                 }
             });
 
-            // Bottom panel for velocity and altitude - compact single line
+            // Bottom panel for autopilot buttons and velocity/altitude display
             egui::TopBottomPanel::bottom("flight_info_panel")
                 .frame(egui::Frame::none().fill(egui::Color32::from_rgba_unmultiplied(20, 20, 30, 200)))
                 .show(ctx, |ui| {
@@ -567,12 +602,84 @@ impl RenderState {
                         format!("{:.1} m", ship_altitude)
                     };
 
+                    // Autopilot buttons row
                     ui.horizontal(|ui| {
-                        let available = ui.available_width();
-                        ui.add_space(available / 2.0 - 120.0);
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new("SAS").size(11.0).color(egui::Color32::GRAY));
+                        ui.add_space(5.0);
+
+                        // Helper to create autopilot button
+                        let autopilot_btn = |ui: &mut egui::Ui, label: &str, target: AutopilotTarget, current: AutopilotTarget| -> bool {
+                            let is_active = current == target;
+                            let btn_color = if is_active {
+                                egui::Color32::from_rgb(80, 150, 80)
+                            } else {
+                                egui::Color32::from_rgb(60, 60, 70)
+                            };
+                            let text_color = if is_active {
+                                egui::Color32::WHITE
+                            } else {
+                                egui::Color32::LIGHT_GRAY
+                            };
+                            let btn = egui::Button::new(egui::RichText::new(label).size(11.0).color(text_color))
+                                .fill(btn_color)
+                                .min_size(egui::vec2(35.0, 20.0));
+                            ui.add(btn).clicked()
+                        };
+
+                        // Prograde button
+                        if autopilot_btn(ui, "PRO", AutopilotTarget::Prograde, new_autopilot_target) {
+                            new_autopilot_target = if new_autopilot_target == AutopilotTarget::Prograde {
+                                AutopilotTarget::Off
+                            } else {
+                                AutopilotTarget::Prograde
+                            };
+                        }
+
+                        // Retrograde button
+                        if autopilot_btn(ui, "RET", AutopilotTarget::Retrograde, new_autopilot_target) {
+                            new_autopilot_target = if new_autopilot_target == AutopilotTarget::Retrograde {
+                                AutopilotTarget::Off
+                            } else {
+                                AutopilotTarget::Retrograde
+                            };
+                        }
+
+                        // Radial In button
+                        if autopilot_btn(ui, "R-", AutopilotTarget::RadialIn, new_autopilot_target) {
+                            new_autopilot_target = if new_autopilot_target == AutopilotTarget::RadialIn {
+                                AutopilotTarget::Off
+                            } else {
+                                AutopilotTarget::RadialIn
+                            };
+                        }
+
+                        // Radial Out button
+                        if autopilot_btn(ui, "R+", AutopilotTarget::RadialOut, new_autopilot_target) {
+                            new_autopilot_target = if new_autopilot_target == AutopilotTarget::RadialOut {
+                                AutopilotTarget::Off
+                            } else {
+                                AutopilotTarget::RadialOut
+                            };
+                        }
+
+                        // Maneuver node button (only if there's a selected node)
+                        if selected_maneuver_node.is_some() {
+                            if autopilot_btn(ui, "MAN", AutopilotTarget::ManeuverNode, new_autopilot_target) {
+                                new_autopilot_target = if new_autopilot_target == AutopilotTarget::ManeuverNode {
+                                    AutopilotTarget::Off
+                                } else {
+                                    AutopilotTarget::ManeuverNode
+                                };
+                            }
+                        }
+
+                        // Velocity and altitude display (right side)
+                        let remaining = ui.available_width();
+                        ui.add_space(remaining / 2.0 - 100.0);
                         ui.label(egui::RichText::new("VEL").size(11.0).color(egui::Color32::GRAY));
                         ui.label(egui::RichText::new(&vel_str).size(13.0).strong().color(egui::Color32::WHITE));
-                        ui.add_space(30.0);
+                        ui.add_space(20.0);
                         ui.label(egui::RichText::new("ALT").size(11.0).color(egui::Color32::GRAY));
                         ui.label(egui::RichText::new(&alt_str).size(13.0).strong().color(egui::Color32::WHITE));
                     });
@@ -765,9 +872,218 @@ impl RenderState {
                     );
                 }
             }
+
+            // Maneuver nodes calculate world position from stored orbit + current parent position
+            let node_world_pos = |node: &super::types::ManeuverNode| -> Option<[f64; 2]> {
+                let parent = bodies_copy.get(node.parent_idx)?;
+                Some(node.world_pos(parent.x, parent.y))
+            };
+
+            // Draw "Create Maneuver Node" button if pending click
+            if let Some((ta, seg_idx)) = pending_orbit_click {
+                // Calculate the world position
+                if let Some(segment) = current_trajectory.get(seg_idx) {
+                    let e = segment.eccentricity;
+                    let arg_peri = segment.argument_of_periapsis;
+
+                    let r = if e >= 1.0 {
+                        let a_abs = segment.semi_major_axis.abs();
+                        let p = a_abs * (e * e - 1.0);
+                        let denom = 1.0 + e * ta.cos();
+                        if denom > 0.001 { p / denom } else { 0.0 }
+                    } else {
+                        let a = segment.semi_major_axis;
+                        let p = a * (1.0 - e * e);
+                        p / (1.0 + e * ta.cos())
+                    };
+
+                    if r > 0.0 && r.is_finite() {
+                        let angle = ta + arg_peri;
+                        let world_x = segment.parent_x + r * angle.cos();
+                        let world_y = segment.parent_y + r * angle.sin();
+
+                        let (scr_x, scr_y) = world_to_screen([world_x - camera_pos[0], world_y - camera_pos[1]]);
+
+                        // Draw a small window with the create button
+                        egui::Area::new(egui::Id::new("create_node_popup"))
+                            .fixed_pos(egui::pos2(scr_x + 15.0, scr_y - 15.0))
+                            .show(ctx, |ui| {
+                                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                                    if ui.button("Create Maneuver Node").clicked() {
+                                        create_node_at = Some((ta, seg_idx));
+                                    }
+                                });
+                            });
+                    }
+                }
+            }
+
+            // Right panel for selected maneuver node
+            if let Some(node_id) = selected_maneuver_node {
+                if let Some(node) = maneuver_nodes.iter().find(|n| n.id == node_id) {
+                    let remaining_dv = node.total_remaining_delta_v();
+
+                    egui::SidePanel::right("maneuver_panel")
+                        .exact_width(200.0)
+                        .show(ctx, |ui| {
+                            ui.heading("Maneuver Node");
+                            ui.separator();
+
+                            // Remaining delta-v display
+                            ui.label(format!("Remaining Δv: {:.1} m/s", remaining_dv));
+                            ui.separator();
+
+                            // Prograde/Retrograde slider (show remaining values)
+                            ui.label("Prograde / Retrograde:");
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{:+.1} m/s", node.remaining_delta_v.prograde));
+                            });
+
+                            // Snap-back slider for prograde
+                            let prograde_response = ui.add(
+                                egui::Slider::new(&mut prograde_delta, -100.0..=100.0)
+                                    .show_value(false)
+                                    .text("")
+                            );
+                            if prograde_response.drag_stopped() {
+                                prograde_delta = 0.0;
+                            }
+
+                            ui.add_space(10.0);
+
+                            // Radial slider (show remaining values)
+                            ui.label("Radial Out / In:");
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{:+.1} m/s", node.remaining_delta_v.radial_out));
+                            });
+
+                            // Snap-back slider for radial
+                            let radial_response = ui.add(
+                                egui::Slider::new(&mut radial_delta, -100.0..=100.0)
+                                    .show_value(false)
+                                    .text("")
+                            );
+                            if radial_response.drag_stopped() {
+                                radial_delta = 0.0;
+                            }
+
+                            ui.add_space(10.0);
+                            ui.separator();
+
+                            // Delete and close buttons
+                            ui.horizontal(|ui| {
+                                if ui.button("Delete").clicked() {
+                                    delete_node_id = Some(node_id);
+                                }
+                                if ui.button("Close").clicked() {
+                                    close_maneuver_panel = true;
+                                }
+                            });
+                        });
+                }
+            }
+
+            // Draw maneuver node markers
+            let node_painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("maneuver_node_markers"),
+            ));
+
+            for node in &maneuver_nodes {
+                if let Some(world_pos) = node_world_pos(node) {
+                    let (scr_x, scr_y) = world_to_screen([world_pos[0] - camera_pos[0], world_pos[1] - camera_pos[1]]);
+
+                    let is_selected = selected_maneuver_node == Some(node.id);
+                    let marker_color = if is_selected {
+                        egui::Color32::from_rgb(255, 200, 100) // Bright gold when selected
+                    } else {
+                        egui::Color32::from_rgb(200, 150, 50) // Dimmer gold
+                    };
+
+                    // Draw a diamond marker
+                    let marker_size = if is_selected { 10.0 } else { 8.0 };
+                    let center = egui::pos2(scr_x, scr_y);
+                    let points = vec![
+                        egui::pos2(center.x, center.y - marker_size),
+                        egui::pos2(center.x + marker_size, center.y),
+                        egui::pos2(center.x, center.y + marker_size),
+                        egui::pos2(center.x - marker_size, center.y),
+                    ];
+                    node_painter.add(egui::Shape::convex_polygon(
+                        points,
+                        marker_color,
+                        egui::Stroke::new(1.5, egui::Color32::WHITE),
+                    ));
+
+                    // Show remaining delta-v on hover or when selected
+                    if is_selected || mouse_pos.map_or(false, |mp| (mp - center).length() < 15.0) {
+                        let remaining_dv = node.total_remaining_delta_v();
+                        if remaining_dv > 0.0 {
+                            node_painter.text(
+                                egui::pos2(scr_x, scr_y - 18.0),
+                                egui::Align2::CENTER_BOTTOM,
+                                format!("{:.0} m/s", remaining_dv),
+                                egui::FontId::proportional(10.0),
+                                egui::Color32::WHITE,
+                            );
+                        }
+                    }
+                }
+            }
         });
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
+
+        // Handle maneuver node UI actions
+        if let Some((ta, seg_idx)) = create_node_at {
+            self.create_maneuver_node(ta, seg_idx);
+        }
+        if let Some(node_id) = delete_node_id {
+            self.delete_maneuver_node(node_id);
+        }
+        if close_maneuver_panel {
+            self.selected_maneuver_node = None;
+        }
+        // Update autopilot target
+        self.autopilot_target = new_autopilot_target;
+        // Apply slider deltas to selected node with non-linear scaling
+        // Full deflection = 1000 m/s per second, minimal = ~1 m/s per second
+        if let Some(node_id) = self.selected_maneuver_node {
+            if prograde_delta.abs() > 0.001 || radial_delta.abs() > 0.001 {
+                if let Some(node) = self.get_maneuver_node_mut(node_id) {
+                    // Non-linear scaling: use power of 2 for smooth precision control
+                    // At 60fps: max deflection (100) = ~16.67 m/s/frame = 1000 m/s/s
+                    // Small deflection (~3%) = ~0.017 m/s/frame = ~1 m/s/s
+                    let apply_curve = |delta: f64| -> f64 {
+                        let normalized = delta / 100.0; // -1 to 1
+                        let curved = normalized.signum() * normalized.abs().powf(2.0);
+                        curved * 16.67 // Scale to m/s per frame
+                    };
+                    let prograde_change = apply_curve(prograde_delta);
+                    let radial_change = apply_curve(radial_delta);
+                    // Update both original (for trajectory) and remaining (for display)
+                    node.delta_v.prograde += prograde_change;
+                    node.delta_v.radial_out += radial_change;
+                    node.remaining_delta_v.prograde += prograde_change;
+                    node.remaining_delta_v.radial_out += radial_change;
+                }
+            }
+        }
+
+        // Update maneuver node screen positions for click detection
+        self.maneuver_node_screen_positions.clear();
+        let scale_factor = self.window.scale_factor() as f32;
+        for node in &self.maneuver_nodes {
+            if let Some(world_pos) = self.maneuver_node_world_position(node) {
+                let view_x = ((world_pos[0] - self.camera.position[0]) as f32) * self.camera.zoom;
+                let view_y = ((world_pos[1] - self.camera.position[1]) as f32) * self.camera.zoom;
+                let ndc_x = view_x / self.camera.aspect_ratio;
+                let ndc_y = view_y;
+                let scr_x = (ndc_x + 1.0) * 0.5 * self.size.width as f32 / scale_factor;
+                let scr_y = (1.0 - ndc_y) * 0.5 * self.size.height as f32 / scale_factor;
+                self.maneuver_node_screen_positions.push((node.id, [scr_x, scr_y]));
+            }
+        }
 
         let tris = self.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
         for (id, image_delta) in &full_output.textures_delta.set {
@@ -975,6 +1291,14 @@ impl RenderState {
             self.ship_throttle = s.throttle;
             self.ship_soi_name = s.soi_body_name.clone();
             self.ship_time_to_intercept = s.time_to_intercept;
+            self.ship_acceleration = s.acceleration;
+            self.ship_current_true_anomaly = s.current_true_anomaly;
+            // Store trajectory for orbit click detection
+            self.current_trajectory = s.patched_trajectory.clone();
+            // Update predicted orbits with new trajectory data
+        } else {
+            self.current_trajectory.clear();
+            self.predicted_trajectories.clear();
         }
 
         let mut all_vertices = Vec::new();
@@ -1283,9 +1607,16 @@ impl RenderState {
                             };
                             (start_ea, span)
                         }
-                        None => (0.0, std::f64::consts::TAU), // Full orbit
+                        None => {
+                            // Full orbit - but start from the ship's entry point
+                            // Convert start_true_anomaly to eccentric anomaly
+                            let start_ta = segment.start_true_anomaly;
+                            let start_ea = (start_ta.sin() * (1.0 - e * e).sqrt()).atan2(e + start_ta.cos());
+                            (start_ea, std::f64::consts::TAU)
+                        }
                     };
 
+                    let is_full_orbit = segment.end_true_anomaly.is_none();
                     let num_segments = ((angle_span.abs() / std::f64::consts::TAU) * 512.0).max(16.0) as u32;
                     let base_index = all_vertices.len() as u32;
 
@@ -1333,11 +1664,15 @@ impl RenderState {
                         });
                     }
 
-                    for i in 0..(num_segments.saturating_sub(1)) {
+                    // For full orbits, wrap around to connect last segment to first
+                    // For partial orbits, only connect consecutive segments
+                    let index_count = if is_full_orbit { num_segments } else { num_segments.saturating_sub(1) };
+                    for i in 0..index_count {
                         let i0 = base_index + i * 2;
                         let i1 = base_index + i * 2 + 1;
-                        let i2 = base_index + (i + 1) * 2;
-                        let i3 = base_index + (i + 1) * 2 + 1;
+                        let next_i = if is_full_orbit { (i + 1) % num_segments } else { i + 1 };
+                        let i2 = base_index + next_i * 2;
+                        let i3 = base_index + next_i * 2 + 1;
 
                         all_indices.push(i0);
                         all_indices.push(i2);
@@ -1462,6 +1797,332 @@ impl RenderState {
                             all_indices.push(ap_base + 1 + (i + 1) % marker_segments);
                         }
                         // Store for UI hover
+                        self.ap_markers.push(([ap_x - cam_x, ap_y - cam_y], ap_altitude));
+                    }
+                }
+            }
+        }
+
+        // Draw predicted trajectories as solid green lines
+        for trajectory in &self.predicted_trajectories {
+            for (seg_idx, segment) in trajectory.iter().enumerate() {
+                let e = segment.eccentricity;
+                let arg_peri = segment.argument_of_periapsis;
+                let a = segment.semi_major_axis;
+
+                let line_width = 0.0015 / self.camera.zoom as f64;
+
+                // Green for first segment, dimmer for subsequent segments
+                let alpha = if seg_idx == 0 { 0.9 } else { 0.6 };
+                let seg_color = [0.0, 1.0, 0.0, alpha];
+
+                if e >= 1.0 {
+                    // Hyperbolic orbit segment
+                    let a_abs = a.abs();
+                    let p = a_abs * (e * e - 1.0);
+                    let max_ta = (-1.0 / e).acos();
+
+                    let start_ta = segment.start_true_anomaly;
+                    let end_ta = segment.end_true_anomaly.unwrap_or_else(|| {
+                        if segment.retrograde {
+                            -(max_ta - HYPERBOLIC_RENDER_MARGIN)
+                        } else {
+                            max_ta - HYPERBOLIC_RENDER_MARGIN
+                        }
+                    });
+
+                    let num_points = 512usize;
+                    let mut points: Vec<(f64, f64)> = Vec::with_capacity(num_points);
+
+                    for i in 0..num_points {
+                        let t = i as f64 / (num_points - 1) as f64;
+                        let ta = start_ta + t * (end_ta - start_ta);
+
+                        if ta.abs() >= max_ta - HYPERBOLIC_SKIP_MARGIN {
+                            continue;
+                        }
+
+                        let denom = 1.0 + e * ta.cos();
+                        if denom <= 0.001 {
+                            continue;
+                        }
+                        let r = p / denom;
+                        if r <= 0.0 || !r.is_finite() {
+                            continue;
+                        }
+
+                        let angle = ta + arg_peri;
+                        let px = segment.parent_x + r * angle.cos();
+                        let py = segment.parent_y + r * angle.sin();
+                        points.push((px, py));
+                    }
+
+                    // Draw solid line segments
+                    for i in 0..points.len().saturating_sub(1) {
+                        let (px, py) = points[i];
+                        let (nx, ny) = points[i + 1];
+
+                        let dx = nx - px;
+                        let dy = ny - py;
+                        let seg_len = (dx * dx + dy * dy).sqrt();
+
+                        if seg_len < 1e-10 {
+                            continue;
+                        }
+
+                        let base_index = all_vertices.len() as u32;
+                        let len = seg_len;
+                        let nx_perp = -dy / len * line_width;
+                        let ny_perp = dx / len * line_width;
+
+                        all_vertices.push(Vertex {
+                            position: [(px + nx_perp - cam_x) as f32, (py + ny_perp - cam_y) as f32],
+                            color: seg_color,
+                        });
+                        all_vertices.push(Vertex {
+                            position: [(px - nx_perp - cam_x) as f32, (py - ny_perp - cam_y) as f32],
+                            color: seg_color,
+                        });
+                        all_vertices.push(Vertex {
+                            position: [(nx + nx_perp - cam_x) as f32, (ny + ny_perp - cam_y) as f32],
+                            color: seg_color,
+                        });
+                        all_vertices.push(Vertex {
+                            position: [(nx - nx_perp - cam_x) as f32, (ny - ny_perp - cam_y) as f32],
+                            color: seg_color,
+                        });
+
+                        all_indices.push(base_index);
+                        all_indices.push(base_index + 2);
+                        all_indices.push(base_index + 1);
+                        all_indices.push(base_index + 1);
+                        all_indices.push(base_index + 2);
+                        all_indices.push(base_index + 3);
+                    }
+
+                    // Draw periapsis marker for hyperbolic (if we'll reach it)
+                    let start_ta_norm = start_ta;
+                    let end_ta_norm = end_ta;
+                    let pe_will_be_reached = if segment.retrograde {
+                        start_ta_norm >= 0.0 && end_ta_norm <= 0.0
+                    } else {
+                        start_ta_norm <= 0.0 && end_ta_norm >= 0.0
+                    };
+
+                    if pe_will_be_reached {
+                        let pe_r = p / (1.0 + e);
+                        let pe_x = segment.parent_x + pe_r * arg_peri.cos();
+                        let pe_y = segment.parent_y + pe_r * arg_peri.sin();
+                        let marker_radius = 0.006 / self.camera.zoom as f64;
+                        let marker_segments = 12u32;
+                        let marker_alpha = if seg_idx == 0 { 0.7f32 } else { 0.5f32 };
+                        let pe_color = [0.2, 0.7, 0.9, marker_alpha];
+
+                        let pe_base = all_vertices.len() as u32;
+                        all_vertices.push(Vertex {
+                            position: [(pe_x - cam_x) as f32, (pe_y - cam_y) as f32],
+                            color: pe_color,
+                        });
+                        for j in 0..marker_segments {
+                            let angle = (j as f64 / marker_segments as f64) * std::f64::consts::TAU;
+                            all_vertices.push(Vertex {
+                                position: [
+                                    (pe_x + marker_radius * angle.cos() - cam_x) as f32,
+                                    (pe_y + marker_radius * angle.sin() - cam_y) as f32,
+                                ],
+                                color: pe_color,
+                            });
+                        }
+                        for j in 0..marker_segments {
+                            all_indices.push(pe_base);
+                            all_indices.push(pe_base + 1 + j);
+                            all_indices.push(pe_base + 1 + (j + 1) % marker_segments);
+                        }
+
+                        // Store for UI hover display
+                        let pe_distance = pe_r / segment.render_scale;
+                        let pe_altitude = pe_distance - segment.parent_body_radius;
+                        self.pe_markers.push(([pe_x - cam_x, pe_y - cam_y], pe_altitude));
+                    }
+                } else {
+                    // Elliptical orbit segment
+                    let b = a * (1.0 - e * e).sqrt();
+                    let c = a * e;
+                    let center_x = segment.parent_x - c * arg_peri.cos();
+                    let center_y = segment.parent_y - c * arg_peri.sin();
+
+                    let start_ta = segment.start_true_anomaly;
+                    let start_ea = (start_ta.sin() * (1.0 - e * e).sqrt()).atan2(e + start_ta.cos());
+
+                    // Calculate angle span
+                    let angle_span = match segment.end_true_anomaly {
+                        Some(end_ta) => {
+                            let end_ea = (end_ta.sin() * (1.0 - e * e).sqrt()).atan2(e + end_ta.cos());
+                            if segment.retrograde {
+                                let mut s = start_ea - end_ea;
+                                if s < 0.0 { s += std::f64::consts::TAU; }
+                                -s
+                            } else {
+                                let mut s = end_ea - start_ea;
+                                if s < 0.0 { s += std::f64::consts::TAU; }
+                                s
+                            }
+                        }
+                        None => std::f64::consts::TAU,
+                    };
+
+                    let num_segments_draw = 512u32;
+                    let mut prev_point: Option<(f64, f64)> = None;
+
+                    for i in 0..=num_segments_draw {
+                        let t = i as f64 / num_segments_draw as f64;
+                        let ea = start_ea + t * angle_span;
+
+                        let ex = a * ea.cos();
+                        let ey = b * ea.sin();
+                        let rx = ex * arg_peri.cos() - ey * arg_peri.sin();
+                        let ry = ex * arg_peri.sin() + ey * arg_peri.cos();
+                        let px = center_x + rx;
+                        let py = center_y + ry;
+
+                        if let Some((prev_x, prev_y)) = prev_point {
+                            let dx = px - prev_x;
+                            let dy = py - prev_y;
+                            let seg_len = (dx * dx + dy * dy).sqrt();
+
+                            if seg_len >= 1e-10 {
+                                let base_index = all_vertices.len() as u32;
+                                let len = seg_len;
+                                let nx_perp = -dy / len * line_width;
+                                let ny_perp = dx / len * line_width;
+
+                                all_vertices.push(Vertex {
+                                    position: [(prev_x + nx_perp - cam_x) as f32, (prev_y + ny_perp - cam_y) as f32],
+                                    color: seg_color,
+                                });
+                                all_vertices.push(Vertex {
+                                    position: [(prev_x - nx_perp - cam_x) as f32, (prev_y - ny_perp - cam_y) as f32],
+                                    color: seg_color,
+                                });
+                                all_vertices.push(Vertex {
+                                    position: [(px + nx_perp - cam_x) as f32, (py + ny_perp - cam_y) as f32],
+                                    color: seg_color,
+                                });
+                                all_vertices.push(Vertex {
+                                    position: [(px - nx_perp - cam_x) as f32, (py - ny_perp - cam_y) as f32],
+                                    color: seg_color,
+                                });
+
+                                all_indices.push(base_index);
+                                all_indices.push(base_index + 2);
+                                all_indices.push(base_index + 1);
+                                all_indices.push(base_index + 1);
+                                all_indices.push(base_index + 2);
+                                all_indices.push(base_index + 3);
+                            }
+                        }
+
+                        prev_point = Some((px, py));
+                    }
+
+                    // Draw Ap/Pe markers for all segments of predicted trajectories
+                    let marker_radius = 0.006 / self.camera.zoom as f64;
+                    let marker_segments = 12u32;
+                    let marker_alpha = if seg_idx == 0 { 0.7f32 } else { 0.5f32 };
+
+                    // Helper to check if a true anomaly is in the arc from start to end
+                    let is_in_arc = |marker_ta: f64, start_ta: f64, end_ta: f64, retrograde: bool| -> bool {
+                        let tau = std::f64::consts::TAU;
+                        let normalize = |ang: f64| ang.rem_euclid(tau);
+                        let marker = normalize(marker_ta);
+                        let start = normalize(start_ta);
+                        let end = normalize(end_ta);
+
+                        if retrograde {
+                            if start >= end { marker <= start && marker >= end }
+                            else { marker >= end || marker <= start }
+                        } else {
+                            if start <= end { marker >= start && marker <= end }
+                            else { marker >= start || marker <= end }
+                        }
+                    };
+
+                    // Determine which markers to show
+                    let (show_pe, show_ap) = if let Some(end_ta) = segment.end_true_anomaly {
+                        let start_ta = segment.start_true_anomaly;
+                        let pe_in_arc = is_in_arc(0.0, start_ta, end_ta, segment.retrograde);
+                        let ap_in_arc = is_in_arc(std::f64::consts::PI, start_ta, end_ta, segment.retrograde);
+                        (pe_in_arc, ap_in_arc)
+                    } else {
+                        (true, true) // Full orbit, show both
+                    };
+
+                    // Periapsis (ta = 0) - cyan
+                    if show_pe {
+                        let pe_r = a * (1.0 - e);
+                        let pe_x = segment.parent_x + pe_r * arg_peri.cos();
+                        let pe_y = segment.parent_y + pe_r * arg_peri.sin();
+                        let pe_color = [0.2, 0.7, 0.9, marker_alpha];
+
+                        let pe_base = all_vertices.len() as u32;
+                        all_vertices.push(Vertex {
+                            position: [(pe_x - cam_x) as f32, (pe_y - cam_y) as f32],
+                            color: pe_color,
+                        });
+                        for j in 0..marker_segments {
+                            let angle = (j as f64 / marker_segments as f64) * std::f64::consts::TAU;
+                            all_vertices.push(Vertex {
+                                position: [
+                                    (pe_x + marker_radius * angle.cos() - cam_x) as f32,
+                                    (pe_y + marker_radius * angle.sin() - cam_y) as f32,
+                                ],
+                                color: pe_color,
+                            });
+                        }
+                        for j in 0..marker_segments {
+                            all_indices.push(pe_base);
+                            all_indices.push(pe_base + 1 + j);
+                            all_indices.push(pe_base + 1 + (j + 1) % marker_segments);
+                        }
+
+                        // Store for UI hover display
+                        let pe_distance = a * (1.0 - e) / segment.render_scale;
+                        let pe_altitude = pe_distance - segment.parent_body_radius;
+                        self.pe_markers.push(([pe_x - cam_x, pe_y - cam_y], pe_altitude));
+                    }
+
+                    // Apoapsis (ta = π) - orange
+                    if show_ap {
+                        let ap_r = a * (1.0 + e);
+                        let ap_angle = arg_peri + std::f64::consts::PI;
+                        let ap_x = segment.parent_x + ap_r * ap_angle.cos();
+                        let ap_y = segment.parent_y + ap_r * ap_angle.sin();
+                        let ap_color = [0.9, 0.5, 0.1, marker_alpha];
+
+                        let ap_base = all_vertices.len() as u32;
+                        all_vertices.push(Vertex {
+                            position: [(ap_x - cam_x) as f32, (ap_y - cam_y) as f32],
+                            color: ap_color,
+                        });
+                        for j in 0..marker_segments {
+                            let angle = (j as f64 / marker_segments as f64) * std::f64::consts::TAU;
+                            all_vertices.push(Vertex {
+                                position: [
+                                    (ap_x + marker_radius * angle.cos() - cam_x) as f32,
+                                    (ap_y + marker_radius * angle.sin() - cam_y) as f32,
+                                ],
+                                color: ap_color,
+                            });
+                        }
+                        for j in 0..marker_segments {
+                            all_indices.push(ap_base);
+                            all_indices.push(ap_base + 1 + j);
+                            all_indices.push(ap_base + 1 + (j + 1) % marker_segments);
+                        }
+
+                        // Store for UI hover display
+                        let ap_distance = a * (1.0 + e) / segment.render_scale;
+                        let ap_altitude = ap_distance - segment.parent_body_radius;
                         self.ap_markers.push(([ap_x - cam_x, ap_y - cam_y], ap_altitude));
                     }
                 }
@@ -1947,4 +2608,425 @@ impl RenderState {
             }
         }
     }
+
+    /// Check if a screen click is near a maneuver node, returns node ID if found
+    pub fn maneuver_node_at_screen_pos(&self, screen_x: f32, screen_y: f32) -> Option<u64> {
+        let click_threshold = 20.0f32; // pixels
+        let scale_factor = self.window.scale_factor() as f32;
+
+        for (node_id, screen_pos) in &self.maneuver_node_screen_positions {
+            let dx = screen_x - screen_pos[0] * scale_factor;
+            let dy = screen_y - screen_pos[1] * scale_factor;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist < click_threshold {
+                return Some(*node_id);
+            }
+        }
+        None
+    }
+
+    /// Check if a screen click is near the orbit line, returns (true_anomaly, segment_idx) if found
+    pub fn orbit_click_position(&self, screen_x: f32, screen_y: f32) -> Option<(f64, usize)> {
+        if self.current_trajectory.is_empty() {
+            return None;
+        }
+
+        let click_threshold = 15.0f32; // pixels
+        let scale_factor = self.window.scale_factor() as f32;
+
+        // Convert screen position to egui points
+        let click_x = screen_x / scale_factor;
+        let click_y = screen_y / scale_factor;
+
+        let cam_x = self.camera.position[0];
+        let cam_y = self.camera.position[1];
+        let aspect_ratio = self.camera.aspect_ratio;
+        let size = self.size;
+
+        let mut best_match: Option<(f64, usize, f32)> = None; // (true_anomaly, segment_idx, distance)
+
+        for (seg_idx, segment) in self.current_trajectory.iter().enumerate() {
+            // Only allow placing nodes on first segment for now
+            if seg_idx != 0 {
+                continue;
+            }
+
+            let e = segment.eccentricity;
+            let arg_peri = segment.argument_of_periapsis;
+
+            // Sample points along the orbit
+            let num_samples = 256;
+
+            if e >= 1.0 {
+                // Hyperbolic - sample along the visible arc
+                let a_abs = segment.semi_major_axis.abs();
+                let p = a_abs * (e * e - 1.0);
+                let max_ta = (-1.0 / e).acos();
+
+                let start_ta = segment.start_true_anomaly;
+                let end_ta = segment.end_true_anomaly.unwrap_or(
+                    if segment.retrograde { -(max_ta - HYPERBOLIC_RENDER_MARGIN) } else { max_ta - HYPERBOLIC_RENDER_MARGIN }
+                );
+
+                for i in 0..num_samples {
+                    let t = i as f64 / (num_samples - 1) as f64;
+                    let ta = start_ta + t * (end_ta - start_ta);
+
+                    if ta.abs() >= max_ta - HYPERBOLIC_SKIP_MARGIN {
+                        continue;
+                    }
+
+                    let denom = 1.0 + e * ta.cos();
+                    if denom <= 0.001 {
+                        continue;
+                    }
+                    let r = p / denom;
+                    if r <= 0.0 || !r.is_finite() {
+                        continue;
+                    }
+
+                    let angle = ta + arg_peri;
+                    let px = segment.parent_x + r * angle.cos();
+                    let py = segment.parent_y + r * angle.sin();
+
+                    // Convert to screen position
+                    let view_x = ((px - cam_x) as f32) * self.camera.zoom;
+                    let view_y = ((py - cam_y) as f32) * self.camera.zoom;
+                    let ndc_x = view_x / aspect_ratio;
+                    let ndc_y = view_y;
+                    let scr_x = (ndc_x + 1.0) * 0.5 * size.width as f32 / scale_factor;
+                    let scr_y = (1.0 - ndc_y) * 0.5 * size.height as f32 / scale_factor;
+
+                    let dx = click_x - scr_x;
+                    let dy = click_y - scr_y;
+                    let dist = (dx * dx + dy * dy).sqrt();
+
+                    if dist < click_threshold {
+                        match best_match {
+                            None => best_match = Some((ta, seg_idx, dist)),
+                            Some((_, _, prev_dist)) if dist < prev_dist => best_match = Some((ta, seg_idx, dist)),
+                            _ => {}
+                        }
+                    }
+                }
+            } else {
+                // Elliptical orbit
+                let a = segment.semi_major_axis;
+                let b = a * (1.0 - e * e).sqrt();
+                let c = a * e;
+                let center_x = segment.parent_x - c * arg_peri.cos();
+                let center_y = segment.parent_y - c * arg_peri.sin();
+
+                // Calculate angle range
+                let start_ta = segment.start_true_anomaly;
+                let start_ea = (start_ta.sin() * (1.0 - e * e).sqrt()).atan2(e + start_ta.cos());
+
+                let (start_angle, angle_span) = match segment.end_true_anomaly {
+                    Some(end_ta) => {
+                        let end_ea = (end_ta.sin() * (1.0 - e * e).sqrt()).atan2(e + end_ta.cos());
+                        let span = if segment.retrograde {
+                            let mut s = start_ea - end_ea;
+                            if s < 0.0 { s += std::f64::consts::TAU; }
+                            -s
+                        } else {
+                            let mut s = end_ea - start_ea;
+                            if s < 0.0 { s += std::f64::consts::TAU; }
+                            s
+                        };
+                        (start_ea, span)
+                    }
+                    None => (start_ea, std::f64::consts::TAU),
+                };
+
+                for i in 0..num_samples {
+                    let t = i as f64 / num_samples as f64;
+                    let ea = start_angle + t * angle_span;
+
+                    // Position on ellipse
+                    let ex = a * ea.cos();
+                    let ey = b * ea.sin();
+                    let rx = ex * arg_peri.cos() - ey * arg_peri.sin();
+                    let ry = ex * arg_peri.sin() + ey * arg_peri.cos();
+                    let px = center_x + rx;
+                    let py = center_y + ry;
+
+                    // Convert eccentric anomaly back to true anomaly
+                    let ta = 2.0 * ((1.0 + e).sqrt() * (ea / 2.0).sin())
+                        .atan2((1.0 - e).sqrt() * (ea / 2.0).cos());
+
+                    // Convert to screen position
+                    let view_x = ((px - cam_x) as f32) * self.camera.zoom;
+                    let view_y = ((py - cam_y) as f32) * self.camera.zoom;
+                    let ndc_x = view_x / aspect_ratio;
+                    let ndc_y = view_y;
+                    let scr_x = (ndc_x + 1.0) * 0.5 * size.width as f32 / scale_factor;
+                    let scr_y = (1.0 - ndc_y) * 0.5 * size.height as f32 / scale_factor;
+
+                    let dx = click_x - scr_x;
+                    let dy = click_y - scr_y;
+                    let dist = (dx * dx + dy * dy).sqrt();
+
+                    if dist < click_threshold {
+                        match best_match {
+                            None => best_match = Some((ta, seg_idx, dist)),
+                            Some((_, _, prev_dist)) if dist < prev_dist => best_match = Some((ta, seg_idx, dist)),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        best_match.map(|(ta, idx, _)| (ta, idx))
+    }
+
+    /// Create a new maneuver node at the specified orbit position
+    pub fn create_maneuver_node(&mut self, true_anomaly: f64, segment_idx: usize) -> u64 {
+        let id = self.next_node_id;
+        self.next_node_id += 1;
+
+        // Get segment data - store the orbit parameters
+        if let Some(segment) = self.current_trajectory.get(segment_idx) {
+            self.maneuver_nodes.push(ManeuverNode {
+                id,
+                semi_major_axis: segment.semi_major_axis,
+                eccentricity: segment.eccentricity,
+                argument_of_periapsis: segment.argument_of_periapsis,
+                parent_x: segment.parent_x,
+                parent_y: segment.parent_y,
+                retrograde: segment.retrograde,
+                true_anomaly,
+                parent_idx: segment.parent_idx,
+                parent_mass: segment.parent_mass,
+                render_scale: segment.render_scale,
+                delta_v: super::types::ManeuverDeltaV::default(),
+                remaining_delta_v: super::types::ManeuverDeltaV::default(),
+            });
+        }
+
+        self.pending_orbit_click = None;
+        self.selected_maneuver_node = Some(id);
+        id
+    }
+
+    /// Delete a maneuver node by ID
+    pub fn delete_maneuver_node(&mut self, id: u64) {
+        self.maneuver_nodes.retain(|n| n.id != id);
+        if self.selected_maneuver_node == Some(id) {
+            self.selected_maneuver_node = None;
+        }
+    }
+
+    /// Get mutable reference to a maneuver node by ID
+    pub fn get_maneuver_node_mut(&mut self, id: u64) -> Option<&mut ManeuverNode> {
+        self.maneuver_nodes.iter_mut().find(|n| n.id == id)
+    }
+
+    /// Set predicted trajectories from external calculation (main.rs)
+    pub fn set_predicted_trajectories(&mut self, trajectories: Vec<Vec<super::types::OrbitSegmentData>>) {
+        self.predicted_trajectories = trajectories;
+    }
+
+    /// Start dragging a maneuver node
+    pub fn start_dragging_node(&mut self, node_id: u64) {
+        self.dragging_maneuver_node = Some(node_id);
+    }
+
+    /// Stop dragging maneuver node
+    pub fn stop_dragging_node(&mut self) {
+        self.dragging_maneuver_node = None;
+    }
+
+    /// Update dragged node position based on mouse position (constrained to node's stored orbit)
+    pub fn update_dragged_node(&mut self, screen_x: f32, screen_y: f32) {
+        let node_id = match self.dragging_maneuver_node {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Get the node's stored orbit parameters and current parent position
+        let node_orbit = match self.maneuver_nodes.iter().find(|n| n.id == node_id) {
+            Some(n) => {
+                // Use current parent position from bodies
+                let (parent_x, parent_y) = self.bodies.get(n.parent_idx)
+                    .map(|b| (b.x, b.y))
+                    .unwrap_or((n.parent_x, n.parent_y));
+                (n.semi_major_axis, n.eccentricity, n.argument_of_periapsis,
+                 parent_x, parent_y, n.retrograde)
+            }
+            None => return,
+        };
+
+        // Find closest true_anomaly on the node's stored orbit
+        if let Some(new_ta) = self.find_closest_ta_on_orbit(screen_x, screen_y, node_orbit) {
+            if let Some(node) = self.maneuver_nodes.iter_mut().find(|n| n.id == node_id) {
+                node.true_anomaly = new_ta;
+            }
+        }
+    }
+
+    /// Find the closest true anomaly on a given orbit to the screen position
+    fn find_closest_ta_on_orbit(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        orbit: (f64, f64, f64, f64, f64, bool), // (a, e, arg_peri, parent_x, parent_y, retrograde)
+    ) -> Option<f64> {
+        let (a, e, arg_peri, parent_x, parent_y, _retrograde) = orbit;
+
+        let scale_factor = self.window.scale_factor() as f32;
+        let click_x = screen_x / scale_factor;
+        let click_y = screen_y / scale_factor;
+
+        let cam_x = self.camera.position[0];
+        let cam_y = self.camera.position[1];
+        let aspect_ratio = self.camera.aspect_ratio;
+        let size = self.size;
+
+        let mut best_match: Option<(f64, f32)> = None; // (true_anomaly, distance)
+        let num_samples = 360;
+
+        if e >= 1.0 {
+            // Hyperbolic
+            let a_abs = a.abs();
+            let p = a_abs * (e * e - 1.0);
+            let max_ta = (-1.0 / e).acos();
+
+            for i in 0..num_samples {
+                let t = i as f64 / (num_samples - 1) as f64;
+                let ta = -max_ta + HYPERBOLIC_RENDER_MARGIN + t * 2.0 * (max_ta - HYPERBOLIC_RENDER_MARGIN);
+
+                let denom = 1.0 + e * ta.cos();
+                if denom <= 0.001 { continue; }
+                let r = p / denom;
+                if r <= 0.0 || !r.is_finite() { continue; }
+
+                let angle = ta + arg_peri;
+                let world_x = parent_x + r * angle.cos();
+                let world_y = parent_y + r * angle.sin();
+
+                let view_x = ((world_x - cam_x) as f32) * self.camera.zoom;
+                let view_y = ((world_y - cam_y) as f32) * self.camera.zoom;
+                let ndc_x = view_x / aspect_ratio;
+                let ndc_y = view_y;
+                let scr_x = (ndc_x + 1.0) * 0.5 * size.width as f32 / scale_factor;
+                let scr_y = (1.0 - ndc_y) * 0.5 * size.height as f32 / scale_factor;
+
+                let dx = click_x - scr_x;
+                let dy = click_y - scr_y;
+                let dist = (dx * dx + dy * dy).sqrt();
+
+                match best_match {
+                    None => best_match = Some((ta, dist)),
+                    Some((_, prev_dist)) if dist < prev_dist => best_match = Some((ta, dist)),
+                    _ => {}
+                }
+            }
+        } else {
+            // Elliptical
+            let b = a * (1.0 - e * e).sqrt();
+            let c = a * e;
+            let center_x = parent_x - c * arg_peri.cos();
+            let center_y = parent_y - c * arg_peri.sin();
+
+            for i in 0..num_samples {
+                let t = i as f64 / num_samples as f64;
+                let ea = t * std::f64::consts::TAU;
+
+                let ex = a * ea.cos();
+                let ey = b * ea.sin();
+                let rx = ex * arg_peri.cos() - ey * arg_peri.sin();
+                let ry = ex * arg_peri.sin() + ey * arg_peri.cos();
+                let world_x = center_x + rx;
+                let world_y = center_y + ry;
+
+                // Convert eccentric anomaly to true anomaly
+                let ta = 2.0 * ((1.0 + e).sqrt() * (ea / 2.0).sin())
+                    .atan2((1.0 - e).sqrt() * (ea / 2.0).cos());
+
+                let view_x = ((world_x - cam_x) as f32) * self.camera.zoom;
+                let view_y = ((world_y - cam_y) as f32) * self.camera.zoom;
+                let ndc_x = view_x / aspect_ratio;
+                let ndc_y = view_y;
+                let scr_x = (ndc_x + 1.0) * 0.5 * size.width as f32 / scale_factor;
+                let scr_y = (1.0 - ndc_y) * 0.5 * size.height as f32 / scale_factor;
+
+                let dx = click_x - scr_x;
+                let dy = click_y - scr_y;
+                let dist = (dx * dx + dy * dy).sqrt();
+
+                match best_match {
+                    None => best_match = Some((ta, dist)),
+                    Some((_, prev_dist)) if dist < prev_dist => best_match = Some((ta, dist)),
+                    _ => {}
+                }
+            }
+        }
+
+        best_match.map(|(ta, _)| ta)
+    }
+
+    /// Get maneuver nodes for external processing
+    pub fn get_maneuver_nodes(&self) -> &[ManeuverNode] {
+        &self.maneuver_nodes
+    }
+
+    /// Get current trajectory for external processing
+    pub fn get_current_trajectory(&self) -> &[super::types::OrbitSegmentData] {
+        &self.current_trajectory
+    }
+
+    /// Get world position for a maneuver node (calculated from stored orbit + current parent position)
+    fn maneuver_node_world_position(&self, node: &ManeuverNode) -> Option<[f64; 2]> {
+        let parent = self.bodies.get(node.parent_idx)?;
+        Some(node.world_pos(parent.x, parent.y))
+    }
+
+    /// Get the current autopilot target
+    pub fn get_autopilot_target(&self) -> AutopilotTarget {
+        self.autopilot_target
+    }
+
+    /// Get the selected maneuver node (if any)
+    pub fn get_selected_maneuver_node(&self) -> Option<&ManeuverNode> {
+        self.selected_maneuver_node
+            .and_then(|id| self.maneuver_nodes.iter().find(|n| n.id == id))
+    }
+
+    /// Apply a burn to the selected maneuver node, reducing its remaining delta-v
+    /// burn_direction: unit vector of the ship's thrust direction
+    /// delta_v_magnitude: how much delta-v was applied this frame (m/s)
+    /// Note: Only affects remaining_delta_v, not the original delta_v (which defines the trajectory)
+    pub fn apply_burn_to_maneuver(&mut self, burn_direction: [f64; 2], delta_v_magnitude: f64) {
+        if let Some(node_id) = self.selected_maneuver_node {
+            if let Some(node) = self.maneuver_nodes.iter_mut().find(|n| n.id == node_id) {
+                // Get the maneuver's prograde and radial unit vectors
+                let prograde = node.prograde_unit();
+                let radial = node.radial_unit();
+
+                // Project the burn onto the maneuver's coordinate system
+                let burn_prograde = burn_direction[0] * prograde[0] + burn_direction[1] * prograde[1];
+                let burn_radial = burn_direction[0] * radial[0] + burn_direction[1] * radial[1];
+
+                // Calculate how much delta-v to subtract from each component
+                // Only subtract if burning in the correct direction (positive projection)
+                let prograde_contribution = burn_prograde * delta_v_magnitude;
+                let radial_contribution = burn_radial * delta_v_magnitude;
+
+                // Reduce the node's remaining delta-v, but don't go past zero or flip sign
+                if node.remaining_delta_v.prograde > 0.0 && prograde_contribution > 0.0 {
+                    node.remaining_delta_v.prograde = (node.remaining_delta_v.prograde - prograde_contribution).max(0.0);
+                } else if node.remaining_delta_v.prograde < 0.0 && prograde_contribution < 0.0 {
+                    node.remaining_delta_v.prograde = (node.remaining_delta_v.prograde - prograde_contribution).min(0.0);
+                }
+
+                if node.remaining_delta_v.radial_out > 0.0 && radial_contribution > 0.0 {
+                    node.remaining_delta_v.radial_out = (node.remaining_delta_v.radial_out - radial_contribution).max(0.0);
+                } else if node.remaining_delta_v.radial_out < 0.0 && radial_contribution < 0.0 {
+                    node.remaining_delta_v.radial_out = (node.remaining_delta_v.radial_out - radial_contribution).min(0.0);
+                }
+            }
+        }
+    }
+
 }

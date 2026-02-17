@@ -8,8 +8,8 @@ use winit::{
 };
 
 use space_game::bodies::SolarSystem;
-use space_game::render::{RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, OrbitSegmentData};
-use space_game::ship::{Ship, ShipInput, SHIP_SIZE};
+use space_game::render::{AutopilotTarget, RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, OrbitSegmentData};
+use space_game::ship::{Ship, ShipInput, SHIP_SIZE, MAX_THRUST_ACCELERATION, ROTATION_ACCEL};
 
 // 1:1 Real-Scale Solar System Simulation
 // All physics use real-world values: masses, radii, distances, orbital velocities
@@ -103,6 +103,116 @@ fn main() {
 
                             // Update ship physics
                             ship.update(dt * time_warp, time_warp, &ship_input, &solar_system);
+
+                            // Autopilot rotation control (disabled during on-rails warp)
+                            let autopilot_target = render_state.get_autopilot_target();
+                            if autopilot_target != AutopilotTarget::Off && !ship.on_rails {
+                                // Calculate target angle based on autopilot mode
+                                let target_angle: Option<f64> = match autopilot_target {
+                                    AutopilotTarget::Prograde | AutopilotTarget::Retrograde |
+                                    AutopilotTarget::RadialIn | AutopilotTarget::RadialOut => {
+                                        // Use ship's relative velocity for direction calculation
+                                        let vel = ship.rel_velocity;
+                                        let vel_mag = (vel[0] * vel[0] + vel[1] * vel[1]).sqrt();
+                                        if vel_mag > 0.1 {
+                                            let prograde_angle = vel[1].atan2(vel[0]);
+                                            match autopilot_target {
+                                                AutopilotTarget::Prograde => Some(prograde_angle),
+                                                AutopilotTarget::Retrograde => Some(prograde_angle + std::f64::consts::PI),
+                                                AutopilotTarget::RadialOut => {
+                                                    // Radial out points away from parent body (perpendicular to velocity, right-hand rule)
+                                                    Some(prograde_angle + std::f64::consts::FRAC_PI_2)
+                                                }
+                                                AutopilotTarget::RadialIn => {
+                                                    // Radial in points toward parent body
+                                                    Some(prograde_angle - std::f64::consts::FRAC_PI_2)
+                                                }
+                                                _ => None,
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    AutopilotTarget::ManeuverNode => {
+                                        // Point toward the combined delta-v direction of the selected maneuver node
+                                        if let Some(node) = render_state.get_selected_maneuver_node() {
+                                            let prograde = node.prograde_unit();
+                                            let radial = node.radial_unit();
+                                            // Calculate total delta-v direction
+                                            let dv_x = prograde[0] * node.delta_v.prograde + radial[0] * node.delta_v.radial_out;
+                                            let dv_y = prograde[1] * node.delta_v.prograde + radial[1] * node.delta_v.radial_out;
+                                            let dv_mag = (dv_x * dv_x + dv_y * dv_y).sqrt();
+                                            if dv_mag > 0.001 {
+                                                Some(dv_y.atan2(dv_x))
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    AutopilotTarget::Off => None,
+                                };
+
+                                // Rotate ship toward target angle using acceleration
+                                if let Some(target) = target_angle {
+                                    // Normalize angle difference
+                                    let mut angle_diff = target - ship.rotation;
+                                    while angle_diff > std::f64::consts::PI {
+                                        angle_diff -= std::f64::consts::TAU;
+                                    }
+                                    while angle_diff < -std::f64::consts::PI {
+                                        angle_diff += std::f64::consts::TAU;
+                                    }
+
+                                    let vel = ship.rotational_velocity;
+                                    let accel = ROTATION_ACCEL;
+                                    let threshold = 0.002; // ~0.1 degrees
+
+                                    if angle_diff.abs() < threshold && vel.abs() < 0.01 {
+                                        // Close enough and nearly stopped - snap to target
+                                        ship.rotational_velocity = 0.0;
+                                        ship.rotation = target;
+                                    } else {
+                                        // Calculate stopping distance at current velocity: s = v²/(2a)
+                                        let stopping_dist = vel.powi(2) / (2.0 * accel);
+
+                                        // Are we going the right direction?
+                                        let going_right_way = (angle_diff > 0.0 && vel >= 0.0) || (angle_diff < 0.0 && vel <= 0.0);
+
+                                        // Should we brake? Start braking when stopping distance reaches 50% of remaining
+                                        let should_brake = going_right_way && stopping_dist >= angle_diff.abs() * 0.5;
+
+                                        if should_brake {
+                                            // Brake: accelerate opposite to velocity
+                                            if vel > 0.0 {
+                                                ship.rotational_velocity -= accel * dt;
+                                            } else {
+                                                ship.rotational_velocity += accel * dt;
+                                            }
+                                        } else {
+                                            // Accelerate toward target
+                                            if angle_diff > 0.0 {
+                                                ship.rotational_velocity += accel * dt;
+                                            } else {
+                                                ship.rotational_velocity -= accel * dt;
+                                            }
+                                        }
+
+                                        // Apply rotational velocity
+                                        ship.rotation += ship.rotational_velocity * dt;
+                                    }
+                                }
+                            }
+
+                            // Apply burns to maneuver node delta-v
+                            // When ship is thrusting, reduce the selected maneuver node's delta-v
+                            if ship.throttle > 0.0 && render_state.get_selected_maneuver_node().is_some() {
+                                let time_warp = WARP_LEVELS[warp_index];
+                                let delta_v_this_frame = ship.throttle * MAX_THRUST_ACCELERATION * dt * time_warp;
+                                let burn_direction = [ship.rotation.cos(), ship.rotation.sin()];
+                                render_state.apply_burn_to_maneuver(burn_direction, delta_v_this_frame);
+                            }
 
                             // Collect body data for rendering
                             let mut scaled_positions: Vec<[f64; 2]> =
@@ -219,35 +329,19 @@ fn main() {
                             let altitude = distance_from_soi - soi_body.radius;
 
                             // Calculate patched conics trajectory
-                            let patched_traj_raw = ship.calculate_patched_trajectory(&solar_system);
+                            let patched_traj_raw = ship.get_patched_trajectory(&solar_system);
 
                             // Get time to intercept from first segment's end_time
                             let time_to_intercept = patched_traj_raw.as_ref()
                                 .and_then(|traj| traj.segments.first())
                                 .and_then(|seg| seg.end_time);
 
-                            // Auto-reduce time warp if approaching SOI transition too fast
-                            // Only applies when warp > 1000x and would reach SOI boundary in < 0.5 seconds
-                            if let Some(intercept_time) = time_to_intercept {
-                                let current_warp = WARP_LEVELS[warp_index];
-                                if current_warp > 1000.0 && intercept_time / current_warp < 0.5 {
-                                    // Find the highest warp level that won't reach SOI boundary in < 0.5 seconds
-                                    while warp_index > 0 {
-                                        warp_index -= 1;
-                                        let lower_warp = WARP_LEVELS[warp_index];
-                                        // Stop if this warp level is safe (>= 0.5 seconds to boundary)
-                                        if intercept_time / lower_warp >= 0.5 {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-
                             let patched_trajectory = patched_traj_raw
                                 .map(|traj| {
                                     traj.segments.iter().enumerate().map(|(i, seg)| {
                                         let parent_pos = scaled_positions[seg.parent_idx];
                                         let parent_soi = solar_system.bodies[seg.parent_idx].soi_radius;
+                                        let parent_mass = solar_system.bodies[seg.parent_idx].mass;
                                         // Dim color for future segments
                                         let alpha = if i == 0 { 0.7 } else { 0.4 };
                                         OrbitSegmentData {
@@ -263,11 +357,18 @@ fn main() {
                                             retrograde: seg.retrograde,
                                             soi_radius: parent_soi * SCALE * BODY_SCALE,
                                             parent_body_radius: solar_system.bodies[seg.parent_idx].radius,
+                                            parent_mass,
+                                            parent_idx: seg.parent_idx,
                                             render_scale: SCALE * BODY_SCALE,
                                         }
                                     }).collect::<Vec<_>>()
                                 })
                                 .unwrap_or_default();
+
+                            // Get current true anomaly from first trajectory segment
+                            let current_true_anomaly = patched_trajectory.first()
+                                .map(|seg| seg.start_true_anomaly)
+                                .unwrap_or(0.0);
 
                             let ship_render = ShipRenderData {
                                 x: ship_abs_pos[0] * SCALE * BODY_SCALE,
@@ -282,9 +383,76 @@ fn main() {
                                 soi_body_name: soi_body.name.clone(),
                                 throttle: ship.throttle,
                                 time_to_intercept,
+                                acceleration: MAX_THRUST_ACCELERATION,
+                                current_true_anomaly,
                             };
 
                             render_state.update_bodies_orbits_and_ship(&bodies, &orbits, Some(&ship_render), SCALE);
+
+                            // Calculate predicted trajectories for maneuver nodes
+                            let mut predicted_trajectories: Vec<Vec<OrbitSegmentData>> = Vec::new();
+                            for node in render_state.get_maneuver_nodes() {
+                                if node.total_delta_v() < 0.001 {
+                                    continue;
+                                }
+
+                                // Node calculates position and velocity from stored orbit
+                                let scale = node.render_scale;
+                                let parent_idx = node.parent_idx;
+
+                                // Get current parent position
+                                let current_parent_pos = scaled_positions[parent_idx];
+                                let current_parent_x = current_parent_pos[0] * SCALE;
+                                let current_parent_y = current_parent_pos[1] * SCALE;
+
+                                let world_pos = node.world_pos(current_parent_x, current_parent_y);
+                                let velocity = node.velocity();
+
+                                // Convert world position back to relative position (unscaled)
+                                let rel_x = (world_pos[0] - current_parent_x) / scale;
+                                let rel_y = (world_pos[1] - current_parent_y) / scale;
+                                let pos = [rel_x, rel_y];
+
+                                // Get velocity from node and apply delta-v
+                                let prograde = node.prograde_unit();
+                                let radial = node.radial_unit();
+
+                                let new_vel = [
+                                    velocity[0] + node.delta_v.prograde * prograde[0] + node.delta_v.radial_out * radial[0],
+                                    velocity[1] + node.delta_v.prograde * prograde[1] + node.delta_v.radial_out * radial[1],
+                                ];
+
+                                // Calculate predicted trajectory using ship's method
+                                if let Some(pred_traj) = ship.calculate_predicted_trajectory(
+                                    pos, new_vel, parent_idx, &solar_system
+                                ) {
+                                    let segments: Vec<OrbitSegmentData> = pred_traj.segments.iter().enumerate().map(|(i, seg)| {
+                                        let parent_pos = scaled_positions[seg.parent_idx];
+                                        let parent_soi = solar_system.bodies[seg.parent_idx].soi_radius;
+                                        let parent_mass = solar_system.bodies[seg.parent_idx].mass;
+                                        let alpha = if i == 0 { 0.7 } else { 0.5 };
+                                        OrbitSegmentData {
+                                            parent_x: parent_pos[0] * SCALE,
+                                            parent_y: parent_pos[1] * SCALE,
+                                            semi_major_axis: seg.orbit.semi_major_axis * SCALE * BODY_SCALE,
+                                            eccentricity: seg.orbit.eccentricity,
+                                            argument_of_periapsis: seg.orbit.argument_of_periapsis,
+                                            start_true_anomaly: seg.start_true_anomaly,
+                                            end_true_anomaly: seg.end_true_anomaly,
+                                            color: [0.2, 0.8, 0.2, alpha],  // Green
+                                            is_first_segment: i == 0,
+                                            retrograde: seg.retrograde,
+                                            soi_radius: parent_soi * SCALE * BODY_SCALE,
+                                            parent_body_radius: solar_system.bodies[seg.parent_idx].radius,
+                                            parent_mass,
+                                            parent_idx: seg.parent_idx,
+                                            render_scale: SCALE * BODY_SCALE,
+                                        }
+                                    }).collect();
+                                    predicted_trajectories.push(segments);
+                                }
+                            }
+                            render_state.set_predicted_trajectories(predicted_trajectories);
 
                             let body_names: Vec<String> =
                                 solar_system.bodies.iter().map(|b| b.name.clone()).collect();
@@ -304,14 +472,23 @@ fn main() {
                         WindowEvent::MouseInput { state, button, .. } => {
                             if !egui_consumed && *button == MouseButton::Left {
                                 if *state == ElementState::Pressed {
-                                    render_state.camera.is_dragging = true;
-
                                     let now = Instant::now();
                                     let mouse_pos = render_state.camera.last_mouse_pos;
                                     let dx = mouse_pos[0] - last_click_pos[0];
                                     let dy = mouse_pos[1] - last_click_pos[1];
                                     let dist = (dx * dx + dy * dy).sqrt();
 
+                                    // Check if clicking on a maneuver node - start dragging
+                                    if let Some(node_id) = render_state.maneuver_node_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
+                                        render_state.start_dragging_node(node_id);
+                                        render_state.selected_maneuver_node = Some(node_id);
+                                        render_state.pending_orbit_click = None;
+                                        // Don't set camera dragging when dragging a node
+                                    } else {
+                                        render_state.camera.is_dragging = true;
+                                    }
+
+                                    // Check for double-click on body
                                     if let Some(last_time) = last_click_time {
                                         if now.duration_since(last_time) < DOUBLE_CLICK_TIME
                                             && dist < DOUBLE_CLICK_DIST
@@ -327,16 +504,34 @@ fn main() {
                                                 );
                                             }
                                             last_click_time = None;
-                                        } else {
+                                        } else if render_state.dragging_maneuver_node.is_none() {
+                                            // Single click - check for orbit click (not when dragging node)
+                                            if let Some(orbit_pos) = render_state.orbit_click_position(mouse_pos[0], mouse_pos[1]) {
+                                                // Clicked on orbit - show create node button
+                                                render_state.pending_orbit_click = Some(orbit_pos);
+                                                render_state.selected_maneuver_node = None;
+                                            } else {
+                                                // Clicked elsewhere - clear pending state
+                                                render_state.pending_orbit_click = None;
+                                            }
                                             last_click_time = Some(now);
                                             last_click_pos = mouse_pos;
                                         }
-                                    } else {
+                                    } else if render_state.dragging_maneuver_node.is_none() {
+                                        // First click - check for orbit click (not when already dragging a node)
+                                        if let Some(orbit_pos) = render_state.orbit_click_position(mouse_pos[0], mouse_pos[1]) {
+                                            render_state.pending_orbit_click = Some(orbit_pos);
+                                            render_state.selected_maneuver_node = None;
+                                        } else {
+                                            render_state.pending_orbit_click = None;
+                                        }
                                         last_click_time = Some(now);
                                         last_click_pos = mouse_pos;
                                     }
                                 } else {
+                                    // Mouse released
                                     render_state.camera.is_dragging = false;
+                                    render_state.stop_dragging_node();
                                 }
                             }
                         }
@@ -345,7 +540,10 @@ fn main() {
                             let x = position.x as f32;
                             let y = position.y as f32;
 
-                            if render_state.camera.is_dragging && !egui_consumed {
+                            // Update dragged maneuver node position
+                            if render_state.dragging_maneuver_node.is_some() {
+                                render_state.update_dragged_node(x, y);
+                            } else if render_state.camera.is_dragging && !egui_consumed {
                                 let dx = x - render_state.camera.last_mouse_pos[0];
                                 let dy = y - render_state.camera.last_mouse_pos[1];
                                 let scale = 2.0 / render_state.size.height as f32;

@@ -68,64 +68,38 @@ impl Ship {
         }
 
         // Check if we've entered a child body's SOI
-        // Skip this check if current body has no children (e.g., Moon)
-        let has_children = solar_system.bodies.iter().any(|b| b.parent == Some(self.soi_body));
-        if !has_children {
-            return;
-        }
+        // Use simple distance check instead of expensive find_soi_intersection
+        // This runs every frame, so it must be fast
+        for (child_idx, child) in solar_system.bodies.iter().enumerate() {
+            if child.parent != Some(self.soi_body) {
+                continue;
+            }
 
-        if let Some(ref ship_orbit) = self.cached_orbit {
-            let parent = &solar_system.bodies[ship_orbit.parent_idx];
+            let child_pos = self.get_body_position_at_time(child_idx, solar_system.time, solar_system);
+            let dx = self.rel_position[0] - child_pos[0];
+            let dy = self.rel_position[1] - child_pos[1];
+            let dist = (dx * dx + dy * dy).sqrt();
 
-            let intersection = self.find_soi_intersection(
-                &ship_orbit.orbit,
-                ship_orbit.parent_idx,
-                ship_orbit.mean_anomaly,
-                ship_orbit.retrograde,
-                solar_system,
-                solar_system.time,
-            );
+            if dist < child.soi_radius {
+                // We've entered this child's SOI - convert to child-relative coordinates
+                let child_vel = self.get_body_velocity_at_time(child_idx, solar_system.time, solar_system);
 
-            if let Some((intersect_ta, intersect_time, child_idx, true)) = intersection {
-                let child_pos = self.get_body_position_at_time(child_idx, solar_system.time, solar_system);
-                let dx = self.rel_position[0] - child_pos[0];
-                let dy = self.rel_position[1] - child_pos[1];
-                let dist = (dx * dx + dy * dy).sqrt();
+                self.rel_position = [dx, dy];
+                self.rel_velocity = [
+                    self.rel_velocity[0] - child_vel[0],
+                    self.rel_velocity[1] - child_vel[1],
+                ];
 
-                if dist < solar_system.bodies[child_idx].soi_radius {
-                    let intersect_mean_anomaly = self.true_to_mean_anomaly(&ship_orbit.orbit, intersect_ta);
+                self.soi_body = child_idx;
 
-                    let ship_pos_at_cross = ship_orbit.orbit.position_from_mean_anomaly(intersect_mean_anomaly, parent.mass);
-                    let ship_vel_at_cross = ship_orbit.orbit.velocity_from_mean_anomaly_with_direction(
-                        intersect_mean_anomaly,
-                        parent.mass,
-                        ship_orbit.retrograde,
-                    );
-
-                    let exact_cross_time = solar_system.time + intersect_time;
-                    let child_pos_at_cross = self.get_body_position_at_time(child_idx, exact_cross_time, solar_system);
-                    let child_vel_at_cross = self.get_body_velocity_at_time(child_idx, exact_cross_time, solar_system);
-
-                    self.rel_position = [
-                        ship_pos_at_cross[0] - child_pos_at_cross[0],
-                        ship_pos_at_cross[1] - child_pos_at_cross[1],
-                    ];
-                    self.rel_velocity = [
-                        ship_vel_at_cross[0] - child_vel_at_cross[0],
-                        ship_vel_at_cross[1] - child_vel_at_cross[1],
-                    ];
-
-                    self.soi_body = child_idx;
-
-                    if let Some(new_orbit) = self.calculate_orbit_with_anomaly(solar_system) {
-                        self.cached_orbit = Some(new_orbit);
-                    } else {
-                        self.on_rails = false;
-                    }
-
-                    println!("SOI: Entered {} SOI", solar_system.bodies[child_idx].name);
-                    return;
+                if let Some(new_orbit) = self.calculate_orbit_with_anomaly(solar_system) {
+                    self.cached_orbit = Some(new_orbit);
+                } else {
+                    self.on_rails = false;
                 }
+
+                println!("SOI: Entered {} SOI", solar_system.bodies[child_idx].name);
+                return;
             }
         }
     }
