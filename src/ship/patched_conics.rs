@@ -414,7 +414,7 @@ impl Ship {
         // Refine child body intersections with binary search
         if let Some((_, approx_time, child_idx, true)) = best_intersection {
             let child = &solar_system.bodies[child_idx];
-            if child.orbit.is_some() {
+            if let Some(ref child_orbit) = child.orbit {
                 let search_window = std::f64::consts::TAU / num_samples as f64 * 2.0;
                 let approx_delta_m = approx_time * mean_motion;
 
@@ -427,8 +427,7 @@ impl Ship {
                     let mid_time = mid_delta_m / mean_motion;
 
                     let ship_pos = orbit.position_from_mean_anomaly(mid_sample_m, parent.mass);
-                    let child_pos = child.orbit.as_ref().unwrap()
-                        .position_at(base_time + mid_time, parent.mass);
+                    let child_pos = child_orbit.position_at(base_time + mid_time, parent.mass);
 
                     let dx = ship_pos[0] - child_pos[0];
                     let dy = ship_pos[1] - child_pos[1];

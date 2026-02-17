@@ -8,8 +8,8 @@ use winit::{
 };
 
 use space_game::bodies::SolarSystem;
-use space_game::render::{AutopilotTarget, RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, OrbitSegmentData};
-use space_game::ship::{Ship, ShipInput, SHIP_SIZE, MAX_THRUST_ACCELERATION, ROTATION_ACCEL};
+use space_game::render::{RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, OrbitSegmentData};
+use space_game::ship::{AutopilotTarget, Ship, ShipInput, SHIP_SIZE, MAX_THRUST_ACCELERATION};
 
 // 1:1 Real-Scale Solar System Simulation
 // All physics use real-world values: masses, radii, distances, orbital velocities
@@ -107,101 +107,9 @@ fn main() {
                             // Autopilot rotation control (disabled during on-rails warp)
                             let autopilot_target = render_state.get_autopilot_target();
                             if autopilot_target != AutopilotTarget::Off && !ship.on_rails {
-                                // Calculate target angle based on autopilot mode
-                                let target_angle: Option<f64> = match autopilot_target {
-                                    AutopilotTarget::Prograde | AutopilotTarget::Retrograde |
-                                    AutopilotTarget::RadialIn | AutopilotTarget::RadialOut => {
-                                        // Use ship's relative velocity for direction calculation
-                                        let vel = ship.rel_velocity;
-                                        let vel_mag = (vel[0] * vel[0] + vel[1] * vel[1]).sqrt();
-                                        if vel_mag > 0.1 {
-                                            let prograde_angle = vel[1].atan2(vel[0]);
-                                            match autopilot_target {
-                                                AutopilotTarget::Prograde => Some(prograde_angle),
-                                                AutopilotTarget::Retrograde => Some(prograde_angle + std::f64::consts::PI),
-                                                AutopilotTarget::RadialOut => {
-                                                    // Radial out points away from parent body (perpendicular to velocity, right-hand rule)
-                                                    Some(prograde_angle + std::f64::consts::FRAC_PI_2)
-                                                }
-                                                AutopilotTarget::RadialIn => {
-                                                    // Radial in points toward parent body
-                                                    Some(prograde_angle - std::f64::consts::FRAC_PI_2)
-                                                }
-                                                _ => None,
-                                            }
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                    AutopilotTarget::ManeuverNode => {
-                                        // Point toward the combined delta-v direction of the selected maneuver node
-                                        if let Some(node) = render_state.get_selected_maneuver_node() {
-                                            let prograde = node.prograde_unit();
-                                            let radial = node.radial_unit();
-                                            // Calculate total delta-v direction
-                                            let dv_x = prograde[0] * node.delta_v.prograde + radial[0] * node.delta_v.radial_out;
-                                            let dv_y = prograde[1] * node.delta_v.prograde + radial[1] * node.delta_v.radial_out;
-                                            let dv_mag = (dv_x * dv_x + dv_y * dv_y).sqrt();
-                                            if dv_mag > 0.001 {
-                                                Some(dv_y.atan2(dv_x))
-                                            } else {
-                                                None
-                                            }
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                    AutopilotTarget::Off => None,
-                                };
-
-                                // Rotate ship toward target angle using acceleration
-                                if let Some(target) = target_angle {
-                                    // Normalize angle difference
-                                    let mut angle_diff = target - ship.rotation;
-                                    while angle_diff > std::f64::consts::PI {
-                                        angle_diff -= std::f64::consts::TAU;
-                                    }
-                                    while angle_diff < -std::f64::consts::PI {
-                                        angle_diff += std::f64::consts::TAU;
-                                    }
-
-                                    let vel = ship.rotational_velocity;
-                                    let accel = ROTATION_ACCEL;
-                                    let threshold = 0.002; // ~0.1 degrees
-
-                                    if angle_diff.abs() < threshold && vel.abs() < 0.01 {
-                                        // Close enough and nearly stopped - snap to target
-                                        ship.rotational_velocity = 0.0;
-                                        ship.rotation = target;
-                                    } else {
-                                        // Calculate stopping distance at current velocity: s = v²/(2a)
-                                        let stopping_dist = vel.powi(2) / (2.0 * accel);
-
-                                        // Are we going the right direction?
-                                        let going_right_way = (angle_diff > 0.0 && vel >= 0.0) || (angle_diff < 0.0 && vel <= 0.0);
-
-                                        // Should we brake? Start braking when stopping distance reaches 50% of remaining
-                                        let should_brake = going_right_way && stopping_dist >= angle_diff.abs() * 0.5;
-
-                                        if should_brake {
-                                            // Brake: accelerate opposite to velocity
-                                            if vel > 0.0 {
-                                                ship.rotational_velocity -= accel * dt;
-                                            } else {
-                                                ship.rotational_velocity += accel * dt;
-                                            }
-                                        } else {
-                                            // Accelerate toward target
-                                            if angle_diff > 0.0 {
-                                                ship.rotational_velocity += accel * dt;
-                                            } else {
-                                                ship.rotational_velocity -= accel * dt;
-                                            }
-                                        }
-
-                                        // Apply rotational velocity
-                                        ship.rotation += ship.rotational_velocity * dt;
-                                    }
+                                let maneuver_node = render_state.get_selected_maneuver_node();
+                                if let Some(target_angle) = ship.autopilot_target_angle(autopilot_target, maneuver_node) {
+                                    ship.autopilot_rotate(target_angle, dt);
                                 }
                             }
 
@@ -577,26 +485,23 @@ fn main() {
                             ..
                         } => {
                             let pressed = *state == ElementState::Pressed;
-                            match logical_key {
-                                Key::Character(c) => {
-                                    match c.as_str() {
-                                        "w" | "W" => ship_input.throttle_up = pressed,
-                                        "s" | "S" => ship_input.throttle_down = pressed,
-                                        "z" | "Z" => ship_input.throttle_full = pressed,
-                                        "x" | "X" => ship_input.throttle_zero = pressed,
-                                        "a" | "A" => ship_input.rotate_left = pressed,
-                                        "d" | "D" => ship_input.rotate_right = pressed,
-                                        "`" => {
-                                            if pressed {
-                                                tracking_ship = true;
-                                                render_state.tracked_body = None;
-                                                println!("Focused on: Ship");
-                                            }
+                            if let Key::Character(c) = logical_key {
+                                match c.as_str() {
+                                    "w" | "W" => ship_input.throttle_up = pressed,
+                                    "s" | "S" => ship_input.throttle_down = pressed,
+                                    "z" | "Z" => ship_input.throttle_full = pressed,
+                                    "x" | "X" => ship_input.throttle_zero = pressed,
+                                    "a" | "A" => ship_input.rotate_left = pressed,
+                                    "d" | "D" => ship_input.rotate_right = pressed,
+                                    "`" => {
+                                        if pressed {
+                                            tracking_ship = true;
+                                            render_state.tracked_body = None;
+                                            println!("Focused on: Ship");
                                         }
-                                        _ => {}
                                     }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
                         }
 

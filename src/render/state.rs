@@ -3,9 +3,10 @@ use wgpu::util::DeviceExt;
 use winit::window::Window;
 use egui_wgpu::ScreenDescriptor;
 
+use crate::ship::AutopilotTarget;
 use super::camera::Camera;
 use super::types::{
-    AutopilotTarget, BodyData, ManeuverNode, OrbitRenderData, ShipOrbitData, ShipRenderData, Vertex,
+    BodyData, ManeuverNode, OrbitRenderData, ShipOrbitData, ShipRenderData, Vertex,
     HYPERBOLIC_RENDER_MARGIN, HYPERBOLIC_SKIP_MARGIN,
 };
 

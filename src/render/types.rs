@@ -104,18 +104,6 @@ pub struct OrbitSegmentData {
     pub render_scale: f64,
 }
 
-/// Autopilot target direction for ship rotation
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum AutopilotTarget {
-    #[default]
-    Off,
-    Prograde,
-    Retrograde,
-    RadialIn,
-    RadialOut,
-    ManeuverNode,
-}
-
 /// Delta-V components for a maneuver node
 #[derive(Clone, Debug, Default)]
 pub struct ManeuverDeltaV {

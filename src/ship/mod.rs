@@ -1,8 +1,21 @@
 use crate::bodies::{SolarSystem, G, Orbit};
+use crate::render::ManeuverNode;
 
 mod orbit;
 mod patched_conics;
 mod soi;
+
+/// Autopilot target direction for ship rotation
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AutopilotTarget {
+    #[default]
+    Off,
+    Prograde,
+    Retrograde,
+    RadialIn,
+    RadialOut,
+    ManeuverNode,
+}
 
 /// Ship size in meters (physics space)
 pub const SHIP_SIZE: f64 = 10.0;
@@ -291,7 +304,7 @@ impl Ship {
             let direction = if ship_orbit.retrograde { -1.0 } else { 1.0 };
             ship_orbit.mean_anomaly += direction * mean_motion * dt;
 
-            ship_orbit.mean_anomaly = ship_orbit.mean_anomaly % std::f64::consts::TAU;
+            ship_orbit.mean_anomaly %= std::f64::consts::TAU;
             if ship_orbit.mean_anomaly < 0.0 {
                 ship_orbit.mean_anomaly += std::f64::consts::TAU;
             }
@@ -334,7 +347,7 @@ impl Ship {
 
         // Cap physics substeps to prevent lag at high time warp when not on rails
         const MAX_SUBSTEPS: usize = 1000;
-        let num_steps = ((dt / MAX_PHYSICS_DT).ceil() as usize).max(1).min(MAX_SUBSTEPS);
+        let num_steps = ((dt / MAX_PHYSICS_DT).ceil() as usize).clamp(1, MAX_SUBSTEPS);
         let sub_dt = dt / num_steps as f64;
 
         for _ in 0..num_steps {
@@ -721,6 +734,102 @@ impl Ship {
             None
         } else {
             Some(PatchedTrajectory { segments })
+        }
+    }
+
+    /// Calculate target angle for autopilot based on current mode
+    /// Returns the target rotation angle, or None if no valid target
+    pub fn autopilot_target_angle(
+        &self,
+        target: AutopilotTarget,
+        maneuver_node: Option<&ManeuverNode>,
+    ) -> Option<f64> {
+        match target {
+            AutopilotTarget::Off => None,
+            AutopilotTarget::Prograde | AutopilotTarget::Retrograde |
+            AutopilotTarget::RadialIn | AutopilotTarget::RadialOut => {
+                let vel = self.rel_velocity;
+                let vel_mag = (vel[0] * vel[0] + vel[1] * vel[1]).sqrt();
+                if vel_mag > 0.1 {
+                    let prograde_angle = vel[1].atan2(vel[0]);
+                    match target {
+                        AutopilotTarget::Prograde => Some(prograde_angle),
+                        AutopilotTarget::Retrograde => Some(prograde_angle + std::f64::consts::PI),
+                        AutopilotTarget::RadialOut => Some(prograde_angle + std::f64::consts::FRAC_PI_2),
+                        AutopilotTarget::RadialIn => Some(prograde_angle - std::f64::consts::FRAC_PI_2),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            AutopilotTarget::ManeuverNode => {
+                if let Some(node) = maneuver_node {
+                    let prograde = node.prograde_unit();
+                    let radial = node.radial_unit();
+                    let dv_x = prograde[0] * node.delta_v.prograde + radial[0] * node.delta_v.radial_out;
+                    let dv_y = prograde[1] * node.delta_v.prograde + radial[1] * node.delta_v.radial_out;
+                    let dv_mag = (dv_x * dv_x + dv_y * dv_y).sqrt();
+                    if dv_mag > 0.001 {
+                        Some(dv_y.atan2(dv_x))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Update ship rotation toward target angle using autopilot
+    /// Uses acceleration-based control with stopping distance braking
+    pub fn autopilot_rotate(&mut self, target_angle: f64, dt: f64) {
+        // Normalize angle difference to [-PI, PI]
+        let mut angle_diff = target_angle - self.rotation;
+        while angle_diff > std::f64::consts::PI {
+            angle_diff -= std::f64::consts::TAU;
+        }
+        while angle_diff < -std::f64::consts::PI {
+            angle_diff += std::f64::consts::TAU;
+        }
+
+        let vel = self.rotational_velocity;
+        let accel = ROTATION_ACCEL;
+        let threshold = 0.002; // ~0.1 degrees
+
+        if angle_diff.abs() < threshold && vel.abs() < 0.01 {
+            // Close enough and nearly stopped - snap to target
+            self.rotational_velocity = 0.0;
+            self.rotation = target_angle;
+        } else {
+            // Calculate stopping distance at current velocity: s = v²/(2a)
+            let stopping_dist = vel.powi(2) / (2.0 * accel);
+
+            // Are we going the right direction?
+            let going_right_way = (angle_diff > 0.0 && vel >= 0.0) || (angle_diff < 0.0 && vel <= 0.0);
+
+            // Should we brake? Start braking when stopping distance reaches 50% of remaining
+            let should_brake = going_right_way && stopping_dist >= angle_diff.abs() * 0.5;
+
+            if should_brake {
+                // Brake: accelerate opposite to velocity
+                if vel > 0.0 {
+                    self.rotational_velocity -= accel * dt;
+                } else {
+                    self.rotational_velocity += accel * dt;
+                }
+            } else {
+                // Accelerate toward target
+                if angle_diff > 0.0 {
+                    self.rotational_velocity += accel * dt;
+                } else {
+                    self.rotational_velocity -= accel * dt;
+                }
+            }
+
+            // Apply rotational velocity
+            self.rotation += self.rotational_velocity * dt;
         }
     }
 }
