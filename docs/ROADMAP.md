@@ -49,11 +49,16 @@
 ## Phase 2: Playable Foundation (Weeks 7-14)
 
 ### Week 7-8: Maneuver Planning
-- [ ] Place maneuver node on orbit
-- [ ] Maneuver node: prograde/retrograde delta-v
-- [ ] Predict trajectory after maneuver burn
-- [ ] Execute maneuver (auto-burn or manual)
-- [ ] SOI encounter prediction (basic)
+- [x] Place maneuver node on orbit (click orbit line)
+- [x] Maneuver node: prograde/retrograde delta-v (slider UI)
+- [x] Maneuver node: radial in/out delta-v
+- [x] Predict trajectory after maneuver burn (patched conics)
+- [x] Autopilot modes (prograde, retrograde, radial in/out, maneuver node)
+- [x] Realistic ship rotation (acceleration/deceleration physics)
+- [x] Delta-v countdown during burns
+- [x] Execute maneuver (manual with autopilot assist)
+- [ ] Execute maneuver (auto-burn option)
+- [x] SOI encounter prediction (via trajectory)
 
 ### Week 11-12: Vehicle Editor
 - [ ] Editor mode vs flight mode
@@ -102,9 +107,9 @@
 
 ### Week 21-22: Flight Polish
 - [ ] Navball or heading indicator
-- [ ] Throttle control
-- [ ] SAS (stability assist, basic)
-- [ ] Orbit info display (Ap, Pe)
+- [x] Throttle control (W/S, Z/X keys)
+- [x] SAS/Autopilot (prograde, retrograde, radial, maneuver node)
+- [x] Orbit info display (Ap, Pe, period, eccentricity)
 - [ ] Better landing physics
 
 **Phase 3 Milestone**: Full part variety, functional resource system, complete home system.
@@ -194,8 +199,8 @@
 
 ## Current Status
 
-**Phase**: 1 (Core Engine) - COMPLETE
-**Last Updated**: 2026-02-16
+**Phase**: 2 (Playable Foundation) - IN PROGRESS
+**Last Updated**: 2026-02-17
 
 ### Phase 1 Completed Features
 - [x] Project scope defined
@@ -224,15 +229,26 @@
 - [x] Gravity calculation from parent body
 - [x] Patched conics trajectory prediction across SOI boundaries
 - [x] SOI transitions with precise frame conversion
-- [x] On-rails time warp up to 1 billion x
+- [x] On-rails time warp up to 1 billion x (physics warp up to 100x)
 - [x] Auto time warp reduction near SOI boundaries (< 0.5 seconds)
 - [x] Hyperbolic orbit rendering (prograde and retrograde)
 - [x] HUD with velocity, altitude, throttle, orbital info
 
-### Next Phase: Phase 2 (Playable Foundation)
-1. Maneuver node system
-2. Vehicle editor
-3. Core game loop (launch, staging, fuel, save/load)
+### Phase 2 Progress (Maneuver Planning)
+- [x] Place maneuver node on orbit (click orbit line)
+- [x] Maneuver node: prograde/retrograde/radial delta-v sliders
+- [x] Non-linear slider scaling (1-1000 m/s/s precision)
+- [x] Predict trajectory after maneuver burn
+- [x] Autopilot modes (prograde, retrograde, radial in/out, maneuver node)
+- [x] Realistic ship rotation with acceleration physics (30°/s²)
+- [x] Delta-v countdown during burns
+- [x] Ap/Pe markers on predicted trajectories
+- [ ] Auto-burn execution
+
+### Next Up
+1. Auto-burn execution for maneuver nodes
+2. Vehicle editor (Week 11-12)
+3. Core game loop: launch, staging, fuel, save/load (Week 13-14)
 
 ---
 

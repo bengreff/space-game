@@ -248,6 +248,7 @@ src/
 ├── main.rs                 # Entry point, event loop, game state
 │                           # Keyboard/mouse input handling
 │                           # Time warp control with auto-reduction
+│                           # Maneuver trajectory prediction coordination
 ├── lib.rs                  # Library root, re-exports
 │
 ├── bodies.rs               # CelestialBody, Orbit, SolarSystem
@@ -258,6 +259,8 @@ src/
 │   ├── mod.rs              # Ship struct, physics update, gravity
 │   │                       # Velocity Verlet integration
 │   │                       # Thrust and rotation handling
+│   │                       # AutopilotTarget enum, autopilot rotation
+│   │                       # Realistic rotation (acceleration/drag)
 │   ├── orbit.rs            # Orbital calculations from state vectors
 │   │                       # State → orbital elements conversion
 │   │                       # Handles elliptical and hyperbolic orbits
@@ -271,11 +274,18 @@ src/
 └── render/
     ├── mod.rs              # Re-exports
     ├── camera.rs           # Camera struct, pan/zoom, body tracking
+    ├── geometry.rs         # Vertex generation utilities
+    │                       # create_circle, create_ship_triangle, create_ring
+    ├── maneuver.rs         # Maneuver node management
+    │                       # Node creation, deletion, dragging
+    │                       # Orbit click detection, burn application
     ├── state.rs            # RenderState, wgpu setup, MSAA
     │                       # Body, orbit, ship rendering
     │                       # HUD with egui (velocity, altitude, orbit info)
-    ├── types.rs            # OrbitRenderData, TrajectorySegment
-    │                       # Render data structures
+    │                       # Autopilot buttons, throttle display
+    ├── types.rs            # ManeuverNode, ManeuverDeltaV
+    │                       # OrbitRenderData, OrbitSegmentData
+    │                       # ShipRenderData, ShipOrbitData
     └── shader.wgsl         # Vertex/fragment shaders
                             # Camera-relative coordinate transform
 ```
