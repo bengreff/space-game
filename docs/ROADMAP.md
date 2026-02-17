@@ -57,7 +57,6 @@
 - [x] Realistic ship rotation (acceleration/deceleration physics)
 - [x] Delta-v countdown during burns
 - [x] Execute maneuver (manual with autopilot assist)
-- [ ] Execute maneuver (auto-burn option)
 - [x] SOI encounter prediction (via trajectory)
 
 ### Week 11-12: Vehicle Editor
@@ -246,9 +245,8 @@
 - [ ] Auto-burn execution
 
 ### Next Up
-1. Auto-burn execution for maneuver nodes
-2. Vehicle editor (Week 11-12)
-3. Core game loop: launch, staging, fuel, save/load (Week 13-14)
+1. Vehicle editor (Week 11-12)
+2. Core game loop: launch, staging, fuel, save/load (Week 13-14)
 
 ---
 
