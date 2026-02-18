@@ -1,3 +1,18 @@
+/// Atmosphere data for a celestial body
+#[derive(Clone, Copy, Debug)]
+pub struct Atmosphere {
+    pub surface_pressure: f64,    // Pascals (Pa) at sea level
+    pub scale_height: f64,        // meters - height at which pressure drops by factor e
+    pub color: [f32; 3],          // RGB color at surface level
+}
+
+impl Atmosphere {
+    /// Visible atmosphere height in meters (~5 scale heights, where pressure drops to ~0.7%)
+    pub fn visible_height(&self) -> f64 {
+        self.scale_height * 5.0
+    }
+}
+
 /// Celestial body representation
 #[derive(Clone)]
 pub struct CelestialBody {
@@ -8,6 +23,7 @@ pub struct CelestialBody {
     pub parent: Option<usize>, // Index of parent body (None for root)
     pub orbit: Option<Orbit>,  // Orbital parameters (None for root)
     pub soi_radius: f64,     // Sphere of influence radius
+    pub atmosphere: Option<Atmosphere>, // Atmospheric data (None = no atmosphere)
 }
 
 impl CelestialBody {
@@ -233,6 +249,7 @@ impl SolarSystem {
             parent: None,
             orbit: None,
             soi_radius: f64::INFINITY, // Sun's SOI is effectively infinite
+            atmosphere: None,
         });
 
         // === MERCURY (index 1) ===
@@ -251,6 +268,7 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 0.0,
             }),
             soi_radius: calculate_soi(mercury_sma, mercury_mass, sun_mass),
+            atmosphere: None, // No significant atmosphere
         });
 
         // === VENUS (index 2) ===
@@ -269,6 +287,11 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 0.9,
             }),
             soi_radius: calculate_soi(venus_sma, venus_mass, sun_mass),
+            atmosphere: Some(Atmosphere {
+                surface_pressure: 9.2e6,   // 92 bar (~9.2 MPa)
+                scale_height: 15_900.0,    // 15.9 km
+                color: [0.90, 0.70, 0.30], // Yellowish-orange haze
+            }),
         });
 
         // === EARTH (index 3) ===
@@ -279,7 +302,7 @@ impl SolarSystem {
             name: "Earth".to_string(),
             mass: earth_mass,
             radius: 6.371e6 * PHYSICS_SCALE,
-            color: [0.2, 0.4, 0.8, 1.0], // Blue
+            color: [0.15, 0.5, 0.15, 1.0], // Green
             parent: Some(0),
             orbit: Some(Orbit {
                 semi_major_axis: earth_sma,
@@ -288,6 +311,11 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 1.8,
             }),
             soi_radius: calculate_soi(earth_sma, earth_mass, sun_mass),
+            atmosphere: Some(Atmosphere {
+                surface_pressure: 101_325.0, // 1 atm (101.325 kPa)
+                scale_height: 8_500.0,       // 8.5 km
+                color: [0.25, 0.55, 1.00],   // Sky blue
+            }),
         });
 
         // === MOON (index 4) ===
@@ -306,6 +334,7 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 0.0,
             }),
             soi_radius: calculate_soi(moon_sma, moon_mass, earth_mass),
+            atmosphere: None, // Negligible exosphere
         });
 
         // === MARS (index 5) ===
@@ -325,6 +354,11 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 2.5,
             }),
             soi_radius: calculate_soi(mars_sma, mars_mass, sun_mass),
+            atmosphere: Some(Atmosphere {
+                surface_pressure: 636.0,     // 0.636 kPa (~0.6% of Earth)
+                scale_height: 11_100.0,      // 11.1 km
+                color: [0.80, 0.55, 0.35],   // Dusty butterscotch
+            }),
         });
 
         // === PHOBOS (index 6) ===
@@ -343,6 +377,7 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 0.0,
             }),
             soi_radius: calculate_soi(phobos_sma, phobos_mass, mars_mass),
+            atmosphere: None,
         });
 
         // === DEIMOS (index 7) ===
@@ -361,6 +396,7 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 1.0,
             }),
             soi_radius: calculate_soi(deimos_sma, deimos_mass, mars_mass),
+            atmosphere: None,
         });
 
         // === JUPITER (index 8) ===
@@ -380,6 +416,11 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 3.5,
             }),
             soi_radius: calculate_soi(jupiter_sma, jupiter_mass, sun_mass),
+            atmosphere: Some(Atmosphere {
+                surface_pressure: 200_000.0, // ~2 bar at 1-bar reference level
+                scale_height: 27_000.0,      // 27 km
+                color: [0.75, 0.60, 0.40],   // Warm tan
+            }),
         });
 
         // === IO (index 9) ===
@@ -398,6 +439,7 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 0.0,
             }),
             soi_radius: calculate_soi(io_sma, io_mass, jupiter_mass),
+            atmosphere: None, // Negligible SO₂ atmosphere
         });
 
         // === EUROPA (index 10) ===
@@ -416,6 +458,7 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 1.5,
             }),
             soi_radius: calculate_soi(europa_sma, europa_mass, jupiter_mass),
+            atmosphere: None, // Tenuous O₂ exosphere
         });
 
         // === GANYMEDE (index 11) ===
@@ -434,6 +477,7 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 3.0,
             }),
             soi_radius: calculate_soi(ganymede_sma, ganymede_mass, jupiter_mass),
+            atmosphere: None, // Tenuous O₂ exosphere
         });
 
         // === CALLISTO (index 12) ===
@@ -452,6 +496,7 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 4.5,
             }),
             soi_radius: calculate_soi(callisto_sma, callisto_mass, jupiter_mass),
+            atmosphere: None,
         });
 
         // === SATURN (index 13) ===
@@ -471,6 +516,11 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 5.0,
             }),
             soi_radius: calculate_soi(saturn_sma, saturn_mass, sun_mass),
+            atmosphere: Some(Atmosphere {
+                surface_pressure: 140_000.0, // ~1.4 bar at 1-bar reference level
+                scale_height: 59_500.0,      // 59.5 km
+                color: [0.85, 0.80, 0.50],   // Pale gold
+            }),
         });
 
         // === TITAN (index 14) ===
@@ -489,6 +539,11 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 0.0,
             }),
             soi_radius: calculate_soi(titan_sma, titan_mass, saturn_mass),
+            atmosphere: Some(Atmosphere {
+                surface_pressure: 146_700.0, // 1.467 bar (thicker than Earth!)
+                scale_height: 21_000.0,      // 21 km
+                color: [0.85, 0.55, 0.20],   // Deep orange haze
+            }),
         });
 
         // === RHEA (index 15) ===
@@ -507,6 +562,7 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 1.5,
             }),
             soi_radius: calculate_soi(rhea_sma, rhea_mass, saturn_mass),
+            atmosphere: None,
         });
 
         // === IAPETUS (index 16) ===
@@ -525,6 +581,7 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 3.0,
             }),
             soi_radius: calculate_soi(iapetus_sma, iapetus_mass, saturn_mass),
+            atmosphere: None,
         });
 
         // === DIONE (index 17) ===
@@ -543,6 +600,7 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 4.5,
             }),
             soi_radius: calculate_soi(dione_sma, dione_mass, saturn_mass),
+            atmosphere: None,
         });
 
         // === URANUS (index 18) ===
@@ -561,6 +619,11 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 0.5,
             }),
             soi_radius: calculate_soi(uranus_sma, uranus_mass, sun_mass),
+            atmosphere: Some(Atmosphere {
+                surface_pressure: 100_000.0, // ~1 bar at reference level
+                scale_height: 27_700.0,      // 27.7 km
+                color: [0.50, 0.80, 0.90],   // Pale cyan
+            }),
         });
 
         // === NEPTUNE (index 19) ===
@@ -579,6 +642,11 @@ impl SolarSystem {
                 mean_anomaly_at_epoch: 4.0,
             }),
             soi_radius: calculate_soi(neptune_sma, neptune_mass, sun_mass),
+            atmosphere: Some(Atmosphere {
+                surface_pressure: 100_000.0, // ~1 bar at reference level
+                scale_height: 19_700.0,      // 19.7 km
+                color: [0.20, 0.40, 0.90],   // Deep vivid blue
+            }),
         });
 
         Self { bodies, time: 0.0 }

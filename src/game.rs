@@ -3,6 +3,13 @@ use crate::editor::EditorState;
 use crate::parts::{BlueprintRegistry, FlightVessel, PartDefinitions};
 use crate::ship::{Ship, ShipInput};
 
+/// Launchpad constants
+pub const LAUNCHPAD_BODY_INDEX: usize = 3; // Earth
+pub const LAUNCHPAD_SURFACE_ANGLE: f64 = std::f64::consts::FRAC_PI_2;
+pub const LAUNCHPAD_HEIGHT: f64 = 10.0; // meters
+pub const LAUNCHPAD_TOP_WIDTH: f64 = 100.0; // meters
+pub const LAUNCHPAD_BOTTOM_WIDTH: f64 = 120.0; // meters
+
 /// The current game mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMode {
@@ -98,12 +105,12 @@ impl Game {
         // Build blueprint from editor state
         let blueprint = self.editor.to_blueprint(&self.part_definitions)?;
 
-        // Get spawn position (on Earth's surface for now)
-        let earth_idx = 3; // Earth is index 3 in the solar system
+        // Get spawn position (on launchpad)
+        let earth_idx = LAUNCHPAD_BODY_INDEX;
         let earth = &self.solar_system.bodies[earth_idx];
 
-        // Surface angle (spawn at top of the body, angle = π/2)
-        let surface_angle = std::f64::consts::FRAC_PI_2;
+        // Surface angle (spawn at launchpad location)
+        let surface_angle = LAUNCHPAD_SURFACE_ANGLE;
 
         // Create flight vessel first to get bounding height
         let vessel = FlightVessel::from_blueprint(
@@ -114,7 +121,7 @@ impl Game {
             earth_idx,
         )?;
 
-        let surface_distance = earth.radius + vessel.bottom_extent();
+        let surface_distance = earth.radius + LAUNCHPAD_HEIGHT + vessel.bottom_extent();
 
         // Position on the surface
         let spawn_position = [

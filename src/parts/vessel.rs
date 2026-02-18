@@ -526,15 +526,26 @@ impl FlightVessel {
     /// Check if any part collides with terrain (sphere at origin with given radius).
     /// vessel_pos is the vessel center position relative to the body.
     /// vessel_rotation is the vessel's rotation angle.
+    /// body_index is the SOI body index (used for launchpad collision).
     /// Returns Some(surface_angle) if collision detected.
     pub fn check_terrain_collision(
         &self,
         vessel_pos: [f64; 2],
         vessel_rotation: f64,
         body_radius: f64,
+        body_index: usize,
     ) -> Option<f64> {
+        use crate::game::{LAUNCHPAD_BODY_INDEX, LAUNCHPAD_SURFACE_ANGLE,
+                          LAUNCHPAD_HEIGHT, LAUNCHPAD_TOP_WIDTH, LAUNCHPAD_BOTTOM_WIDTH};
+
         let cos_r = vessel_rotation.cos();
         let sin_r = vessel_rotation.sin();
+
+        // Launchpad collision parameters
+        let has_launchpad = body_index == LAUNCHPAD_BODY_INDEX;
+        let lp_top_half = LAUNCHPAD_TOP_WIDTH * 0.5;
+        let lp_bot_half = LAUNCHPAD_BOTTOM_WIDTH * 0.5;
+        let lp_surface_radius = body_radius + LAUNCHPAD_HEIGHT;
 
         for part in &self.parts {
             if part.destroyed || part.decoupled {
@@ -557,8 +568,24 @@ impl FlightVessel {
                 let world_y = vessel_pos[1] + corner[0] * sin_r + corner[1] * cos_r;
 
                 let dist = (world_x * world_x + world_y * world_y).sqrt();
+
+                // Check ground collision
                 if dist < body_radius {
                     return Some(world_y.atan2(world_x));
+                }
+
+                // Check launchpad collision
+                if has_launchpad && dist < lp_surface_radius {
+                    let corner_angle = world_y.atan2(world_x);
+                    let angle_diff = corner_angle - LAUNCHPAD_SURFACE_ANGLE;
+                    let angle_diff = angle_diff - (angle_diff / std::f64::consts::TAU).round() * std::f64::consts::TAU;
+                    // Linear interpolation of width from bottom to top
+                    let height_frac = ((dist - body_radius) / LAUNCHPAD_HEIGHT).clamp(0.0, 1.0);
+                    let half_width_at_height = lp_bot_half + (lp_top_half - lp_bot_half) * height_frac;
+                    let half_angle = half_width_at_height / body_radius;
+                    if angle_diff.abs() < half_angle {
+                        return Some(corner_angle);
+                    }
                 }
             }
         }

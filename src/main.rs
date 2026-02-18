@@ -272,8 +272,23 @@ fn render_flight_frame(
                 game.flight.ship.rel_position,
                 game.flight.ship.rotation,
                 soi_body.radius,
+                game.flight.ship.soi_body,
             ) {
-                let surface_distance = soi_body.radius + vessel.bottom_extent();
+                // If landing on launchpad, account for its height
+                let launchpad_offset = if game.flight.ship.soi_body == sunscatter::game::LAUNCHPAD_BODY_INDEX {
+                    let angle_diff = surface_angle - sunscatter::game::LAUNCHPAD_SURFACE_ANGLE;
+                    let angle_diff = angle_diff - (angle_diff / std::f64::consts::TAU).round() * std::f64::consts::TAU;
+                    let half_angle = (sunscatter::game::LAUNCHPAD_BOTTOM_WIDTH * 0.5)
+                        / game.solar_system.bodies[game.flight.ship.soi_body].radius;
+                    if angle_diff.abs() < half_angle {
+                        sunscatter::game::LAUNCHPAD_HEIGHT
+                    } else {
+                        0.0
+                    }
+                } else {
+                    0.0
+                };
+                let surface_distance = soi_body.radius + launchpad_offset + vessel.bottom_extent();
                 game.flight.ship.rel_position = [
                     surface_distance * surface_angle.cos(),
                     surface_distance * surface_angle.sin(),
@@ -337,7 +352,9 @@ fn render_flight_frame(
         .map(|i| {
             let body = &game.solar_system.bodies[i];
             let pos = scaled_positions[i];
-            (pos[0], pos[1], body.radius * BODY_SCALE, body.color)
+            let atmo_height = body.atmosphere.map(|a| a.visible_height()).unwrap_or(0.0);
+            let atmo_color = body.atmosphere.map(|a| a.color).unwrap_or([0.0; 3]);
+            (pos[0], pos[1], body.radius * BODY_SCALE, body.color, atmo_height, atmo_color)
         })
         .collect();
 

@@ -428,12 +428,14 @@ impl Ship {
     fn update_landed(
         &mut self,
         dt: f64,
-        input: &ShipInput,
+        _input: &ShipInput,
         solar_system: &SolarSystem,
         body_index: usize,
         surface_angle: f64,
         vessel: Option<&VesselPhysicsData>,
     ) {
+        use crate::game::{LAUNCHPAD_BODY_INDEX, LAUNCHPAD_SURFACE_ANGLE, LAUNCHPAD_HEIGHT, LAUNCHPAD_BOTTOM_WIDTH};
+
         let body = &solar_system.bodies[body_index];
         let body_radius = body.radius;
         let surface_gravity = G * body.mass / (body_radius * body_radius);
@@ -447,8 +449,23 @@ impl Ship {
             .map(|v| v.bottom_extent)
             .unwrap_or(SHIP_SIZE / 2.0);
 
+        // Account for launchpad height
+        let launchpad_offset = if body_index == LAUNCHPAD_BODY_INDEX {
+            let angle_diff = surface_angle - LAUNCHPAD_SURFACE_ANGLE;
+            let angle_diff = angle_diff - (angle_diff / std::f64::consts::TAU).round() * std::f64::consts::TAU;
+            let half_angle = (LAUNCHPAD_BOTTOM_WIDTH * 0.5) / body_radius;
+            if angle_diff.abs() < half_angle {
+                LAUNCHPAD_HEIGHT
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
         self.rotation = surface_angle;
-        let surface_distance = body_radius + bottom;
+        self.rotational_velocity = 0.0;
+        let surface_distance = body_radius + launchpad_offset + bottom;
 
         if thrust_accel > surface_gravity {
             let net_accel = thrust_accel - surface_gravity;
@@ -468,34 +485,13 @@ impl Ship {
             ];
             self.rel_velocity = [0.0, 0.0];
         }
-
-        // Rotation with acceleration model (same as flying)
-        let rot_accel = vessel
-            .map(|v| if v.moment_of_inertia > 0.0 { v.torque / v.moment_of_inertia } else { ROTATION_ACCEL })
-            .unwrap_or(ROTATION_ACCEL);
-
-        if input.rotate_left {
-            self.rotational_velocity += rot_accel * dt;
-        } else if input.rotate_right {
-            self.rotational_velocity -= rot_accel * dt;
-        } else {
-            // Apply drag when no rotation input
-            if self.rotational_velocity.abs() > 0.0 {
-                let drag = ROTATION_DRAG * dt;
-                if self.rotational_velocity > drag {
-                    self.rotational_velocity -= drag;
-                } else if self.rotational_velocity < -drag {
-                    self.rotational_velocity += drag;
-                } else {
-                    self.rotational_velocity = 0.0;
-                }
-            }
-        }
-        self.rotation += self.rotational_velocity * dt;
     }
 
     /// Check for collisions with bodies
     fn check_and_handle_collisions(&mut self, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>) {
+        use crate::game::{LAUNCHPAD_BODY_INDEX, LAUNCHPAD_SURFACE_ANGLE,
+                          LAUNCHPAD_HEIGHT, LAUNCHPAD_BOTTOM_WIDTH};
+
         let ship_radius = vessel
             .map(|v| v.vessel_height)
             .unwrap_or(SHIP_SIZE / 2.0);
@@ -506,6 +502,37 @@ impl Ship {
             let dx = abs_pos[0] - body_pos[0];
             let dy = abs_pos[1] - body_pos[1];
             let dist = (dx * dx + dy * dy).sqrt();
+
+            // Check launchpad collision (raised surface)
+            if i == LAUNCHPAD_BODY_INDEX {
+                let lp_collision_dist = body.radius + LAUNCHPAD_HEIGHT + ship_radius;
+                if dist < lp_collision_dist {
+                    let surface_angle = dy.atan2(dx);
+                    let angle_diff = surface_angle - LAUNCHPAD_SURFACE_ANGLE;
+                    let angle_diff = angle_diff - (angle_diff / std::f64::consts::TAU).round() * std::f64::consts::TAU;
+                    let half_angle = (LAUNCHPAD_BOTTOM_WIDTH * 0.5) / body.radius;
+                    if angle_diff.abs() < half_angle {
+                        if i != self.soi_body {
+                            self.soi_body = i;
+                        }
+                        let surface_distance = body.radius + LAUNCHPAD_HEIGHT + ship_radius;
+                        self.rel_position = [
+                            surface_distance * surface_angle.cos(),
+                            surface_distance * surface_angle.sin(),
+                        ];
+                        self.rel_velocity = [0.0, 0.0];
+                        self.throttle = 0.0;
+                        self.rotation = surface_angle;
+                        self.state = ShipState::Landed {
+                            body_index: i,
+                            surface_angle,
+                        };
+                        self.on_rails = false;
+                        self.cached_orbit = None;
+                        return;
+                    }
+                }
+            }
 
             let collision_dist = body.radius + ship_radius;
 
