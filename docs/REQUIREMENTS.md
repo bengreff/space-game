@@ -1,4 +1,4 @@
-# Feature Requirements
+# Sunscatter - Feature Requirements
 
 ## Legend
 

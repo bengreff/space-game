@@ -1,8 +1,8 @@
-# Project Vision
+# Sunscatter - Project Vision
 
 ## One-Line Summary
 
-A 2D space exploration game with **1:1 real-scale** orbital mechanics, combining Spaceflight Simulator's accessible interface with KSP 2's scope: multiple star systems, colonies, and interstellar travel.
+**Sunscatter** is a 2D space exploration and colony-building game with **1:1 real-scale** orbital mechanics. Scatter across the stars, establish colonies on distant worlds, and build the infrastructure for interstellar civilization.
 
 ## Core Experience
 

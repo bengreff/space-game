@@ -7,13 +7,13 @@ use winit::{
     window::WindowBuilder,
 };
 
-use space_game::editor::{
+use sunscatter::editor::{
     render_editor_ui, EditorAction, generate_grid_vertices, generate_part_vertices,
     generate_ghost_vertices, screen_to_world, part_at_screen_pos, BodyInfo,
 };
-use space_game::game::{Game, GameMode};
-use space_game::render::{RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, OrbitSegmentData, Vertex};
-use space_game::ship::{AutopilotTarget, SHIP_SIZE, MAX_THRUST_ACCELERATION};
+use sunscatter::game::{Game, GameMode};
+use sunscatter::render::{RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, OrbitSegmentData, Vertex};
+use sunscatter::ship::{AutopilotTarget, SHIP_SIZE, MAX_THRUST_ACCELERATION};
 
 // 1:1 Real-Scale Solar System Simulation
 // All physics use real-world values: masses, radii, distances, orbital velocities
@@ -29,7 +29,7 @@ const BODY_SCALE: f64 = 1.0;
 fn main() {
     env_logger::init();
 
-    println!("Space Game starting...");
+    println!("Sunscatter starting...");
     println!("Controls:");
     println!("  W: Increase throttle");
     println!("  S: Decrease throttle");
@@ -53,7 +53,7 @@ fn main() {
 
     let window = Arc::new(
         WindowBuilder::new()
-            .with_title("Space Game - Solar System")
+            .with_title("Sunscatter")
             .with_inner_size(winit::dpi::LogicalSize::new(1280, 720))
             .build(&event_loop)
             .unwrap(),

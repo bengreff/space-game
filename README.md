@@ -1,6 +1,6 @@
-# Space Game
+# Sunscatter
 
-A 2D space exploration game with **1:1 real-scale** orbital mechanics. Unlike Kerbal Space Program's 1/10 scale planets, this simulation uses actual solar system values - real masses, real distances, real orbital velocities.
+A 2D space exploration and colony-building game with **1:1 real-scale** orbital mechanics. Build rockets, scatter across the stars, and establish colonies on distant worlds. Unlike Kerbal Space Program's 1/10 scale planets, this simulation uses actual solar system values - real masses, real distances, real orbital velocities.
 
 ## 1:1 Real Scale
 
@@ -34,7 +34,7 @@ A 2D space exploration game with **1:1 real-scale** orbital mechanics. Unlike Ke
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Build and run
-cd ~/space-game
+cd ~/sunscatter
 cargo run
 ```
 
@@ -67,7 +67,7 @@ cargo run
 ## Project Structure
 
 ```
-space-game/
+sunscatter/
 ├── src/
 │   ├── main.rs           # Entry point, game loop
 │   ├── lib.rs            # Library root

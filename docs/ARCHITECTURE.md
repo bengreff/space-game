@@ -1,4 +1,4 @@
-# Technical Architecture
+# Sunscatter - Technical Architecture
 
 ## Technology Stack
 
