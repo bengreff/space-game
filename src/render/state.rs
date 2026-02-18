@@ -38,6 +38,22 @@ pub struct RenderState {
     pub ship_time_to_intercept: Option<f64>, // Time to next SOI transition (seconds)
     pub ship_acceleration: f64,            // Ship's max thrust acceleration (m/s^2)
     pub ship_current_true_anomaly: f64,    // Ship's current position in its orbit (radians)
+    // Vessel stats for HUD
+    pub vessel_total_mass: Option<f64>,    // tonnes
+    pub vessel_fuel_fraction: Option<f64>, // 0.0-1.0
+    pub vessel_thrust_kn: Option<f64>,     // kN
+    pub vessel_delta_v: Option<f64>,       // m/s
+    pub vessel_current_stage: Option<usize>,  // Stages activated so far
+    pub vessel_total_stages: Option<usize>,   // Total stages
+    pub ship_soi_surface_gravity: f64,     // m/s², for TWR
+    // Part click state
+    pub selected_flight_part: Option<usize>,  // index into flight_parts_cache
+    pub flight_parts_cache: Vec<super::types::ShipPartRenderData>,
+    pub ship_render_x: f64,
+    pub ship_render_y: f64,
+    pub ship_render_rotation: f64,
+    pub ship_render_scale: f64,     // SCALE * BODY_SCALE used for rendering
+    pub engine_toggle_request: Option<(usize, bool)>,  // (part_index, enabled)
     pub ap_markers: Vec<([f64; 2], f64)>, // Apoapsis markers: (world pos relative to camera, altitude)
     pub pe_markers: Vec<([f64; 2], f64)>, // Periapsis markers: (world pos relative to camera, altitude)
     // Maneuver node state
@@ -276,6 +292,20 @@ impl RenderState {
             ship_time_to_intercept: None,
             ship_acceleration: 20.0,  // Default max thrust acceleration
             ship_current_true_anomaly: 0.0,
+            vessel_total_mass: None,
+            vessel_fuel_fraction: None,
+            vessel_thrust_kn: None,
+            vessel_delta_v: None,
+            vessel_current_stage: None,
+            vessel_total_stages: None,
+            ship_soi_surface_gravity: 9.81,
+            selected_flight_part: None,
+            flight_parts_cache: Vec::new(),
+            ship_render_x: 0.0,
+            ship_render_y: 0.0,
+            ship_render_rotation: 0.0,
+            ship_render_scale: 1.0,
+            engine_toggle_request: None,
             ap_markers: Vec::new(),
             pe_markers: Vec::new(),
             pending_orbit_click: None,
@@ -388,6 +418,15 @@ impl RenderState {
         let ship_throttle = self.ship_throttle;
         let ship_soi_name = self.ship_soi_name.clone();
         let ship_time_to_intercept = self.ship_time_to_intercept;
+        let vessel_total_mass = self.vessel_total_mass;
+        let vessel_fuel_fraction = self.vessel_fuel_fraction;
+        let vessel_thrust_kn = self.vessel_thrust_kn;
+        let vessel_delta_v = self.vessel_delta_v;
+        let vessel_current_stage = self.vessel_current_stage;
+        let vessel_total_stages = self.vessel_total_stages;
+        let ship_soi_surface_gravity = self.ship_soi_surface_gravity;
+        let selected_flight_part = self.selected_flight_part;
+        let flight_parts_cache = self.flight_parts_cache.clone();
         let ap_markers = self.ap_markers.clone();
         let pe_markers = self.pe_markers.clone();
         let pending_orbit_click = self.pending_orbit_click;
@@ -403,6 +442,7 @@ impl RenderState {
         let mut prograde_delta: f64 = 0.0;
         let mut radial_delta: f64 = 0.0;
         let mut new_autopilot_target = current_autopilot;
+        let mut engine_toggle_req: Option<(usize, bool)> = None;
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
@@ -586,9 +626,43 @@ impl RenderState {
                             }
                         }
 
+                        // Vessel stats (if vessel loaded)
+                        if let Some(mass) = vessel_total_mass {
+                            ui.separator();
+                            ui.label(egui::RichText::new("M").size(11.0).color(egui::Color32::GRAY));
+                            ui.label(egui::RichText::new(format!("{:.2}t", mass)).size(11.0).color(egui::Color32::WHITE));
+                        }
+                        if let Some(thrust) = vessel_thrust_kn {
+                            ui.label(egui::RichText::new("T").size(11.0).color(egui::Color32::GRAY));
+                            ui.label(egui::RichText::new(format!("{:.0}kN", thrust)).size(11.0).color(egui::Color32::WHITE));
+
+                            // TWR display
+                            if let Some(mass) = vessel_total_mass {
+                                if mass > 0.0 && ship_soi_surface_gravity > 0.0 {
+                                    let twr = thrust / (mass * ship_soi_surface_gravity);
+                                    let twr_color = if twr >= 1.0 {
+                                        egui::Color32::from_rgb(100, 220, 100)
+                                    } else {
+                                        egui::Color32::from_rgb(220, 80, 80)
+                                    };
+                                    ui.label(egui::RichText::new("TWR").size(11.0).color(egui::Color32::GRAY));
+                                    ui.label(egui::RichText::new(format!("{:.2}", twr)).size(11.0).color(twr_color));
+                                }
+                            }
+                        }
+                        if let Some(dv) = vessel_delta_v {
+                            ui.label(egui::RichText::new("Δv").size(11.0).color(egui::Color32::GRAY));
+                            let dv_str = if dv >= 1000.0 {
+                                format!("{:.1}km/s", dv / 1000.0)
+                            } else {
+                                format!("{:.0}m/s", dv)
+                            };
+                            ui.label(egui::RichText::new(&dv_str).size(11.0).color(egui::Color32::WHITE));
+                        }
+
                         // Velocity and altitude display (right side)
                         let remaining = ui.available_width();
-                        ui.add_space(remaining / 2.0 - 100.0);
+                        ui.add_space((remaining / 2.0 - 100.0).max(10.0));
                         ui.label(egui::RichText::new("VEL").size(11.0).color(egui::Color32::GRAY));
                         ui.label(egui::RichText::new(&vel_str).size(13.0).strong().color(egui::Color32::WHITE));
                         ui.add_space(20.0);
@@ -653,6 +727,56 @@ impl RenderState {
                         // Border
                         painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
                     });
+
+                    // Fuel bar (if vessel loaded) - separate scope for borrow management
+                    if let Some(fuel_frac) = vessel_fuel_fraction {
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new("FUEL").size(10.0).color(egui::Color32::GRAY));
+                        ui.add_space(3.0);
+
+                        let fuel_pct = (fuel_frac * 100.0) as i32;
+                        ui.label(egui::RichText::new(format!("{}%", fuel_pct))
+                            .size(11.0)
+                            .color(egui::Color32::WHITE));
+                        ui.add_space(3.0);
+
+                        let fuel_bar_height = 80.0;
+                        let bar_width = 20.0;
+                        let (fuel_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(bar_width, fuel_bar_height),
+                            egui::Sense::hover()
+                        );
+
+                        let fuel_painter = ui.painter();
+                        fuel_painter.rect_filled(fuel_rect, 2.0, egui::Color32::from_rgb(40, 40, 50));
+
+                        let fuel_fill = fuel_bar_height * fuel_frac as f32;
+                        let fuel_fill_rect = egui::Rect::from_min_size(
+                            egui::pos2(fuel_rect.min.x, fuel_rect.max.y - fuel_fill),
+                            egui::vec2(bar_width, fuel_fill)
+                        );
+                        let fuel_color = if fuel_frac > 0.3 {
+                            egui::Color32::from_rgb(80, 160, 220)
+                        } else if fuel_frac > 0.1 {
+                            egui::Color32::from_rgb(220, 180, 80)
+                        } else {
+                            egui::Color32::from_rgb(220, 80, 80)
+                        };
+                        fuel_painter.rect_filled(fuel_fill_rect, 2.0, fuel_color);
+                        fuel_painter.rect_stroke(fuel_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+                    }
+
+                    // Stage indicator
+                    if let (Some(current), Some(total)) = (vessel_current_stage, vessel_total_stages) {
+                        if total > 0 {
+                            ui.add_space(10.0);
+                            ui.label(egui::RichText::new("STG").size(10.0).color(egui::Color32::GRAY));
+                            ui.label(egui::RichText::new(format!("{}/{}", current, total))
+                                .size(12.0)
+                                .strong()
+                                .color(egui::Color32::WHITE));
+                        }
+                    }
                 });
 
             // Only draw label for hovered body
@@ -895,6 +1019,75 @@ impl RenderState {
                 }
             }
 
+            // Part info popup
+            if let Some(cache_idx) = selected_flight_part {
+                if let Some(part) = flight_parts_cache.get(cache_idx) {
+                    egui::Window::new(&part.name)
+                        .id(egui::Id::new("flight_part_info"))
+                        .collapsible(false)
+                        .resizable(false)
+                        .default_width(200.0)
+                        .show(ctx, |ui| {
+                            ui.label(format!("Mass: {:.3} t", part.dry_mass));
+
+                            // Engine info
+                            if let Some(thrust_vac) = part.engine_thrust_vac {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Engine").strong());
+                                ui.label(format!("Thrust (vac): {:.1} kN", thrust_vac));
+                                if let Some(thrust_asl) = part.engine_thrust_asl {
+                                    ui.label(format!("Thrust (ASL): {:.1} kN", thrust_asl));
+                                }
+                                if let Some(isp_vac) = part.engine_isp_vac {
+                                    ui.label(format!("ISP (vac): {:.0} s", isp_vac));
+                                }
+                                if let Some(isp_asl) = part.engine_isp_asl {
+                                    ui.label(format!("ISP (ASL): {:.0} s", isp_asl));
+                                }
+                                if let Some(ref prop) = part.propellant_name {
+                                    ui.label(format!("Propellant: {}", prop));
+                                }
+                                let status_text = if part.engine_enabled {
+                                    if part.engine_active {
+                                        egui::RichText::new("Active").color(egui::Color32::from_rgb(100, 220, 100))
+                                    } else {
+                                        egui::RichText::new("No Fuel").color(egui::Color32::from_rgb(220, 180, 80))
+                                    }
+                                } else {
+                                    egui::RichText::new("Disabled").color(egui::Color32::from_rgb(220, 80, 80))
+                                };
+                                ui.label(status_text);
+
+                                let btn_label = if part.engine_enabled { "Deactivate" } else { "Activate" };
+                                if ui.button(btn_label).clicked() {
+                                    engine_toggle_req = Some((part.part_index, !part.engine_enabled));
+                                }
+                            }
+
+                            // Tank info
+                            if let Some(ref fuel_name) = part.fuel_type_name {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Fuel Tank").strong());
+                                ui.label(format!("Type: {}", fuel_name));
+                                if let (Some(current), Some(max)) = (part.fuel_current, part.fuel_max) {
+                                    ui.label(format!("{:.1} / {:.1} kg", current, max));
+                                    let frac = if max > 0.0 { (current / max) as f32 } else { 0.0 };
+                                    let bar = egui::ProgressBar::new(frac)
+                                        .text(format!("{:.0}%", frac * 100.0));
+                                    ui.add(bar);
+                                }
+                            }
+
+                            // Pod info
+                            if let Some(crew) = part.crew_capacity {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Command Pod").strong());
+                                ui.label(format!("Crew capacity: {}", crew));
+                            }
+                        });
+                }
+            }
+
             // Draw maneuver node markers
             let node_painter = ctx.layer_painter(egui::LayerId::new(
                 egui::Order::Foreground,
@@ -958,6 +1151,10 @@ impl RenderState {
         }
         // Update autopilot target
         self.autopilot_target = new_autopilot_target;
+        // Store engine toggle request for main.rs to process
+        if engine_toggle_req.is_some() {
+            self.engine_toggle_request = engine_toggle_req;
+        }
         // Apply slider deltas to selected node with non-linear scaling
         // Full deflection = 1000 m/s per second, minimal = ~1 m/s per second
         if let Some(node_id) = self.selected_maneuver_node {
@@ -1194,6 +1391,7 @@ impl RenderState {
         orbits: &[Option<OrbitRenderData>],
         ship: Option<&ShipRenderData>,
         scale: f64,
+        part_defs: Option<&crate::parts::PartDefinitions>,
     ) {
         // Store ship info for UI display
         self.ship_orbit_info = ship.and_then(|s| s.orbit.clone());
@@ -1205,6 +1403,22 @@ impl RenderState {
             self.ship_time_to_intercept = s.time_to_intercept;
             self.ship_acceleration = s.acceleration;
             self.ship_current_true_anomaly = s.current_true_anomaly;
+            self.vessel_total_mass = s.total_mass;
+            self.vessel_fuel_fraction = s.fuel_fraction;
+            self.vessel_thrust_kn = s.thrust_kn;
+            self.vessel_delta_v = s.delta_v;
+            self.vessel_current_stage = s.current_stage;
+            self.vessel_total_stages = s.total_stages;
+            self.ship_soi_surface_gravity = s.soi_surface_gravity;
+            self.ship_render_x = s.x;
+            self.ship_render_y = s.y;
+            self.ship_render_rotation = s.rotation;
+            self.ship_render_scale = if s.size > 0.0 { scale } else { 1.0 };
+            if let Some(ref parts) = s.parts {
+                self.flight_parts_cache = parts.clone();
+            } else {
+                self.flight_parts_cache.clear();
+            }
             // Store trajectory for orbit click detection
             self.current_trajectory = s.patched_trajectory.clone();
             // Update predicted orbits with new trajectory data
@@ -2056,44 +2270,108 @@ impl RenderState {
             let ship_pixels = size * pixels_per_world_unit * 2.0;
             let needs_indicator = ship_pixels < 5.0;
 
-            // Draw the actual ship triangle if visible
+            // Draw the actual ship (parts or triangle) if visible
             if ship_pixels >= 1.0 {
-                let base_index = all_vertices.len() as u32;
+                let has_parts = ship_data.parts.is_some() && part_defs.is_some();
 
-                let nose_angle = rotation;
-                let back_left_angle = rotation + std::f32::consts::PI * 0.8;
-                let back_right_angle = rotation - std::f32::consts::PI * 0.8;
+                if has_parts {
+                    // Part-based rendering: render each part at its position
+                    // Offset by -π/2 because editor parts are Y-up but rotation=0 means +X
+                    let visual_rotation = rotation - std::f32::consts::FRAC_PI_2;
+                    let parts = ship_data.parts.as_ref().unwrap();
+                    let defs = part_defs.unwrap();
+                    let cos_r = visual_rotation.cos();
+                    let sin_r = visual_rotation.sin();
+                    let render_scale = scale as f32;
 
-                // Nose vertex
-                all_vertices.push(Vertex {
-                    position: [
-                        rel_x + size * nose_angle.cos(),
-                        rel_y + size * nose_angle.sin(),
-                    ],
-                    color: ship_data.color,
-                });
+                    for part_data in parts {
+                        if let Some(def) = defs.get(&part_data.definition_id) {
+                            // Transform part local position to world-relative position
+                            let local_x = part_data.local_x as f32 * render_scale;
+                            let local_y = part_data.local_y as f32 * render_scale;
 
-                // Back left vertex
-                all_vertices.push(Vertex {
-                    position: [
-                        rel_x + size * 0.6 * back_left_angle.cos(),
-                        rel_y + size * 0.6 * back_left_angle.sin(),
-                    ],
-                    color: ship_data.color,
-                });
+                            // Rotate local position by vessel rotation
+                            let rotated_x = local_x * cos_r - local_y * sin_r;
+                            let rotated_y = local_x * sin_r + local_y * cos_r;
 
-                // Back right vertex
-                all_vertices.push(Vertex {
-                    position: [
-                        rel_x + size * 0.6 * back_right_angle.cos(),
-                        rel_y + size * 0.6 * back_right_angle.sin(),
-                    ],
-                    color: ship_data.color,
-                });
+                            // Generate part vertices at unrotated position first,
+                            // then rotate them around the vessel center
+                            let part_center_x = rel_x + rotated_x;
+                            let part_center_y = rel_y + rotated_y;
 
-                all_indices.push(base_index);
-                all_indices.push(base_index + 1);
-                all_indices.push(base_index + 2);
+                            // Generate vertices at origin, then transform
+                            let mut part_verts: Vec<Vertex> = Vec::new();
+                            crate::editor::generate_part_shape_vertices(
+                                &mut part_verts, def, 0.0, 0.0, 1.0,
+                            );
+
+                            // Add engine plume if this engine is firing
+                            if part_data.engine_active && ship_data.throttle > 0.0 && def.engine.is_some() {
+                                crate::editor::generate_engine_plume_vertices(
+                                    &mut part_verts, def, 0.0, 0.0, ship_data.throttle as f32,
+                                );
+                            }
+
+                            // Scale and rotate each vertex, then offset to vessel center
+                            let base_index = all_vertices.len() as u32;
+                            let scale_factor = render_scale;
+                            for vert in &part_verts {
+                                let vx = vert.position[0] * scale_factor;
+                                let vy = vert.position[1] * scale_factor;
+                                // Rotate around origin by vessel rotation
+                                let rx = vx * cos_r - vy * sin_r;
+                                let ry = vx * sin_r + vy * cos_r;
+                                all_vertices.push(Vertex {
+                                    position: [part_center_x + rx, part_center_y + ry],
+                                    color: vert.color,
+                                });
+                            }
+
+                            // Part vertices are triangle lists (every 3 verts = 1 triangle)
+                            let num_part_verts = part_verts.len() as u32;
+                            for i in (0..num_part_verts).step_by(3) {
+                                if i + 2 < num_part_verts {
+                                    all_indices.push(base_index + i);
+                                    all_indices.push(base_index + i + 1);
+                                    all_indices.push(base_index + i + 2);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback: draw triangle when no parts available
+                    let base_index = all_vertices.len() as u32;
+
+                    let nose_angle = rotation;
+                    let back_left_angle = rotation + std::f32::consts::PI * 0.8;
+                    let back_right_angle = rotation - std::f32::consts::PI * 0.8;
+
+                    all_vertices.push(Vertex {
+                        position: [
+                            rel_x + size * nose_angle.cos(),
+                            rel_y + size * nose_angle.sin(),
+                        ],
+                        color: ship_data.color,
+                    });
+                    all_vertices.push(Vertex {
+                        position: [
+                            rel_x + size * 0.6 * back_left_angle.cos(),
+                            rel_y + size * 0.6 * back_left_angle.sin(),
+                        ],
+                        color: ship_data.color,
+                    });
+                    all_vertices.push(Vertex {
+                        position: [
+                            rel_x + size * 0.6 * back_right_angle.cos(),
+                            rel_y + size * 0.6 * back_right_angle.sin(),
+                        ],
+                        color: ship_data.color,
+                    });
+
+                    all_indices.push(base_index);
+                    all_indices.push(base_index + 1);
+                    all_indices.push(base_index + 2);
+                }
             }
 
             // Draw triangle indicator when ship is too small
@@ -2347,18 +2625,11 @@ impl RenderState {
 
             if body_is_visible {
                 let base_index = all_vertices.len() as u32;
-
-                // Use actual world radius - no clamping!
-                // The indicator ring handles visibility when zoomed out
-                // When zoomed in, the body grows naturally via GPU transform
                 let draw_r = r;
-
-                // Calculate segments based on current screen size
                 let draw_pixel_radius = draw_r * pixels_per_world_unit;
                 let circumference_pixels = 2.0 * std::f32::consts::PI * draw_pixel_radius;
-                // Each segment spans at most 3 pixels of arc length
                 let raw_segments = (circumference_pixels / 3.0) as u32;
-                let segments = raw_segments.clamp(64, 4096) & !1; // Make even, min 64, max 4096
+                let segments = raw_segments.clamp(64, 16384) & !1;
 
                 // Center vertex (relative to camera)
                 all_vertices.push(Vertex {

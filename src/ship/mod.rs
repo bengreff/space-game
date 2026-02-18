@@ -17,14 +17,26 @@ pub enum AutopilotTarget {
     ManeuverNode,
 }
 
-/// Ship size in meters (physics space)
+/// Ship size in meters (physics space) - fallback when no vessel loaded
 pub const SHIP_SIZE: f64 = 10.0;
 
-/// Maximum thrust acceleration in m/s²
+/// Maximum thrust acceleration in m/s² - fallback when no vessel loaded
 pub const MAX_THRUST_ACCELERATION: f64 = 20.0;
 
-/// Rotation acceleration in radians/second² (30 degrees/s/s)
+/// Rotation acceleration in radians/second² (30 degrees/s/s) - fallback
 pub const ROTATION_ACCEL: f64 = 30.0 * std::f64::consts::PI / 180.0;
+
+/// Physics data derived from a FlightVessel, passed into Ship::update()
+#[derive(Clone, Debug)]
+pub struct VesselPhysicsData {
+    pub total_mass: f64,       // tonnes
+    pub max_thrust_vac: f64,   // kN
+    pub max_thrust_asl: f64,   // kN
+    pub vessel_height: f64,    // meters (half-height for collision)
+    pub bottom_extent: f64,    // meters (COM to bottom, for surface placement)
+    pub moment_of_inertia: f64,
+    pub torque: f64,           // Nm from reaction wheels
+}
 
 /// Rotation drag (natural deceleration) in radians/second² (9 degrees/s/s)
 pub const ROTATION_DRAG: f64 = 9.0 * std::f64::consts::PI / 180.0;
@@ -33,7 +45,7 @@ pub const ROTATION_DRAG: f64 = 9.0 * std::f64::consts::PI / 180.0;
 pub const ROTATION_SPEED: f64 = 2.0;
 
 /// Throttle change rate per second (0-1 scale)
-pub const THROTTLE_RATE: f64 = 0.5;
+pub const THROTTLE_RATE: f64 = 0.25;
 
 /// Time warp threshold for on-rails mode (max physics warp)
 pub const RAILS_WARP_THRESHOLD: f64 = 100.0;
@@ -215,7 +227,7 @@ impl Ship {
     }
 
     /// Update ship physics for one frame
-    pub fn update(&mut self, dt: f64, time_warp: f64, input: &ShipInput, solar_system: &SolarSystem) {
+    pub fn update(&mut self, dt: f64, time_warp: f64, input: &ShipInput, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>) {
         let should_be_on_rails = time_warp > RAILS_WARP_THRESHOLD
             && matches!(self.state, ShipState::Flying)
             && self.throttle == 0.0;
@@ -242,13 +254,13 @@ impl Ship {
                     } else {
                         dt
                     };
-                    self.update_flying(effective_dt, input, solar_system);
+                    self.update_flying(effective_dt, input, solar_system, vessel);
                 }
             }
             ShipState::Landed { body_index, surface_angle } => {
                 let body_index = *body_index;
                 let surface_angle = *surface_angle;
-                self.update_landed(dt, input, solar_system, body_index, surface_angle);
+                self.update_landed(dt, input, solar_system, body_index, surface_angle, vessel);
             }
         }
     }
@@ -324,12 +336,16 @@ impl Ship {
     }
 
     /// Update while flying (physics simulation with sub-stepping)
-    fn update_flying(&mut self, dt: f64, input: &ShipInput, solar_system: &SolarSystem) {
+    fn update_flying(&mut self, dt: f64, input: &ShipInput, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>) {
         // Rotation with acceleration model
+        let rot_accel = vessel
+            .map(|v| if v.moment_of_inertia > 0.0 { v.torque / v.moment_of_inertia } else { ROTATION_ACCEL })
+            .unwrap_or(ROTATION_ACCEL);
+
         if input.rotate_left {
-            self.rotational_velocity += ROTATION_ACCEL * dt;
+            self.rotational_velocity += rot_accel * dt;
         } else if input.rotate_right {
-            self.rotational_velocity -= ROTATION_ACCEL * dt;
+            self.rotational_velocity -= rot_accel * dt;
         } else {
             // Apply drag when no rotation input
             if self.rotational_velocity.abs() > 0.0 {
@@ -351,14 +367,14 @@ impl Ship {
         let sub_dt = dt / num_steps as f64;
 
         for _ in 0..num_steps {
-            self.physics_substep(sub_dt, input, solar_system);
+            self.physics_substep(sub_dt, input, solar_system, vessel);
         }
 
-        self.check_and_handle_collisions(solar_system);
+        self.check_and_handle_collisions(solar_system, vessel);
     }
 
     /// Single physics sub-step using velocity Verlet integration
-    fn physics_substep(&mut self, dt: f64, _input: &ShipInput, solar_system: &SolarSystem) {
+    fn physics_substep(&mut self, dt: f64, _input: &ShipInput, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>) {
         let soi_body = &solar_system.bodies[self.soi_body];
 
         let calc_gravity_accel = |pos: [f64; 2]| -> [f64; 2] {
@@ -372,8 +388,13 @@ impl Ship {
             }
         };
 
+        // Use vessel-derived thrust acceleration if available, else fallback
+        let max_thrust_accel = vessel
+            .map(|v| if v.total_mass > 0.0 { v.max_thrust_vac / v.total_mass } else { 0.0 })
+            .unwrap_or(MAX_THRUST_ACCELERATION);
+
         let thrust_accel = if self.throttle > 0.0 {
-            let mag = self.throttle * MAX_THRUST_ACCELERATION;
+            let mag = self.throttle * max_thrust_accel;
             [self.rotation.cos() * mag, self.rotation.sin() * mag]
         } else {
             [0.0, 0.0]
@@ -411,14 +432,23 @@ impl Ship {
         solar_system: &SolarSystem,
         body_index: usize,
         surface_angle: f64,
+        vessel: Option<&VesselPhysicsData>,
     ) {
         let body = &solar_system.bodies[body_index];
         let body_radius = body.radius;
         let surface_gravity = G * body.mass / (body_radius * body_radius);
-        let thrust_accel = self.throttle * MAX_THRUST_ACCELERATION;
+
+        let max_thrust_accel = vessel
+            .map(|v| if v.total_mass > 0.0 { v.max_thrust_vac / v.total_mass } else { 0.0 })
+            .unwrap_or(MAX_THRUST_ACCELERATION);
+        let thrust_accel = self.throttle * max_thrust_accel;
+
+        let bottom = vessel
+            .map(|v| v.bottom_extent)
+            .unwrap_or(SHIP_SIZE / 2.0);
 
         self.rotation = surface_angle;
-        let surface_distance = body_radius + SHIP_SIZE / 2.0;
+        let surface_distance = body_radius + bottom;
 
         if thrust_accel > surface_gravity {
             let net_accel = thrust_accel - surface_gravity;
@@ -440,10 +470,14 @@ impl Ship {
         }
 
         // Rotation with acceleration model (same as flying)
+        let rot_accel = vessel
+            .map(|v| if v.moment_of_inertia > 0.0 { v.torque / v.moment_of_inertia } else { ROTATION_ACCEL })
+            .unwrap_or(ROTATION_ACCEL);
+
         if input.rotate_left {
-            self.rotational_velocity += ROTATION_ACCEL * dt;
+            self.rotational_velocity += rot_accel * dt;
         } else if input.rotate_right {
-            self.rotational_velocity -= ROTATION_ACCEL * dt;
+            self.rotational_velocity -= rot_accel * dt;
         } else {
             // Apply drag when no rotation input
             if self.rotational_velocity.abs() > 0.0 {
@@ -461,8 +495,10 @@ impl Ship {
     }
 
     /// Check for collisions with bodies
-    fn check_and_handle_collisions(&mut self, solar_system: &SolarSystem) {
-        let ship_radius = SHIP_SIZE / 2.0;
+    fn check_and_handle_collisions(&mut self, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>) {
+        let ship_radius = vessel
+            .map(|v| v.vessel_height)
+            .unwrap_or(SHIP_SIZE / 2.0);
         let abs_pos = self.absolute_position(solar_system);
 
         for (i, body) in solar_system.bodies.iter().enumerate() {
@@ -784,7 +820,7 @@ impl Ship {
 
     /// Update ship rotation toward target angle using autopilot
     /// Uses acceleration-based control with stopping distance braking
-    pub fn autopilot_rotate(&mut self, target_angle: f64, dt: f64) {
+    pub fn autopilot_rotate(&mut self, target_angle: f64, dt: f64, vessel: Option<&VesselPhysicsData>) {
         // Normalize angle difference to [-PI, PI]
         let mut angle_diff = target_angle - self.rotation;
         while angle_diff > std::f64::consts::PI {
@@ -795,7 +831,9 @@ impl Ship {
         }
 
         let vel = self.rotational_velocity;
-        let accel = ROTATION_ACCEL;
+        let accel = vessel
+            .map(|v| if v.moment_of_inertia > 0.0 { v.torque / v.moment_of_inertia } else { ROTATION_ACCEL })
+            .unwrap_or(ROTATION_ACCEL);
         let threshold = 0.002; // ~0.1 degrees
 
         if angle_diff.abs() < threshold && vel.abs() < 0.01 {

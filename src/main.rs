@@ -12,8 +12,8 @@ use sunscatter::editor::{
     generate_ghost_vertices, screen_to_world, part_at_screen_pos, BodyInfo,
 };
 use sunscatter::game::{Game, GameMode};
-use sunscatter::render::{RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, OrbitSegmentData, Vertex};
-use sunscatter::ship::{AutopilotTarget, SHIP_SIZE, MAX_THRUST_ACCELERATION};
+use sunscatter::render::{RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, Vertex};
+use sunscatter::ship::{AutopilotTarget, ShipState, VesselPhysicsData, SHIP_SIZE, MAX_THRUST_ACCELERATION};
 
 // 1:1 Real-Scale Solar System Simulation
 // All physics use real-world values: masses, radii, distances, orbital velocities
@@ -227,21 +227,77 @@ fn render_flight_frame(
     let time_warp = WARP_LEVELS[game.flight.warp_index];
     game.solar_system.update(dt * time_warp);
 
+    // Build VesselPhysicsData from flight vessel if available
+    // Uses active_thrust which excludes engines without fuel
+    let vessel_physics = game.flight.vessel.as_ref().map(|v| VesselPhysicsData {
+        total_mass: v.total_mass,
+        max_thrust_vac: v.active_thrust_vac(),
+        max_thrust_asl: v.active_thrust_asl(),
+        vessel_height: v.bounding_half_height(),
+        bottom_extent: v.bottom_extent(),
+        moment_of_inertia: v.moment_of_inertia,
+        torque: v.torque,
+    });
+
     // Update ship physics
-    game.flight.ship.update(dt * time_warp, time_warp, &game.flight.ship_input, &game.solar_system);
+    game.flight.ship.update(dt * time_warp, time_warp, &game.flight.ship_input, &game.solar_system, vessel_physics.as_ref());
 
     // Autopilot rotation control (disabled during on-rails warp)
     let autopilot_target = render_state.get_autopilot_target();
     if autopilot_target != AutopilotTarget::Off && !game.flight.ship.on_rails {
         let maneuver_node = render_state.get_selected_maneuver_node();
         if let Some(target_angle) = game.flight.ship.autopilot_target_angle(autopilot_target, maneuver_node) {
-            game.flight.ship.autopilot_rotate(target_angle, dt);
+            game.flight.ship.autopilot_rotate(target_angle, dt, vessel_physics.as_ref());
         }
     }
 
+    // Fuel consumption and vessel sync
+    if let Some(ref mut vessel) = game.flight.vessel {
+        vessel.throttle = game.flight.ship.throttle;
+
+        // Always update engine states and consume fuel (updates active flags even at 0 throttle)
+        let effective_dt = dt * time_warp;
+        vessel.consume_fuel(effective_dt, 0.0);
+        vessel.recalculate_mass(&game.part_definitions);
+
+        // Sync vessel state from ship
+        vessel.rel_position = game.flight.ship.rel_position;
+        vessel.rel_velocity = game.flight.ship.rel_velocity;
+        vessel.rotation = game.flight.ship.rotation;
+
+        // Per-part terrain collision check
+        if matches!(game.flight.ship.state, ShipState::Flying) {
+            let soi_body = &game.solar_system.bodies[game.flight.ship.soi_body];
+            if let Some(surface_angle) = vessel.check_terrain_collision(
+                game.flight.ship.rel_position,
+                game.flight.ship.rotation,
+                soi_body.radius,
+            ) {
+                let surface_distance = soi_body.radius + vessel.bottom_extent();
+                game.flight.ship.rel_position = [
+                    surface_distance * surface_angle.cos(),
+                    surface_distance * surface_angle.sin(),
+                ];
+                game.flight.ship.rel_velocity = [0.0, 0.0];
+                game.flight.ship.throttle = 0.0;
+                game.flight.ship.rotation = surface_angle;
+                game.flight.ship.state = ShipState::Landed {
+                    body_index: game.flight.ship.soi_body,
+                    surface_angle,
+                };
+                game.flight.ship.on_rails = false;
+            }
+        }
+    }
+
+    // Compute current acceleration for maneuver burns and HUD
+    let current_accel = vessel_physics.as_ref()
+        .map(|v| if v.total_mass > 0.0 { v.max_thrust_vac / v.total_mass } else { 0.0 })
+        .unwrap_or(MAX_THRUST_ACCELERATION);
+
     // Apply burns to maneuver node delta-v
     if game.flight.ship.throttle > 0.0 && render_state.get_selected_maneuver_node().is_some() {
-        let delta_v_this_frame = game.flight.ship.throttle * MAX_THRUST_ACCELERATION * dt * time_warp;
+        let delta_v_this_frame = game.flight.ship.throttle * current_accel * dt * time_warp;
         let burn_direction = [game.flight.ship.rotation.cos(), game.flight.ship.rotation.sin()];
         render_state.apply_burn_to_maneuver(burn_direction, delta_v_this_frame);
     }
@@ -387,11 +443,99 @@ fn render_flight_frame(
         .map(|seg| seg.start_true_anomaly)
         .unwrap_or(0.0);
 
+    // Build part render data and vessel stats from flight vessel
+    let (part_render_data, vessel_mass, vessel_fuel_frac, vessel_thrust, vessel_delta_v, vessel_size) =
+        if let Some(ref vessel) = game.flight.vessel {
+            let parts: Vec<ShipPartRenderData> = vessel.parts.iter()
+                .enumerate()
+                .filter(|(_, p)| !p.destroyed && !p.decoupled)
+                .map(|(i, p)| {
+                    let def = game.part_definitions.get(&p.definition_id);
+                    let name = def.map(|d| d.name.clone()).unwrap_or_else(|| p.definition_id.clone());
+                    let dry_mass = def.map(|d| d.mass).unwrap_or(0.0);
+
+                    // Engine info
+                    let is_engine = p.propellant_type.is_some();
+                    let engine_thrust_vac = if is_engine { Some(p.engine_thrust_vac) } else { None };
+                    let engine_thrust_asl = if is_engine { Some(p.engine_thrust_asl) } else { None };
+                    let engine_isp_vac = if is_engine { Some(p.engine_isp_vac) } else { None };
+                    let engine_isp_asl = if is_engine { Some(p.engine_isp_asl) } else { None };
+                    let propellant_name = p.propellant_type.map(|pt| pt.display_name().to_string());
+
+                    // Tank info: sum all propellant resources in this part
+                    let has_tank = def.map(|d| d.tank.is_some()).unwrap_or(false);
+                    let (fuel_type_name, fuel_current, fuel_max) = if has_tank {
+                        let propellant_names = ["oxygen", "rp1", "methane", "hydrogen"];
+                        let current: f64 = propellant_names.iter()
+                            .filter_map(|n| p.resources.get(*n))
+                            .sum();
+                        let max: f64 = propellant_names.iter()
+                            .filter_map(|n| p.max_resources.get(*n))
+                            .sum();
+                        // Determine fuel type name from what's loaded
+                        let ft_name = if p.max_resources.contains_key("rp1") {
+                            Some("LOX/RP-1".to_string())
+                        } else if p.max_resources.contains_key("methane") {
+                            Some("LOX/CH4".to_string())
+                        } else if p.max_resources.contains_key("hydrogen") {
+                            Some("LOX/LH2".to_string())
+                        } else if max > 0.0 {
+                            Some("LOX".to_string())
+                        } else {
+                            Some("Empty".to_string())
+                        };
+                        (ft_name, Some(current), Some(max))
+                    } else {
+                        (None, None, None)
+                    };
+
+                    // Pod info
+                    let crew_capacity = def.and_then(|d| d.pod.as_ref().map(|pod| pod.crew_capacity));
+
+                    ShipPartRenderData {
+                        definition_id: p.definition_id.clone(),
+                        local_x: p.local_position[0],
+                        local_y: p.local_position[1],
+                        engine_active: p.engine_active,
+                        part_index: i,
+                        name,
+                        dry_mass,
+                        hitbox_half_w: p.hitbox_half_extents[0],
+                        hitbox_half_h: p.hitbox_half_extents[1],
+                        engine_thrust_vac,
+                        engine_thrust_asl,
+                        engine_isp_vac,
+                        engine_isp_asl,
+                        engine_enabled: p.engine_enabled,
+                        propellant_name,
+                        fuel_type_name,
+                        fuel_current,
+                        fuel_max,
+                        crew_capacity,
+                    }
+                })
+                .collect();
+
+            let max_fuel = vessel.get_max_fuel();
+            let fuel_frac = if max_fuel > 0.0 {
+                vessel.get_total_fuel() / max_fuel
+            } else {
+                0.0
+            };
+
+            let size = vessel.bounding_half_height() * 2.0;
+            let dv = vessel.calculate_delta_v();
+
+            (Some(parts), Some(vessel.total_mass), Some(fuel_frac), Some(vessel.active_thrust_vac()), Some(dv), size)
+        } else {
+            (None, None, None, None, None, SHIP_SIZE)
+        };
+
     let ship_render = ShipRenderData {
         x: ship_abs_pos[0] * SCALE * BODY_SCALE,
         y: ship_abs_pos[1] * SCALE * BODY_SCALE,
         rotation: game.flight.ship.rotation,
-        size: SHIP_SIZE * SCALE * BODY_SCALE,
+        size: vessel_size * SCALE * BODY_SCALE,
         color: game.flight.ship.color,
         orbit: ship_orbit,
         patched_trajectory,
@@ -400,11 +544,19 @@ fn render_flight_frame(
         soi_body_name: soi_body.name.clone(),
         throttle: game.flight.ship.throttle,
         time_to_intercept,
-        acceleration: MAX_THRUST_ACCELERATION,
+        acceleration: current_accel,
         current_true_anomaly,
+        parts: part_render_data,
+        total_mass: vessel_mass,
+        fuel_fraction: vessel_fuel_frac,
+        thrust_kn: vessel_thrust,
+        delta_v: vessel_delta_v,
+        soi_surface_gravity: game.solar_system.bodies[game.flight.ship.soi_body].surface_gravity(),
+        current_stage: game.flight.vessel.as_ref().map(|v| v.current_stage),
+        total_stages: game.flight.vessel.as_ref().map(|v| v.stages.len()),
     };
 
-    render_state.update_bodies_orbits_and_ship(&bodies, &orbits, Some(&ship_render), SCALE);
+    render_state.update_bodies_orbits_and_ship(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions));
 
     // Calculate predicted trajectories for maneuver nodes
     let mut predicted_trajectories: Vec<Vec<OrbitSegmentData>> = Vec::new();
@@ -481,6 +633,15 @@ fn render_flight_frame(
         }
         Err(e) => eprintln!("Render error: {:?}", e),
     }
+
+    // Process engine toggle request from part info popup
+    if let Some((part_idx, enabled)) = render_state.engine_toggle_request.take() {
+        if let Some(ref mut vessel) = game.flight.vessel {
+            if part_idx < vessel.parts.len() {
+                vessel.parts[part_idx].engine_enabled = enabled;
+            }
+        }
+    }
 }
 
 /// Render an editor mode frame
@@ -545,7 +706,21 @@ fn render_editor_frame(
     match action {
         EditorAction::Launch => {
             match game.launch_from_editor() {
-                Ok(()) => log::info!("Launched vessel"),
+                Ok(()) => {
+                    // Zoom camera to see the vessel on the surface
+                    if let Some(ref vessel) = game.flight.vessel {
+                        let vessel_world_size = vessel.bounding_half_height() * 2.0 * SCALE * BODY_SCALE;
+                        // We want the vessel to take up ~1/4 of the screen height
+                        // pixels = vessel_world_size * zoom * screen_height / 2
+                        // We want pixels ≈ screen_height / 4
+                        // So zoom = screen_height/4 / (vessel_world_size * screen_height/2)
+                        //         = 1 / (2 * vessel_world_size)
+                        let target_fraction = 0.25;
+                        let zoom = target_fraction / vessel_world_size as f32;
+                        render_state.camera.zoom = zoom;
+                    }
+                    log::info!("Launched vessel");
+                }
                 Err(e) => log::error!("Failed to launch: {}", e),
             }
         }
@@ -605,13 +780,20 @@ fn handle_flight_mouse_input(
             let dy = mouse_pos[1] - last_click_pos[1];
             let dist = (dx * dx + dy * dy).sqrt();
 
+            // Check if clicking on a flight part (highest priority when zoomed in)
+            if let Some(cache_idx) = render_state.flight_part_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
+                render_state.selected_flight_part = Some(cache_idx);
+                // Don't start camera drag
+            }
             // Check if clicking on a maneuver node
-            if let Some(node_id) = render_state.maneuver_node_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
+            else if let Some(node_id) = render_state.maneuver_node_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
                 render_state.start_dragging_node(node_id);
                 render_state.selected_maneuver_node = Some(node_id);
                 render_state.pending_orbit_click = None;
+                render_state.selected_flight_part = None;
             } else {
                 render_state.camera.is_dragging = true;
+                render_state.selected_flight_part = None;
             }
 
             // Check for double-click on body
@@ -773,6 +955,14 @@ fn handle_flight_keyboard(
     logical_key: &Key,
     pressed: bool,
 ) {
+    if let Key::Named(named_key) = logical_key {
+        if *named_key == winit::keyboard::NamedKey::Space && pressed {
+            if let Some(ref mut vessel) = game.flight.vessel {
+                vessel.activate_next_stage();
+            }
+        }
+    }
+
     if let Key::Character(c) = logical_key {
         match c.as_str() {
             "w" | "W" => game.flight.ship_input.throttle_up = pressed,

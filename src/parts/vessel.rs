@@ -1,4 +1,4 @@
-use super::{PartDefinitions, VesselBlueprint};
+use super::{FuelType, Propellant, PartDefinitions, VesselBlueprint};
 use std::collections::HashMap;
 
 /// A vessel in flight - runtime representation with physics
@@ -45,11 +45,14 @@ pub struct FlightPart {
 
     // Engine state (if this is an engine)
     pub engine_active: bool,
+    pub engine_enabled: bool,  // User toggle: if false, engine won't fire even with fuel
     pub engine_thrust_vac: f64,
     pub engine_thrust_asl: f64,
     pub engine_isp_vac: f64,
     pub engine_isp_asl: f64,
     pub is_throttleable: bool,
+    pub propellant_type: Option<Propellant>,
+    pub mass_flow_rate: f64, // kg/s total (fuel+oxidizer) at full vacuum thrust
 
     // State
     pub destroyed: bool,
@@ -80,13 +83,7 @@ impl FlightVessel {
             let def = part_defs.get(&bp_part.definition_id)
                 .ok_or_else(|| format!("Unknown part: {}", bp_part.definition_id))?;
 
-            let part_mass = def.wet_mass();
-            total_mass += part_mass;
             dry_mass += def.mass;
-
-            // Weight center of mass by part mass
-            center_of_mass[0] += bp_part.position[0] * part_mass;
-            center_of_mass[1] += bp_part.position[1] * part_mass;
 
             // Sum thrust from engines
             if let Some(ref engine) = def.engine {
@@ -99,32 +96,68 @@ impl FlightVessel {
                 torque += pod.torque;
             }
 
+            // Create flight part with fuel loaded from blueprint state
+            let mut resources = def.resources.clone();
+            let mut max_resources = def.resources.clone();
+
+            if let Some(ref tank) = def.tank {
+                if bp_part.tank_filled && bp_part.fuel_type != FuelType::Empty {
+                    let (ox_kg, fuel_kg) = tank.propellant_capacity(bp_part.fuel_type);
+                    if let Some(fuel_name) = bp_part.fuel_type.fuel_resource_name() {
+                        resources.insert("oxygen".to_string(), ox_kg);
+                        resources.insert(fuel_name.to_string(), fuel_kg);
+                        max_resources.insert("oxygen".to_string(), ox_kg);
+                        max_resources.insert(fuel_name.to_string(), fuel_kg);
+                    }
+                }
+            }
+
+            // Calculate part mass including fuel
+            let resource_mass_kg: f64 = resources.values().sum();
+            let part_mass = def.mass + resource_mass_kg * 0.001; // kg -> tonnes
+            total_mass += part_mass;
+
+            // Weight center of mass by part mass
+            center_of_mass[0] += bp_part.position[0] * part_mass;
+            center_of_mass[1] += bp_part.position[1] * part_mass;
+
             // Create flight part
             let mut flight_part = FlightPart {
                 definition_id: bp_part.definition_id.clone(),
                 local_position: bp_part.position,
                 rotation: bp_part.rotation,
                 hitbox_half_extents: [def.width() / 2.0, def.height() / 2.0],
-                resources: def.resources.clone(),
-                max_resources: def.resources.clone(),
+                resources,
+                max_resources,
                 engine_active: false,
+                engine_enabled: false,
                 engine_thrust_vac: 0.0,
                 engine_thrust_asl: 0.0,
                 engine_isp_vac: 0.0,
                 engine_isp_asl: 0.0,
                 is_throttleable: true,
+                propellant_type: None,
+                mass_flow_rate: 0.0,
                 destroyed: false,
                 decoupled: false,
             };
 
             // Set engine data if this is an engine
             if let Some(ref engine) = def.engine {
-                flight_part.engine_active = true;
+                flight_part.engine_active = false;
                 flight_part.engine_thrust_vac = engine.thrust_vac;
                 flight_part.engine_thrust_asl = engine.thrust_asl;
                 flight_part.engine_isp_vac = engine.isp_vac;
                 flight_part.engine_isp_asl = engine.isp_asl;
                 flight_part.is_throttleable = engine.throttleable;
+                flight_part.propellant_type = Some(engine.propellant);
+                // m_dot = F / (g0 * Isp), F in Newtons = kN * 1000
+                let g0 = 9.80665;
+                flight_part.mass_flow_rate = if engine.isp_vac > 0.0 {
+                    (engine.thrust_vac * 1000.0) / (g0 * engine.isp_vac)
+                } else {
+                    0.0
+                };
             }
 
             parts.push(flight_part);
@@ -210,6 +243,62 @@ impl FlightVessel {
         }
     }
 
+    /// Update engine_active flags based on fuel availability.
+    /// Engines without their required propellant type are deactivated.
+    pub fn update_engine_states(&mut self) {
+        for i in 0..self.parts.len() {
+            if self.parts[i].destroyed || self.parts[i].decoupled {
+                continue;
+            }
+            let propellant = match self.parts[i].propellant_type {
+                Some(p) => p,
+                None => continue,
+            };
+
+            // User-disabled engines are always inactive
+            if !self.parts[i].engine_enabled {
+                self.parts[i].engine_active = false;
+                continue;
+            }
+
+            let fuel_type = propellant.fuel_type();
+            let fuel_name = match fuel_type.fuel_resource_name() {
+                Some(n) => n,
+                None => {
+                    self.parts[i].engine_active = false;
+                    continue;
+                }
+            };
+
+            let fuel_available: f64 = self.parts.iter()
+                .filter(|p| !p.destroyed && !p.decoupled)
+                .filter_map(|p| p.resources.get(fuel_name))
+                .sum();
+            let ox_available: f64 = self.parts.iter()
+                .filter(|p| !p.destroyed && !p.decoupled)
+                .filter_map(|p| p.resources.get("oxygen"))
+                .sum();
+
+            self.parts[i].engine_active = fuel_available > 0.001 && ox_available > 0.001;
+        }
+    }
+
+    /// Max vacuum thrust from currently active (fueled) engines
+    pub fn active_thrust_vac(&self) -> f64 {
+        self.parts.iter()
+            .filter(|p| p.engine_active && !p.destroyed && !p.decoupled)
+            .map(|p| p.engine_thrust_vac)
+            .sum()
+    }
+
+    /// Max sea-level thrust from currently active (fueled) engines
+    pub fn active_thrust_asl(&self) -> f64 {
+        self.parts.iter()
+            .filter(|p| p.engine_active && !p.destroyed && !p.decoupled)
+            .map(|p| p.engine_thrust_asl)
+            .sum()
+    }
+
     /// Get thrust at a given atmospheric pressure (0.0 = vacuum, 1.0 = sea level)
     pub fn get_thrust(&self, pressure: f64) -> f64 {
         let mut thrust = 0.0;
@@ -246,81 +335,289 @@ impl FlightVessel {
         }
     }
 
-    /// Consume fuel and return actual thrust achieved
+    /// Consume fuel per-engine and return actual thrust achieved.
+    /// Each engine drains oxidizer and its specific fuel type at the tank ratio.
+    /// Engines without available fuel are deactivated.
     pub fn consume_fuel(&mut self, dt: f64, pressure: f64) -> f64 {
+        // Always update which engines have fuel
+        self.update_engine_states();
+
         if self.throttle <= 0.0 {
             return 0.0;
         }
 
-        let isp = self.get_isp(pressure);
-        if isp <= 0.0 {
+        let g0 = 9.80665;
+
+        // Phase 1: Collect per-engine fuel demands
+        // (engine_index, fuel_resource_name, ox_needed_kg, fuel_needed_kg, engine_thrust_at_pressure)
+        let mut engine_demands: Vec<(usize, &'static str, f64, f64, f64)> = Vec::new();
+
+        for (i, part) in self.parts.iter().enumerate() {
+            if !part.engine_active || part.destroyed || part.decoupled {
+                continue;
+            }
+            let propellant = match part.propellant_type {
+                Some(p) => p,
+                None => continue,
+            };
+            let fuel_type = propellant.fuel_type();
+            let fuel_name = match fuel_type.fuel_resource_name() {
+                Some(n) => n,
+                None => continue,
+            };
+
+            // Ox:fuel ratio from the tank chemistry
+            let (ox_per_sq, fuel_per_sq) = fuel_type.propellant_per_grid_square();
+            let total_per_sq = ox_per_sq + fuel_per_sq;
+            if total_per_sq <= 0.0 {
+                continue;
+            }
+            let ox_ratio = ox_per_sq / total_per_sq;
+            let fuel_ratio = fuel_per_sq / total_per_sq;
+
+            // Engine thrust and ISP at current pressure
+            let engine_thrust = part.engine_thrust_vac * (1.0 - pressure)
+                + part.engine_thrust_asl * pressure;
+            let engine_isp = part.engine_isp_vac * (1.0 - pressure)
+                + part.engine_isp_asl * pressure;
+            if engine_isp <= 0.0 {
+                continue;
+            }
+
+            // Mass flow rate at current throttle: m_dot = F / (g0 * Isp)
+            let mass_flow = (engine_thrust * 1000.0) / (g0 * engine_isp);
+            let total_consumption = mass_flow * self.throttle * dt;
+
+            engine_demands.push((
+                i,
+                fuel_name,
+                total_consumption * ox_ratio,
+                total_consumption * fuel_ratio,
+                engine_thrust,
+            ));
+        }
+
+        if engine_demands.is_empty() {
             return 0.0;
         }
 
-        // Calculate fuel consumption rate (mass flow rate)
-        // F = m_dot * v_e = m_dot * g0 * Isp
-        // m_dot = F / (g0 * Isp)
-        let g0 = 9.80665; // Standard gravity
-        let thrust = self.get_thrust(pressure);
-        let mass_flow_rate = thrust / (g0 * isp);
-        let fuel_needed = mass_flow_rate * dt;
+        // Phase 2: Sum drain amounts per resource
+        let mut total_ox_drain = 0.0;
+        let mut fuel_drains: HashMap<&str, f64> = HashMap::new();
+        let mut total_thrust = 0.0;
 
-        // Try to consume fuel from tanks
-        let fuel_available = self.get_total_fuel();
-        let fuel_consumed = fuel_needed.min(fuel_available);
-
-        if fuel_consumed > 0.0 {
-            self.consume_fuel_amount(fuel_consumed);
+        for &(_, fuel_name, ox_needed, fuel_needed, engine_thrust) in &engine_demands {
+            total_ox_drain += ox_needed;
+            *fuel_drains.entry(fuel_name).or_insert(0.0) += fuel_needed;
+            total_thrust += engine_thrust * self.throttle;
         }
 
-        // Return actual thrust achieved
-        if fuel_needed > 0.0 {
-            thrust * (fuel_consumed / fuel_needed)
-        } else {
-            0.0
+        // Phase 3: Drain resources from tanks (proportionally across all tanks)
+        // Drain oxygen
+        let ox_available: f64 = self.parts.iter()
+            .filter(|p| !p.destroyed && !p.decoupled)
+            .filter_map(|p| p.resources.get("oxygen"))
+            .sum();
+
+        if total_ox_drain > 0.0 && ox_available > 0.0 {
+            let drain_frac = (total_ox_drain / ox_available).min(1.0);
+            for part in &mut self.parts {
+                if part.destroyed || part.decoupled {
+                    continue;
+                }
+                if let Some(ox) = part.resources.get_mut("oxygen") {
+                    *ox -= *ox * drain_frac;
+                    if *ox < 0.001 {
+                        *ox = 0.0;
+                    }
+                }
+            }
         }
+
+        // Drain each fuel type
+        for (&fuel_name, &drain_amount) in &fuel_drains {
+            let available: f64 = self.parts.iter()
+                .filter(|p| !p.destroyed && !p.decoupled)
+                .filter_map(|p| p.resources.get(fuel_name))
+                .sum();
+
+            if drain_amount > 0.0 && available > 0.0 {
+                let drain_frac = (drain_amount / available).min(1.0);
+                for part in &mut self.parts {
+                    if part.destroyed || part.decoupled {
+                        continue;
+                    }
+                    if let Some(fuel) = part.resources.get_mut(fuel_name) {
+                        *fuel -= *fuel * drain_frac;
+                        if *fuel < 0.001 {
+                            *fuel = 0.0;
+                        }
+                    }
+                }
+            }
+        }
+
+        total_thrust
     }
 
-    /// Get total fuel available
-    fn get_total_fuel(&self) -> f64 {
+    /// Resource names that count as propellant
+    const PROPELLANT_RESOURCES: &'static [&'static str] = &["oxygen", "rp1", "methane", "hydrogen"];
+
+    /// Get total fuel available (kg)
+    pub fn get_total_fuel(&self) -> f64 {
         let mut total = 0.0;
         for part in &self.parts {
             if part.destroyed || part.decoupled {
                 continue;
             }
-            if let Some(&fuel) = part.resources.get("liquid_fuel") {
-                total += fuel;
-            }
-            if let Some(&fuel) = part.resources.get("solid_fuel") {
-                total += fuel;
+            for &name in Self::PROPELLANT_RESOURCES {
+                if let Some(&amount) = part.resources.get(name) {
+                    total += amount;
+                }
             }
         }
         total
     }
 
-    /// Consume a specific amount of fuel from all tanks
-    fn consume_fuel_amount(&mut self, amount: f64) {
-        let mut remaining = amount;
+    /// Get max total fuel capacity (kg)
+    pub fn get_max_fuel(&self) -> f64 {
+        let mut total = 0.0;
+        for part in &self.parts {
+            if part.destroyed || part.decoupled {
+                continue;
+            }
+            for &name in Self::PROPELLANT_RESOURCES {
+                if let Some(&amount) = part.max_resources.get(name) {
+                    total += amount;
+                }
+            }
+        }
+        total
+    }
 
-        for part in &mut self.parts {
-            if part.destroyed || part.decoupled || remaining <= 0.0 {
+    /// Get the bounding half-height of the vessel (max extent from COM in Y)
+    pub fn bounding_half_height(&self) -> f64 {
+        let mut max_extent = 0.0f64;
+        for part in &self.parts {
+            if part.destroyed || part.decoupled {
+                continue;
+            }
+            let top = part.local_position[1] + part.hitbox_half_extents[1];
+            let bottom = part.local_position[1] - part.hitbox_half_extents[1];
+            max_extent = max_extent.max(top.abs()).max(bottom.abs());
+        }
+        max_extent.max(1.0)
+    }
+
+    /// Distance from COM to the bottom of the vessel (most negative Y extent).
+    /// Used for placing the vessel on a surface so the engine touches the ground.
+    pub fn bottom_extent(&self) -> f64 {
+        let mut min_y = 0.0f64;
+        for part in &self.parts {
+            if part.destroyed || part.decoupled {
+                continue;
+            }
+            let bottom = part.local_position[1] - part.hitbox_half_extents[1];
+            min_y = min_y.min(bottom);
+        }
+        -min_y
+    }
+
+    /// Check if any part collides with terrain (sphere at origin with given radius).
+    /// vessel_pos is the vessel center position relative to the body.
+    /// vessel_rotation is the vessel's rotation angle.
+    /// Returns Some(surface_angle) if collision detected.
+    pub fn check_terrain_collision(
+        &self,
+        vessel_pos: [f64; 2],
+        vessel_rotation: f64,
+        body_radius: f64,
+    ) -> Option<f64> {
+        let cos_r = vessel_rotation.cos();
+        let sin_r = vessel_rotation.sin();
+
+        for part in &self.parts {
+            if part.destroyed || part.decoupled {
                 continue;
             }
 
-            // Consume liquid fuel first
-            if let Some(fuel) = part.resources.get_mut("liquid_fuel") {
-                let consumed = (*fuel).min(remaining);
-                *fuel -= consumed;
-                remaining -= consumed;
-            }
+            // Check 4 corners of the hitbox
+            let hx = part.hitbox_half_extents[0];
+            let hy = part.hitbox_half_extents[1];
+            let corners = [
+                [part.local_position[0] - hx, part.local_position[1] - hy],
+                [part.local_position[0] + hx, part.local_position[1] - hy],
+                [part.local_position[0] + hx, part.local_position[1] + hy],
+                [part.local_position[0] - hx, part.local_position[1] + hy],
+            ];
 
-            // Then solid fuel
-            if let Some(fuel) = part.resources.get_mut("solid_fuel") {
-                let consumed = (*fuel).min(remaining);
-                *fuel -= consumed;
-                remaining -= consumed;
+            for corner in &corners {
+                // Rotate corner by vessel rotation
+                let world_x = vessel_pos[0] + corner[0] * cos_r - corner[1] * sin_r;
+                let world_y = vessel_pos[1] + corner[0] * sin_r + corner[1] * cos_r;
+
+                let dist = (world_x * world_x + world_y * world_y).sqrt();
+                if dist < body_radius {
+                    return Some(world_y.atan2(world_x));
+                }
             }
         }
+
+        None
+    }
+
+    /// Find weld connections between parts whose welding hitboxes overlap.
+    /// Returns adjacency list: for each part index, the set of part indices it is welded to.
+    pub fn find_weld_connections(&self, part_defs: &PartDefinitions) -> Vec<Vec<usize>> {
+        let n = self.parts.len();
+        let mut connections = vec![Vec::new(); n];
+
+        for i in 0..n {
+            if self.parts[i].destroyed || self.parts[i].decoupled {
+                continue;
+            }
+            let Some(def_i) = part_defs.get(&self.parts[i].definition_id) else {
+                continue;
+            };
+            let weld_hw_i = def_i.weld_hitbox_width() / 2.0;
+            let weld_hh_i = def_i.weld_hitbox_height() / 2.0;
+
+            for j in (i + 1)..n {
+                if self.parts[j].destroyed || self.parts[j].decoupled {
+                    continue;
+                }
+                let Some(def_j) = part_defs.get(&self.parts[j].definition_id) else {
+                    continue;
+                };
+                let weld_hw_j = def_j.weld_hitbox_width() / 2.0;
+                let weld_hh_j = def_j.weld_hitbox_height() / 2.0;
+
+                // Check AABB overlap of welding hitboxes
+                let dx = (self.parts[i].local_position[0] - self.parts[j].local_position[0]).abs();
+                let dy = (self.parts[i].local_position[1] - self.parts[j].local_position[1]).abs();
+
+                if dx < weld_hw_i + weld_hw_j && dy < weld_hh_i + weld_hh_j {
+                    connections[i].push(j);
+                    connections[j].push(i);
+                }
+            }
+        }
+
+        connections
+    }
+
+    /// Calculate delta-v using the Tsiolkovsky rocket equation
+    pub fn calculate_delta_v(&self) -> f64 {
+        if self.dry_mass <= 0.0 || self.total_mass <= self.dry_mass {
+            return 0.0;
+        }
+        let isp = self.get_isp(0.0); // Vacuum ISP
+        if isp <= 0.0 {
+            return 0.0;
+        }
+        let g0 = 9.80665;
+        let ve = g0 * isp;
+        ve * (self.total_mass / self.dry_mass).ln()
     }
 
     /// Check collision between a part and a point (for terrain collision)
@@ -371,7 +668,7 @@ impl FlightVessel {
         ]
     }
 
-    /// Activate next stage
+    /// Activate next stage (enables engines in that stage)
     pub fn activate_next_stage(&mut self) -> bool {
         if self.current_stage >= self.stages.len() {
             return false;
@@ -379,10 +676,10 @@ impl FlightVessel {
 
         let stage_parts = self.stages[self.current_stage].clone();
 
-        // Decouple parts in this stage
+        // Enable engines in this stage
         for &part_idx in &stage_parts {
-            if part_idx < self.parts.len() {
-                self.parts[part_idx].decoupled = true;
+            if part_idx < self.parts.len() && self.parts[part_idx].propellant_type.is_some() {
+                self.parts[part_idx].engine_enabled = true;
             }
         }
 
@@ -411,11 +708,14 @@ pub fn create_default_vessel(
             resources: HashMap::new(),
             max_resources: HashMap::new(),
             engine_active: true,
+            engine_enabled: true,
             engine_thrust_vac: 200.0,
             engine_thrust_asl: 150.0,
             engine_isp_vac: 300.0,
             engine_isp_asl: 250.0,
             is_throttleable: true,
+            propellant_type: None,
+            mass_flow_rate: 0.0,
             destroyed: false,
             decoupled: false,
         }],

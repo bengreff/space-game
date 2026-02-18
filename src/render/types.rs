@@ -47,6 +47,34 @@ pub struct OrbitRenderData {
     pub color: [f32; 4],
 }
 
+/// Render data for a single part in a vessel
+#[derive(Clone)]
+pub struct ShipPartRenderData {
+    pub definition_id: String,
+    pub local_x: f64,  // meters, relative to vessel COM
+    pub local_y: f64,
+    pub engine_active: bool,  // true if this engine has fuel and can fire
+    // Extended info for part popup
+    pub part_index: usize,        // index in FlightVessel.parts
+    pub name: String,             // display name from PartDefinition
+    pub dry_mass: f64,            // tonnes
+    pub hitbox_half_w: f64,       // meters, for click detection
+    pub hitbox_half_h: f64,       // meters, for click detection
+    // Engine info
+    pub engine_thrust_vac: Option<f64>,  // kN
+    pub engine_thrust_asl: Option<f64>,  // kN
+    pub engine_isp_vac: Option<f64>,     // s
+    pub engine_isp_asl: Option<f64>,     // s
+    pub engine_enabled: bool,
+    pub propellant_name: Option<String>,
+    // Tank info
+    pub fuel_type_name: Option<String>,
+    pub fuel_current: Option<f64>,  // kg
+    pub fuel_max: Option<f64>,      // kg
+    // Pod info
+    pub crew_capacity: Option<u32>,
+}
+
 /// Ship render data
 #[derive(Clone)]
 pub struct ShipRenderData {
@@ -64,6 +92,16 @@ pub struct ShipRenderData {
     pub time_to_intercept: Option<f64>,
     pub acceleration: f64,  // m/s^2 - ship's current thrust / mass
     pub current_true_anomaly: f64, // Ship's current true anomaly in its orbit
+    // Vessel-specific data (None when no vessel loaded)
+    pub parts: Option<Vec<ShipPartRenderData>>,
+    pub total_mass: Option<f64>,     // tonnes
+    pub fuel_fraction: Option<f64>,  // 0.0-1.0
+    pub thrust_kn: Option<f64>,
+    pub delta_v: Option<f64>,        // m/s, Tsiolkovsky
+    pub soi_surface_gravity: f64,    // m/s², for TWR calculation
+    // Staging
+    pub current_stage: Option<usize>,  // Stages activated so far
+    pub total_stages: Option<usize>,   // Total number of stages
 }
 
 /// Ship orbit data for rendering

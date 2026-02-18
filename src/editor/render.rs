@@ -384,7 +384,7 @@ pub fn generate_ghost_vertices(
 
 /// Generate vertices for engine details (nozzle, pipes, rings, turbopump)
 /// This draws the detailed engine visuals - replaces the base part shape entirely
-fn generate_engine_details(
+pub fn generate_engine_details(
     vertices: &mut Vec<Vertex>,
     def: &PartDefinition,
     x: f32,
@@ -671,7 +671,7 @@ fn draw_gas_generator(
 }
 
 /// Generate pod details (dark grey trapezoid with white circle window)
-fn generate_pod_details(
+pub fn generate_pod_details(
     vertices: &mut Vec<Vertex>,
     def: &PartDefinition,
     x: f32,
@@ -702,7 +702,7 @@ fn generate_pod_details(
 }
 
 /// Draw a filled circle
-fn draw_circle(
+pub fn draw_circle(
     vertices: &mut Vec<Vertex>,
     x: f32, y: f32,
     radius: f32,
@@ -715,6 +715,95 @@ fn draw_circle(
         vertices.push(Vertex { position: [x, y], color });
         vertices.push(Vertex { position: [x + a1.cos() * radius, y + a1.sin() * radius], color });
         vertices.push(Vertex { position: [x + a2.cos() * radius, y + a2.sin() * radius], color });
+    }
+}
+
+/// Generate exhaust plume vertices for a firing engine.
+/// Draws a red outer triangle and yellow inner triangle extending from the nozzle exit.
+/// Plume width = nozzle diameter, plume length = 2 × nozzle diameter.
+pub fn generate_engine_plume_vertices(
+    vertices: &mut Vec<Vertex>,
+    def: &PartDefinition,
+    x: f32,
+    y: f32,
+    throttle: f32,
+) {
+    if throttle <= 0.0 {
+        return;
+    }
+
+    let half_h = (def.height() / 2.0) as f32;
+    let nozzle_width = def.width() as f32;
+    let half_nozzle = nozzle_width / 2.0;
+    let plume_length = nozzle_width * 2.0 * throttle;
+
+    // Nozzle exit is at the bottom of the engine (y - half_h)
+    let nozzle_y = y - half_h;
+
+    // Red outer plume triangle
+    let red = [1.0, 0.2, 0.0, 0.9];
+    vertices.push(Vertex { position: [x - half_nozzle, nozzle_y], color: red });
+    vertices.push(Vertex { position: [x + half_nozzle, nozzle_y], color: red });
+    vertices.push(Vertex { position: [x, nozzle_y - plume_length], color: red });
+
+    // Yellow inner plume triangle (60% width, 40% length)
+    let yellow = [1.0, 0.9, 0.1, 1.0];
+    let inner_half_w = half_nozzle * 0.6;
+    let inner_length = plume_length * 0.4;
+    vertices.push(Vertex { position: [x - inner_half_w, nozzle_y], color: yellow });
+    vertices.push(Vertex { position: [x + inner_half_w, nozzle_y], color: yellow });
+    vertices.push(Vertex { position: [x, nozzle_y - inner_length], color: yellow });
+}
+
+/// Generate vertices for a single part at the given (x, y) center position.
+/// Dispatches to the correct shape/category renderer.
+/// Used by both the editor and flight rendering.
+pub fn generate_part_shape_vertices(
+    vertices: &mut Vec<Vertex>,
+    def: &PartDefinition,
+    x: f32,
+    y: f32,
+    alpha: f32,
+) {
+    // For engines, use dedicated engine rendering
+    if def.category == PartCategory::Propulsion && def.engine.is_some() {
+        generate_engine_details(vertices, def, x, y, alpha);
+        return;
+    }
+
+    // For pods, use dedicated pod rendering
+    if def.category == PartCategory::Pods {
+        generate_pod_details(vertices, def, x, y, alpha);
+        return;
+    }
+
+    let half_w = (def.width() / 2.0) as f32;
+    let half_h = (def.height() / 2.0) as f32;
+    let color = [0.4, 0.4, 0.45, alpha];
+
+    match def.shape {
+        PartShape::Rectangle => {
+            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_w, y + half_h], color });
+            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_w, y + half_h], color });
+            vertices.push(Vertex { position: [x - half_w, y + half_h], color });
+        }
+        PartShape::Triangle => {
+            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x, y + half_h], color });
+        }
+        PartShape::Trapezoid => {
+            let half_top_w = (def.top_width() / 2.0) as f32;
+            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_top_w, y + half_h], color });
+            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_top_w, y + half_h], color });
+            vertices.push(Vertex { position: [x - half_top_w, y + half_h], color });
+        }
     }
 }
 

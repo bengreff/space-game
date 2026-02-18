@@ -102,29 +102,62 @@ impl Game {
         let earth_idx = 3; // Earth is index 3 in the solar system
         let earth = &self.solar_system.bodies[earth_idx];
 
-        // Spawn on the surface, pointing up
-        let spawn_altitude = earth.radius + 100.0; // 100m above surface
+        // Surface angle (spawn at top of the body, angle = π/2)
+        let surface_angle = std::f64::consts::FRAC_PI_2;
 
-        // Create flight vessel
+        // Create flight vessel first to get bounding height
         let vessel = FlightVessel::from_blueprint(
             &blueprint,
             &self.part_definitions,
-            [spawn_altitude, 0.0], // Relative to Earth
-            [0.0, 0.0],            // Stationary relative to Earth surface
+            [0.0, 0.0], // Temporary, will set below
+            [0.0, 0.0], // Stationary relative to Earth surface
             earth_idx,
         )?;
 
+        let surface_distance = earth.radius + vessel.bottom_extent();
+
+        // Position on the surface
+        let spawn_position = [
+            surface_distance * surface_angle.cos(),
+            surface_distance * surface_angle.sin(),
+        ];
+
+        // Recreate vessel at correct position
+        let mut vessel = FlightVessel::from_blueprint(
+            &blueprint,
+            &self.part_definitions,
+            spawn_position,
+            [0.0, 0.0],
+            earth_idx,
+        )?;
+
+        // Build weld connections
+        let _weld_connections = vessel.find_weld_connections(&self.part_definitions);
+
         // Update ship state to match vessel
-        self.flight.ship.rel_position = vessel.rel_position;
-        self.flight.ship.rel_velocity = vessel.rel_velocity;
-        self.flight.ship.rotation = std::f64::consts::FRAC_PI_2; // Point up
-        self.flight.ship.soi_body = vessel.soi_body;
+        self.flight.ship.rel_position = spawn_position;
+        self.flight.ship.rel_velocity = [0.0, 0.0];
+        self.flight.ship.rotation = surface_angle; // Point up from surface
+        self.flight.ship.rotational_velocity = 0.0;
+        self.flight.ship.soi_body = earth_idx;
+        self.flight.ship.throttle = 0.0;
+        self.flight.ship.on_rails = false;
+        self.flight.ship.cached_orbit = None;
+        self.flight.ship.state = crate::ship::ShipState::Landed {
+            body_index: earth_idx,
+            surface_angle,
+        };
+
+        // Sync vessel state
+        vessel.rel_position = spawn_position;
+        vessel.rotation = surface_angle;
         self.flight.vessel = Some(vessel);
 
         // Switch to flight mode
         self.mode = GameMode::Flight;
         self.flight.warp_index = 0;
         self.flight.tracking_ship = true;
+        self.flight.ship_input = ShipInput::default();
 
         log::info!("Launched vessel: {}", blueprint.name);
         Ok(())
@@ -136,7 +169,7 @@ impl Game {
             .ok_or_else(|| format!("Blueprint not found: {}", name))?
             .clone();
 
-        self.editor.load_blueprint(&blueprint);
+        self.editor.load_blueprint(&blueprint, &self.part_definitions);
         self.mode = GameMode::Editor;
         Ok(())
     }
@@ -169,6 +202,7 @@ impl Game {
                     time_warp,
                     &self.flight.ship_input,
                     &self.solar_system,
+                    None,
                 );
 
                 // Update flight vessel if present (fuel consumption, etc.)

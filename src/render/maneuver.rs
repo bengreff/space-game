@@ -389,6 +389,55 @@ impl RenderState {
             .and_then(|id| self.maneuver_nodes.iter().find(|n| n.id == id))
     }
 
+    /// Check if a screen click hits a flight part, returns index into flight_parts_cache
+    pub fn flight_part_at_screen_pos(&self, screen_x: f32, screen_y: f32) -> Option<usize> {
+        if self.flight_parts_cache.is_empty() {
+            return None;
+        }
+
+        // Convert screen to world coordinates
+        let world_pos = self.camera.screen_to_world(
+            screen_x,
+            screen_y,
+            self.size.width as f32,
+            self.size.height as f32,
+        );
+
+        // Subtract vessel render position to get vessel-local (in render/world units)
+        let rel_x = world_pos[0] - self.ship_render_x;
+        let rel_y = world_pos[1] - self.ship_render_y;
+
+        // Un-rotate by visual rotation (rotation - PI/2 maps vessel "up" to the heading)
+        let visual_rot = self.ship_render_rotation - std::f64::consts::FRAC_PI_2;
+        let cos_r = visual_rot.cos();
+        let sin_r = visual_rot.sin();
+        let local_x = rel_x * cos_r + rel_y * sin_r;
+        let local_y = -rel_x * sin_r + rel_y * cos_r;
+
+        // Convert from render units back to meters
+        let scale = self.ship_render_scale;
+        let local_x_m = local_x / scale;
+        let local_y_m = local_y / scale;
+
+        let mut closest: Option<(usize, f64)> = None;
+
+        for (i, part) in self.flight_parts_cache.iter().enumerate() {
+            let dx = (local_x_m - part.local_x).abs();
+            let dy = (local_y_m - part.local_y).abs();
+
+            if dx <= part.hitbox_half_w && dy <= part.hitbox_half_h {
+                let dist = dx * dx + dy * dy;
+                match closest {
+                    None => closest = Some((i, dist)),
+                    Some((_, prev_dist)) if dist < prev_dist => closest = Some((i, dist)),
+                    _ => {}
+                }
+            }
+        }
+
+        closest.map(|(i, _)| i)
+    }
+
     /// Apply a burn to the selected maneuver node, reducing its remaining delta-v
     /// burn_direction: unit vector of the ship's thrust direction
     /// delta_v_magnitude: how much delta-v was applied this frame (m/s)

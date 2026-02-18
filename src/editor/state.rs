@@ -88,6 +88,7 @@ pub struct EditorState {
 
     // Staging
     pub stages: Vec<Vec<PlacedPartId>>,
+    pub staging_selected_engine: Option<PlacedPartId>,
 
     // UI state
     pub vessel_name: String,
@@ -130,6 +131,7 @@ impl EditorState {
             symmetry_mode: SymmetryMode::Off,
             selected_category: PartCategory::Pods,
             stages: Vec::new(),
+            staging_selected_engine: None,
             vessel_name: "Untitled Vessel".to_string(),
             show_save_dialog: false,
             show_load_dialog: false,
@@ -171,11 +173,12 @@ impl EditorState {
         self.ghost_position = None;
         self.ghost_valid = false;
         self.stages.clear();
+        self.staging_selected_engine = None;
         self.vessel_name = "Untitled Vessel".to_string();
     }
 
     /// Load a blueprint into the editor
-    pub fn load_blueprint(&mut self, blueprint: &VesselBlueprint) {
+    pub fn load_blueprint(&mut self, blueprint: &VesselBlueprint, part_defs: &PartDefinitions) {
         self.clear();
         let (parts, root_id, stages) = blueprint_to_parts(blueprint);
         self.parts = parts;
@@ -187,6 +190,20 @@ impl EditorState {
         if let Some(max_id) = self.parts.keys().max() {
             self.next_part_id = max_id + 1;
         }
+
+        // Auto-populate stage 1 with all engines if stages are empty
+        if self.stages.is_empty() {
+            let engine_ids: Vec<PlacedPartId> = self.parts.iter()
+                .filter(|(_, part)| part_defs.get(&part.definition_id).map(|d| d.engine.is_some()).unwrap_or(false))
+                .map(|(&id, _)| id)
+                .collect();
+            if !engine_ids.is_empty() {
+                self.stages.push(engine_ids);
+            }
+        }
+
+        // Center and zoom camera to fit the loaded craft
+        self.focus_on_parts(part_defs);
     }
 
     /// Convert editor state to a blueprint
@@ -272,7 +289,7 @@ impl EditorState {
     }
 
     /// Place a part at the current ghost position
-    pub fn place_part(&mut self, _part_defs: &PartDefinitions) -> bool {
+    pub fn place_part(&mut self, part_defs: &PartDefinitions) -> bool {
         let Some(ref def_id) = self.selected_part_def else {
             return false;
         };
@@ -288,6 +305,8 @@ impl EditorState {
         let id = self.next_part_id;
         self.next_part_id += 1;
 
+        let is_engine = part_defs.get(def_id).map(|d| d.engine.is_some()).unwrap_or(false);
+
         let part = PlacedPart::new(id, def_id.clone(), position);
 
         // First part becomes root
@@ -296,6 +315,14 @@ impl EditorState {
         }
 
         self.parts.insert(id, part);
+
+        // Auto-add engines to stage 1
+        if is_engine {
+            if self.stages.is_empty() {
+                self.stages.push(Vec::new());
+            }
+            self.stages[0].push(id);
+        }
 
         true
     }
@@ -310,15 +337,32 @@ impl EditorState {
             self.root_part = self.parts.keys().next().copied();
         }
 
-        // Remove from stages
+        // Remove from stages and clean up empty stages
         for stage in &mut self.stages {
             stage.retain(|&sid| sid != part_id);
+        }
+        self.stages.retain(|s| !s.is_empty());
+
+        // Clear staging selection if it was this part
+        if self.staging_selected_engine == Some(part_id) {
+            self.staging_selected_engine = None;
         }
 
         // Clear selection if deleted part was selected
         if self.selected_placed_part == Some(part_id) {
             self.selected_placed_part = None;
         }
+    }
+
+    /// Move an engine to a different stage
+    pub fn move_engine_to_stage(&mut self, engine_id: PlacedPartId, target_stage_idx: usize) {
+        for stage in &mut self.stages {
+            stage.retain(|&id| id != engine_id);
+        }
+        if target_stage_idx < self.stages.len() {
+            self.stages[target_stage_idx].push(engine_id);
+        }
+        self.staging_selected_engine = None;
     }
 
     /// Process any pending deletions (call after UI)
@@ -483,6 +527,50 @@ impl EditorState {
     pub fn zoom_camera(&mut self, factor: f32) {
         self.camera_zoom *= factor;
         self.camera_zoom = self.camera_zoom.clamp(0.1, 16666.0);  // Zoom range
+    }
+
+    /// Center and zoom the camera to fit all placed parts
+    pub fn focus_on_parts(&mut self, part_defs: &PartDefinitions) {
+        if self.parts.is_empty() {
+            return;
+        }
+
+        // Find bounding box of all parts
+        let mut min_x = f64::MAX;
+        let mut max_x = f64::MIN;
+        let mut min_y = f64::MAX;
+        let mut max_y = f64::MIN;
+
+        for part in self.parts.values() {
+            let half_w;
+            let half_h;
+            if let Some(def) = part_defs.get(&part.definition_id) {
+                half_w = def.width() / 2.0;
+                half_h = def.height() / 2.0;
+            } else {
+                half_w = 0.25;
+                half_h = 0.25;
+            }
+            min_x = min_x.min(part.position[0] - half_w);
+            max_x = max_x.max(part.position[0] + half_w);
+            min_y = min_y.min(part.position[1] - half_h);
+            max_y = max_y.max(part.position[1] + half_h);
+        }
+
+        // Center camera on the bounding box center
+        self.camera_offset = [
+            (min_x + max_x) / 2.0,
+            (min_y + max_y) / 2.0,
+        ];
+
+        // Zoom to fit with padding (craft should take ~60% of the smaller screen dimension)
+        let width = max_x - min_x;
+        let height = max_y - min_y;
+        let extent = width.max(height).max(1.0);
+        // The editor camera maps: visible_half_extent ≈ 1/zoom (in meters)
+        // We want extent to be ~60% of the view, so visible extent ≈ extent / 0.6
+        self.camera_zoom = (0.6 / extent) as f32;
+        self.camera_zoom = self.camera_zoom.clamp(0.1, 16666.0);
     }
 
     /// Check if the editor has any parts

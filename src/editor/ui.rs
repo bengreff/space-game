@@ -1,4 +1,4 @@
-use crate::parts::{FuelType, PartCategory, PartDefinitions, PartSize};
+use crate::parts::{FuelType, PartCategory, PartDefinitions, PartSize, PlacedPartId};
 use super::{EditorState, ShipStats};
 
 /// Format mass - shows tonnes if >= 1000 kg, otherwise kg
@@ -224,96 +224,83 @@ pub fn render_editor_ui(
             });
         });
 
-    // Right panel - Part info and staging
-    egui::SidePanel::right("info_panel")
-        .default_width(200.0)
+    // Right panel - Staging (always visible, far right)
+    egui::SidePanel::right("staging_panel")
+        .default_width(150.0)
         .show(ctx, |ui| {
-            // Show part definition info when selected from palette
-            if let Some(ref def_id) = editor.selected_part_def {
-                if let Some(def) = part_defs.get(def_id) {
-                    ui.heading(&def.name);
-                    ui.label(&def.description);
+            ui.heading("Staging");
+            ui.separator();
 
-                    ui.separator();
-                    ui.label(format!("Size: {}", def.size.display_name()));
-                    ui.label(format!("Mass: {:.3} t ({:.0} kg)", def.mass, def.mass * 1000.0));
-                    ui.label(format!("Cost: ${}", def.cost));
-                    ui.label(format!("Dimensions: {}x{} grid", def.grid_width, def.grid_height));
+            if editor.stages.is_empty() {
+                ui.label("No engines placed");
+            } else {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    // Track actions to apply after iteration
+                    let mut insert_stage_above: Option<usize> = None;
+                    let mut move_to_stage: Option<usize> = None;
+                    let mut toggle_engine: Option<PlacedPartId> = None;
 
-                    // Engine info
-                    if let Some(ref engine) = def.engine {
-                        ui.separator();
-                        ui.heading("Engine Stats");
-
-                        ui.label(format!("Propellant: {}", engine.propellant.display_name()));
-
-                        ui.label("Thrust:");
-                        ui.indent("thrust_indent", |ui| {
-                            ui.label(format!("Vacuum: {:.1} kN", engine.thrust_vac));
-                            ui.label(format!("Sea Level: {:.1} kN", engine.thrust_asl));
-                        });
-
-                        ui.label("Specific Impulse:");
-                        ui.indent("isp_indent", |ui| {
-                            ui.label(format!("Vacuum: {:.0} s", engine.isp_vac));
-                            ui.label(format!("Sea Level: {:.0} s", engine.isp_asl));
-                        });
-
-                        ui.label("Gimbal:");
-                        ui.indent("gimbal_indent", |ui| {
-                            if engine.gimbal_range > 0.0 {
-                                ui.label(format!("Range: ±{:.1}°", engine.gimbal_range));
-                            } else {
-                                ui.label("Fixed (no gimbal)");
-                            }
-                        });
-
-                        if engine.throttleable {
-                            ui.label("Throttleable: Yes");
-                        } else {
-                            ui.label("Throttleable: No");
+                    // Render stages in reverse order (highest stage number at top)
+                    for stage_idx in (0..editor.stages.len()).rev() {
+                        // "+" button to insert a new empty stage above this one
+                        if ui.small_button("+").on_hover_text("Insert stage above").clicked() {
+                            insert_stage_above = Some(stage_idx + 1);
                         }
 
-                        // TWR calculation for this engine alone
-                        ui.separator();
-                        ui.label("Single Engine TWR:");
-                        let engine_twr = engine.thrust_vac / (def.mass * 9.81);
-                        ui.label(format!("  {:.1} (vacuum, Earth)", engine_twr));
+                        // "Move here" button if an engine is selected for moving
+                        if editor.staging_selected_engine.is_some() {
+                            if ui.small_button("Move here").clicked() {
+                                move_to_stage = Some(stage_idx);
+                            }
+                        }
+
+                        ui.group(|ui| {
+                            ui.label(format!("Stage {}", stage_idx + 1));
+                            for &engine_id in &editor.stages[stage_idx] {
+                                let name = editor.parts.get(&engine_id)
+                                    .and_then(|p| part_defs.get(&p.definition_id))
+                                    .map(|d| d.name.clone())
+                                    .unwrap_or_else(|| format!("Part {}", engine_id));
+                                let is_selected = editor.staging_selected_engine == Some(engine_id);
+                                if ui.selectable_label(is_selected, &name).clicked() {
+                                    toggle_engine = Some(engine_id);
+                                }
+                            }
+                        });
                     }
 
-                    // Tank info
-                    if let Some(ref tank) = def.tank {
-                        ui.separator();
-                        ui.heading("Tank Stats");
-                        ui.label(format!("Dry Mass: {:.0} kg", tank.dry_mass_kg()));
-                        ui.label(format!("Grid Area: {} squares", tank.grid_area));
-
-                        ui.separator();
-                        ui.label("Propellant Capacity:");
-
-                        let (ox, fuel) = tank.propellant_capacity(FuelType::Rp1);
-                        ui.label(format!("  RP-1: {}", format_mass(ox + fuel)));
-
-                        let (ox, fuel) = tank.propellant_capacity(FuelType::Methane);
-                        ui.label(format!("  CH4: {}", format_mass(ox + fuel)));
-
-                        let (ox, fuel) = tank.propellant_capacity(FuelType::Hydrogen);
-                        ui.label(format!("  LH2: {}", format_mass(ox + fuel)));
+                    // Apply deferred actions
+                    if let Some(idx) = insert_stage_above {
+                        editor.stages.insert(idx, Vec::new());
                     }
-
-                    // Pod info
-                    if let Some(ref pod) = def.pod {
-                        ui.separator();
-                        ui.heading("Pod Stats");
-                        ui.label(format!("Crew Capacity: {}", pod.crew_capacity));
-                        ui.label(format!("Reaction Wheel: {:.1} kN·m", pod.torque));
+                    if let Some(target_idx) = move_to_stage {
+                        if let Some(engine_id) = editor.staging_selected_engine {
+                            editor.move_engine_to_stage(engine_id, target_idx);
+                        }
                     }
-                }
+                    if let Some(engine_id) = toggle_engine {
+                        if editor.staging_selected_engine == Some(engine_id) {
+                            editor.staging_selected_engine = None;
+                        } else {
+                            editor.staging_selected_engine = Some(engine_id);
+                        }
+                    }
+                });
+
+                // Clean up empty stages
+                editor.stages.retain(|s| !s.is_empty());
             }
-            // Show placed part info when selected
-            else if let Some(part_id) = editor.selected_placed_part {
-                if let Some(part) = editor.parts.get(&part_id).cloned() {
-                    if let Some(def) = part_defs.get(&part.definition_id) {
+        });
+
+    // Right panel - Part info (only when a part is selected, renders left of staging)
+    let show_info_panel = editor.selected_part_def.is_some() || editor.selected_placed_part.is_some();
+    if show_info_panel {
+        egui::SidePanel::right("info_panel")
+            .default_width(200.0)
+            .show(ctx, |ui| {
+                // Show part definition info when selected from palette
+                if let Some(ref def_id) = editor.selected_part_def {
+                    if let Some(def) = part_defs.get(def_id) {
                         ui.heading(&def.name);
                         ui.label(&def.description);
 
@@ -331,19 +318,19 @@ pub fn render_editor_ui(
                             ui.label(format!("Propellant: {}", engine.propellant.display_name()));
 
                             ui.label("Thrust:");
-                            ui.indent("placed_thrust_indent", |ui| {
+                            ui.indent("thrust_indent", |ui| {
                                 ui.label(format!("Vacuum: {:.1} kN", engine.thrust_vac));
                                 ui.label(format!("Sea Level: {:.1} kN", engine.thrust_asl));
                             });
 
                             ui.label("Specific Impulse:");
-                            ui.indent("placed_isp_indent", |ui| {
+                            ui.indent("isp_indent", |ui| {
                                 ui.label(format!("Vacuum: {:.0} s", engine.isp_vac));
                                 ui.label(format!("Sea Level: {:.0} s", engine.isp_asl));
                             });
 
                             ui.label("Gimbal:");
-                            ui.indent("placed_gimbal_indent", |ui| {
+                            ui.indent("gimbal_indent", |ui| {
                                 if engine.gimbal_range > 0.0 {
                                     ui.label(format!("Range: ±{:.1}°", engine.gimbal_range));
                                 } else {
@@ -364,7 +351,7 @@ pub fn render_editor_ui(
                             ui.label(format!("  {:.1} (vacuum, Earth)", engine_twr));
                         }
 
-                        // Tank info with controls
+                        // Tank info
                         if let Some(ref tank) = def.tank {
                             ui.separator();
                             ui.heading("Tank Stats");
@@ -372,66 +359,16 @@ pub fn render_editor_ui(
                             ui.label(format!("Grid Area: {} squares", tank.grid_area));
 
                             ui.separator();
-                            ui.label("Fuel Type:");
+                            ui.label("Propellant Capacity:");
 
-                            // Fuel type selector buttons
-                            ui.horizontal_wrapped(|ui| {
-                                for fuel_type in FuelType::all() {
-                                    let selected = part.fuel_type == *fuel_type;
-                                    if ui.selectable_label(selected, fuel_type.display_name()).clicked() {
-                                        if let Some(p) = editor.parts.get_mut(&part_id) {
-                                            p.fuel_type = *fuel_type;
-                                            // Empty tanks when switching type
-                                            if *fuel_type == FuelType::Empty {
-                                                p.tank_filled = false;
-                                            }
-                                        }
-                                    }
-                                }
-                            });
+                            let (ox, fuel) = tank.propellant_capacity(FuelType::Rp1);
+                            ui.label(format!("  RP-1: {}", format_mass(ox + fuel)));
 
-                            // Fill/Empty button (only if fuel type selected)
-                            if part.fuel_type != FuelType::Empty {
-                                ui.separator();
-                                let (ox_cap, fuel_cap) = tank.propellant_capacity(part.fuel_type);
-                                let total_prop = ox_cap + fuel_cap;
+                            let (ox, fuel) = tank.propellant_capacity(FuelType::Methane);
+                            ui.label(format!("  CH4: {}", format_mass(ox + fuel)));
 
-                                if part.tank_filled {
-                                    ui.label(format!("O2: {}", format_mass(ox_cap)));
-                                    if let Some(fuel_name) = part.fuel_type.fuel_resource_name() {
-                                        ui.label(format!("{}: {}", fuel_name.to_uppercase(), format_mass(fuel_cap)));
-                                    }
-                                    ui.label(format!("Total: {}", format_mass(total_prop)));
-
-                                    if ui.button("Empty Tank").clicked() {
-                                        if let Some(p) = editor.parts.get_mut(&part_id) {
-                                            p.tank_filled = false;
-                                        }
-                                    }
-                                } else {
-                                    ui.label("Tank is empty");
-                                    ui.label(format!("Capacity: {}", format_mass(total_prop)));
-
-                                    if ui.button("Fill Tank").clicked() {
-                                        if let Some(p) = editor.parts.get_mut(&part_id) {
-                                            p.tank_filled = true;
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Show total mass
-                            ui.separator();
-                            let dry_mass = def.mass;
-                            let prop_mass = if part.tank_filled && part.fuel_type != FuelType::Empty {
-                                let (ox, fuel) = tank.propellant_capacity(part.fuel_type);
-                                (ox + fuel) / 1000.0  // Convert kg to tonnes
-                            } else {
-                                0.0
-                            };
-                            ui.label(format!("Dry: {:.3} t", dry_mass));
-                            ui.label(format!("Prop: {:.3} t", prop_mass));
-                            ui.label(format!("Total: {:.3} t", dry_mass + prop_mass));
+                            let (ox, fuel) = tank.propellant_capacity(FuelType::Hydrogen);
+                            ui.label(format!("  LH2: {}", format_mass(ox + fuel)));
                         }
 
                         // Pod info
@@ -441,33 +378,150 @@ pub fn render_editor_ui(
                             ui.label(format!("Crew Capacity: {}", pod.crew_capacity));
                             ui.label(format!("Reaction Wheel: {:.1} kN·m", pod.torque));
                         }
+                    }
+                }
+                // Show placed part info when selected
+                else if let Some(part_id) = editor.selected_placed_part {
+                    if let Some(part) = editor.parts.get(&part_id).cloned() {
+                        if let Some(def) = part_defs.get(&part.definition_id) {
+                            ui.heading(&def.name);
+                            ui.label(&def.description);
 
-                        ui.separator();
+                            ui.separator();
+                            ui.label(format!("Size: {}", def.size.display_name()));
+                            ui.label(format!("Mass: {:.3} t ({:.0} kg)", def.mass, def.mass * 1000.0));
+                            ui.label(format!("Cost: ${}", def.cost));
+                            ui.label(format!("Dimensions: {}x{} grid", def.grid_width, def.grid_height));
 
-                        if ui.button("Delete Part").clicked() {
-                            editor.part_to_delete = Some(part_id);
+                            // Engine info
+                            if let Some(ref engine) = def.engine {
+                                ui.separator();
+                                ui.heading("Engine Stats");
+
+                                ui.label(format!("Propellant: {}", engine.propellant.display_name()));
+
+                                ui.label("Thrust:");
+                                ui.indent("placed_thrust_indent", |ui| {
+                                    ui.label(format!("Vacuum: {:.1} kN", engine.thrust_vac));
+                                    ui.label(format!("Sea Level: {:.1} kN", engine.thrust_asl));
+                                });
+
+                                ui.label("Specific Impulse:");
+                                ui.indent("placed_isp_indent", |ui| {
+                                    ui.label(format!("Vacuum: {:.0} s", engine.isp_vac));
+                                    ui.label(format!("Sea Level: {:.0} s", engine.isp_asl));
+                                });
+
+                                ui.label("Gimbal:");
+                                ui.indent("placed_gimbal_indent", |ui| {
+                                    if engine.gimbal_range > 0.0 {
+                                        ui.label(format!("Range: ±{:.1}°", engine.gimbal_range));
+                                    } else {
+                                        ui.label("Fixed (no gimbal)");
+                                    }
+                                });
+
+                                if engine.throttleable {
+                                    ui.label("Throttleable: Yes");
+                                } else {
+                                    ui.label("Throttleable: No");
+                                }
+
+                                // TWR calculation for this engine alone
+                                ui.separator();
+                                ui.label("Single Engine TWR:");
+                                let engine_twr = engine.thrust_vac / (def.mass * 9.81);
+                                ui.label(format!("  {:.1} (vacuum, Earth)", engine_twr));
+                            }
+
+                            // Tank info with controls
+                            if let Some(ref tank) = def.tank {
+                                ui.separator();
+                                ui.heading("Tank Stats");
+                                ui.label(format!("Dry Mass: {:.0} kg", tank.dry_mass_kg()));
+                                ui.label(format!("Grid Area: {} squares", tank.grid_area));
+
+                                ui.separator();
+                                ui.label("Fuel Type:");
+
+                                // Fuel type selector buttons
+                                ui.horizontal_wrapped(|ui| {
+                                    for fuel_type in FuelType::all() {
+                                        let selected = part.fuel_type == *fuel_type;
+                                        if ui.selectable_label(selected, fuel_type.display_name()).clicked() {
+                                            if let Some(p) = editor.parts.get_mut(&part_id) {
+                                                p.fuel_type = *fuel_type;
+                                                // Empty tanks when switching type
+                                                if *fuel_type == FuelType::Empty {
+                                                    p.tank_filled = false;
+                                                }
+                                            }
+                                        }
+                                    }
+                                });
+
+                                // Fill/Empty button (only if fuel type selected)
+                                if part.fuel_type != FuelType::Empty {
+                                    ui.separator();
+                                    let (ox_cap, fuel_cap) = tank.propellant_capacity(part.fuel_type);
+                                    let total_prop = ox_cap + fuel_cap;
+
+                                    if part.tank_filled {
+                                        ui.label(format!("O2: {}", format_mass(ox_cap)));
+                                        if let Some(fuel_name) = part.fuel_type.fuel_resource_name() {
+                                            ui.label(format!("{}: {}", fuel_name.to_uppercase(), format_mass(fuel_cap)));
+                                        }
+                                        ui.label(format!("Total: {}", format_mass(total_prop)));
+
+                                        if ui.button("Empty Tank").clicked() {
+                                            if let Some(p) = editor.parts.get_mut(&part_id) {
+                                                p.tank_filled = false;
+                                            }
+                                        }
+                                    } else {
+                                        ui.label("Tank is empty");
+                                        ui.label(format!("Capacity: {}", format_mass(total_prop)));
+
+                                        if ui.button("Fill Tank").clicked() {
+                                            if let Some(p) = editor.parts.get_mut(&part_id) {
+                                                p.tank_filled = true;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Show total mass
+                                ui.separator();
+                                let dry_mass = def.mass;
+                                let prop_mass = if part.tank_filled && part.fuel_type != FuelType::Empty {
+                                    let (ox, fuel) = tank.propellant_capacity(part.fuel_type);
+                                    (ox + fuel) / 1000.0  // Convert kg to tonnes
+                                } else {
+                                    0.0
+                                };
+                                ui.label(format!("Dry: {:.3} t", dry_mass));
+                                ui.label(format!("Prop: {:.3} t", prop_mass));
+                                ui.label(format!("Total: {:.3} t", dry_mass + prop_mass));
+                            }
+
+                            // Pod info
+                            if let Some(ref pod) = def.pod {
+                                ui.separator();
+                                ui.heading("Pod Stats");
+                                ui.label(format!("Crew Capacity: {}", pod.crew_capacity));
+                                ui.label(format!("Reaction Wheel: {:.1} kN·m", pod.torque));
+                            }
+
+                            ui.separator();
+
+                            if ui.button("Delete Part").clicked() {
+                                editor.part_to_delete = Some(part_id);
+                            }
                         }
                     }
                 }
-            }
-            // No selection - show staging
-            else {
-                ui.heading("Staging");
-                ui.separator();
-
-                if editor.stages.is_empty() {
-                    ui.label("No stages defined");
-                    ui.label("(Staging coming soon)");
-                } else {
-                    for (i, stage) in editor.stages.iter().enumerate() {
-                        ui.label(format!("Stage {}: {} parts", i, stage.len()));
-                    }
-                }
-
-                ui.separator();
-                ui.label("Select a part to see details");
-            }
-        });
+            });
+    }
 
     // Bottom panel - Instructions
     egui::TopBottomPanel::bottom("editor_instructions")
