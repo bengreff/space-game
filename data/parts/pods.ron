@@ -1,0 +1,49 @@
+// Command Pod Part Definitions
+
+(
+    parts: [
+        // Small Command Pod - trapezoid shape
+        (
+            id: "pod_small",
+            name: "Small Command Pod",
+            description: "A compact command pod for one crew member. Ideal for lightweight missions and probes.",
+            category: Pods,
+            mass: 0.5,
+            cost: 500,
+            size: Small,
+            shape: Trapezoid,
+            grid_width: 3.0,
+            grid_height: 3.0,
+            top_width: Some(0.5),
+            hitbox_width: Some(3),
+            hitbox_height: Some(3),
+            pod: Some((
+                crew_capacity: 1,
+                torque: 5.0,
+            )),
+            resources: {},
+        ),
+
+        // Medium Command Pod - larger trapezoid
+        (
+            id: "pod_medium",
+            name: "Medium Command Pod",
+            description: "A spacious command pod for two crew members. Better suited for extended missions.",
+            category: Pods,
+            mass: 1.2,
+            cost: 1200,
+            size: Medium,
+            shape: Trapezoid,
+            grid_width: 5.0,
+            grid_height: 4.0,
+            top_width: Some(1.0),
+            hitbox_width: Some(5),
+            hitbox_height: Some(4),
+            pod: Some((
+                crew_capacity: 2,
+                torque: 10.0,
+            )),
+            resources: {},
+        ),
+    ],
+)

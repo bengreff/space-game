@@ -4,14 +4,36 @@
 
 The vehicle editor allows players to construct spacecraft from discrete parts. This is where creativity and engineering happen.
 
+## Implementation Status
+
+### Completed
+- [x] Editor mode vs flight mode toggle (E key)
+- [x] Part definitions loaded from RON files
+- [x] Parts palette with category filtering
+- [x] Grid-based placement (0.5m grid)
+- [x] Ghost preview with validity indication
+- [x] Part overlap detection (AABB collision)
+- [x] Click to place/select parts
+- [x] Drag to reposition placed parts
+- [x] Delete selected parts
+- [x] Save/load blueprints to RON files
+- [x] Procedural part rendering (engines, pods)
+- [x] Fuel display in tonnes when >= 1000 kg
+
+### Pending
+- [ ] Symmetry mode (horizontal mirror)
+- [ ] Staging assignment UI
+- [ ] Part connection validation (attachment points)
+- [ ] Undo/redo
+
 ## Core Mechanics
 
 ### Grid-Based Placement
 
 Parts snap to a 2D grid:
-- Grid unit: configurable (e.g., 0.25m)
-- Parts have defined attachment points
-- Parts must connect to existing structure
+- Grid unit: 0.5m (configurable)
+- Parts have defined visual and hitbox dimensions
+- Parts cannot overlap (AABB collision detection)
 
 ### Part Attachment
 
@@ -92,24 +114,47 @@ Stage order determines activation sequence (highest first).
 (
     parts: [
         (
-            id: "engine_small",
-            name: "RE-L10 Liquid Engine",
+            id: "engine_wolf",
+            name: "Wolf Engine",
+            description: "A reusable kerolox engine...",
             category: Propulsion,
-            mass: 0.5,
-            cost: 200,
-
+            mass: 0.47,
+            cost: 850,
+            size: Small,
+            shape: Trapezoid,
+            grid_width: 2.5,      // Visual width in grid units
+            grid_height: 3.0,     // Visual height
+            top_width: Some(1.0), // Top width for trapezoid
+            hitbox_width: Some(3),
+            hitbox_height: Some(3),
             engine: Some((
-                thrust: 20.0,      // kN
-                isp_vac: 310.0,    // seconds
-                isp_asl: 280.0,    // seconds
-                fuel_consumption: 0.065,  // units/s at full thrust
+                thrust_vac: 845.0,   // kN vacuum
+                thrust_asl: 760.0,   // kN sea level
+                isp_vac: 311.0,      // seconds
+                isp_asl: 282.0,
+                propellant: Kerolox,
+                gimbal_range: 5.0,
             )),
+            resources: {},
+        ),
+    ]
+)
 
-            attachment_top: Some((size: Small, position: (0.0, 0.5))),
-            attachment_bottom: None,
-            radial_attachment: true,
-
-            resource_capacity: {},
+// data/parts/pods.ron
+(
+    parts: [
+        (
+            id: "pod_small",
+            name: "Small Command Pod",
+            category: Pods,
+            shape: Trapezoid,
+            grid_width: 3.0,
+            grid_height: 3.0,
+            top_width: Some(0.5),
+            pod: Some((
+                crew_capacity: 1,
+                torque: 5.0,
+            )),
         ),
     ]
 )

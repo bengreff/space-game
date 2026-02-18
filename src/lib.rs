@@ -1,3 +1,6 @@
 pub mod bodies;
+pub mod editor;
+pub mod game;
+pub mod parts;
 pub mod render;
 pub mod ship;

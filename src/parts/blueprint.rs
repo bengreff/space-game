@@ -1,0 +1,279 @@
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use super::FuelType;
+
+/// A unique identifier for a placed part in a blueprint
+pub type PlacedPartId = u64;
+
+/// A saveable vessel blueprint (stored in RON files)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VesselBlueprint {
+    pub name: String,
+    pub parts: Vec<BlueprintPart>,
+    pub root_part_index: usize,
+    pub stages: Vec<Vec<usize>>,
+}
+
+impl VesselBlueprint {
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            parts: Vec::new(),
+            root_part_index: 0,
+            stages: Vec::new(),
+        }
+    }
+
+    /// Validate the blueprint for launch readiness
+    pub fn validate(&self) -> Result<(), String> {
+        if self.parts.is_empty() {
+            return Err("Blueprint has no parts".to_string());
+        }
+
+        if self.root_part_index >= self.parts.len() {
+            return Err("Invalid root part index".to_string());
+        }
+
+        // Check that all parent indices are valid
+        for (i, part) in self.parts.iter().enumerate() {
+            if let Some(parent_idx) = part.parent_index {
+                if parent_idx >= self.parts.len() {
+                    return Err(format!("Part {} has invalid parent index", i));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Calculate total cost of all parts
+    pub fn total_cost(&self, definitions: &super::PartDefinitions) -> u32 {
+        self.parts
+            .iter()
+            .filter_map(|p| definitions.get(&p.definition_id))
+            .map(|def| def.cost)
+            .sum()
+    }
+
+    /// Get the root part's definition ID
+    pub fn root_part_id(&self) -> Option<&str> {
+        self.parts.get(self.root_part_index).map(|p| p.definition_id.as_str())
+    }
+}
+
+/// A placed part within a blueprint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlueprintPart {
+    pub definition_id: String,
+    pub position: [f64; 2],
+    pub rotation: f64,
+    pub parent_index: Option<usize>,
+    pub attachment_type: AttachmentType,
+    pub stage: u32,
+    #[serde(default)]
+    pub fuel_type: FuelType,
+    #[serde(default)]
+    pub tank_filled: bool,
+}
+
+/// How a part is attached to its parent
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AttachmentType {
+    Root,           // No parent (command pod)
+    Stack,          // Top-bottom stack attachment
+    Radial,         // Radial mount (side attachment)
+}
+
+/// A placed part in the editor (runtime representation)
+#[derive(Debug, Clone)]
+pub struct PlacedPart {
+    pub id: PlacedPartId,
+    pub definition_id: String,
+    pub position: [f64; 2],
+    pub rotation: f64,
+    pub parent_id: Option<PlacedPartId>,
+    pub children: Vec<PlacedPartId>,
+    pub attachment_type: AttachmentType,
+    pub stage: u32,
+    // Tank-specific state
+    pub fuel_type: FuelType,  // What fuel type is loaded (Empty = no fuel)
+    pub tank_filled: bool,    // Whether the tank is filled with the selected fuel
+}
+
+impl PlacedPart {
+    pub fn new(
+        id: PlacedPartId,
+        definition_id: String,
+        position: [f64; 2],
+    ) -> Self {
+        Self {
+            id,
+            definition_id,
+            position,
+            rotation: 0.0,
+            parent_id: None,
+            children: Vec::new(),
+            attachment_type: AttachmentType::Root,
+            stage: 0,
+            fuel_type: FuelType::Empty,
+            tank_filled: false,
+        }
+    }
+
+    pub fn with_parent(mut self, parent_id: PlacedPartId, attachment: AttachmentType) -> Self {
+        self.parent_id = Some(parent_id);
+        self.attachment_type = attachment;
+        self
+    }
+}
+
+/// Symmetry mode for placing parts
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SymmetryMode {
+    #[default]
+    Off,
+    Radial2,
+    Radial3,
+    Radial4,
+    Radial6,
+    Radial8,
+}
+
+impl SymmetryMode {
+    pub fn count(&self) -> usize {
+        match self {
+            SymmetryMode::Off => 1,
+            SymmetryMode::Radial2 => 2,
+            SymmetryMode::Radial3 => 3,
+            SymmetryMode::Radial4 => 4,
+            SymmetryMode::Radial6 => 6,
+            SymmetryMode::Radial8 => 8,
+        }
+    }
+
+    pub fn cycle_next(&self) -> SymmetryMode {
+        match self {
+            SymmetryMode::Off => SymmetryMode::Radial2,
+            SymmetryMode::Radial2 => SymmetryMode::Radial3,
+            SymmetryMode::Radial3 => SymmetryMode::Radial4,
+            SymmetryMode::Radial4 => SymmetryMode::Radial6,
+            SymmetryMode::Radial6 => SymmetryMode::Radial8,
+            SymmetryMode::Radial8 => SymmetryMode::Off,
+        }
+    }
+
+    pub fn display(&self) -> &'static str {
+        match self {
+            SymmetryMode::Off => "Off",
+            SymmetryMode::Radial2 => "x2",
+            SymmetryMode::Radial3 => "x3",
+            SymmetryMode::Radial4 => "x4",
+            SymmetryMode::Radial6 => "x6",
+            SymmetryMode::Radial8 => "x8",
+        }
+    }
+}
+
+/// Convert placed parts to a saveable blueprint
+pub fn parts_to_blueprint(
+    parts: &HashMap<PlacedPartId, PlacedPart>,
+    root_id: PlacedPartId,
+    name: String,
+    stages: &[Vec<PlacedPartId>],
+) -> VesselBlueprint {
+    // Build index mapping from PlacedPartId to blueprint index
+    let mut id_to_index: HashMap<PlacedPartId, usize> = HashMap::new();
+    let mut blueprint_parts: Vec<BlueprintPart> = Vec::new();
+    let mut root_index = 0;
+
+    // First pass: assign indices
+    for (idx, (id, _)) in parts.iter().enumerate() {
+        id_to_index.insert(*id, idx);
+        if *id == root_id {
+            root_index = idx;
+        }
+    }
+
+    // Second pass: convert parts
+    for (_id, part) in parts.iter() {
+        let parent_index = part.parent_id.and_then(|pid| id_to_index.get(&pid).copied());
+
+        blueprint_parts.push(BlueprintPart {
+            definition_id: part.definition_id.clone(),
+            position: part.position,
+            rotation: part.rotation,
+            parent_index,
+            attachment_type: part.attachment_type,
+            stage: part.stage,
+            fuel_type: part.fuel_type,
+            tank_filled: part.tank_filled,
+        });
+    }
+
+    // Convert stages
+    let blueprint_stages: Vec<Vec<usize>> = stages
+        .iter()
+        .map(|stage| {
+            stage
+                .iter()
+                .filter_map(|id| id_to_index.get(id).copied())
+                .collect()
+        })
+        .collect();
+
+    VesselBlueprint {
+        name,
+        parts: blueprint_parts,
+        root_part_index: root_index,
+        stages: blueprint_stages,
+    }
+}
+
+/// Convert a blueprint back to placed parts for editing
+pub fn blueprint_to_parts(
+    blueprint: &VesselBlueprint,
+) -> (HashMap<PlacedPartId, PlacedPart>, PlacedPartId, Vec<Vec<PlacedPartId>>) {
+    let mut parts: HashMap<PlacedPartId, PlacedPart> = HashMap::new();
+    let mut index_to_id: HashMap<usize, PlacedPartId> = HashMap::new();
+
+    // First pass: create parts with IDs
+    for (idx, bp_part) in blueprint.parts.iter().enumerate() {
+        let id = idx as PlacedPartId + 1; // Start IDs from 1
+        index_to_id.insert(idx, id);
+
+        let mut part = PlacedPart::new(id, bp_part.definition_id.clone(), bp_part.position);
+        part.rotation = bp_part.rotation;
+        part.attachment_type = bp_part.attachment_type;
+        part.stage = bp_part.stage;
+        part.fuel_type = bp_part.fuel_type;
+        part.tank_filled = bp_part.tank_filled;
+        parts.insert(id, part);
+    }
+
+    // Second pass: link parents and children
+    for (idx, bp_part) in blueprint.parts.iter().enumerate() {
+        let id = index_to_id[&idx];
+
+        if let Some(parent_idx) = bp_part.parent_index {
+            let parent_id = index_to_id[&parent_idx];
+
+            if let Some(part) = parts.get_mut(&id) {
+                part.parent_id = Some(parent_id);
+            }
+            if let Some(parent) = parts.get_mut(&parent_id) {
+                parent.children.push(id);
+            }
+        }
+    }
+
+    let root_id = index_to_id[&blueprint.root_part_index];
+
+    // Convert stages
+    let stages: Vec<Vec<PlacedPartId>> = blueprint
+        .stages
+        .iter()
+        .map(|stage| stage.iter().filter_map(|idx| index_to_id.get(idx).copied()).collect())
+        .collect();
+
+    (parts, root_id, stages)
+}

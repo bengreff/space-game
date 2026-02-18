@@ -10,6 +10,13 @@ pub struct CelestialBody {
     pub soi_radius: f64,     // Sphere of influence radius
 }
 
+impl CelestialBody {
+    /// Surface gravity in m/s² (g = GM/r²)
+    pub fn surface_gravity(&self) -> f64 {
+        G * self.mass / (self.radius * self.radius)
+    }
+}
+
 /// Keplerian orbital elements (simplified for 2D)
 #[derive(Clone, Copy, Debug)]
 pub struct Orbit {

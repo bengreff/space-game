@@ -2,182 +2,436 @@
 
 (
     parts: [
-        // Small liquid engine - starter engine
+        // ============================================
+        // TINY ENGINES (1 grid wide = 0.5m)
+        // ============================================
+
         (
-            id: "engine_small",
-            name: "LV-909 Terrier",
-            description: "A small, efficient vacuum engine",
+            id: "engine_hummingbird",
+            name: "Hummingbird",
+            description: "Compact methalox engine for probes and landers. Oxygen-rich staged combustion delivers excellent efficiency at small scale. Popular for lunar and planetary surface operations.",
             category: Propulsion,
-
-            mass: 0.5,  // tonnes
-            cost: 390,
-
-            size: Small,
-
-            attachments: (
-                top: Some((size: Small)),
-                bottom: None,
-                radial: false,
-            ),
-
+            mass: 0.025,
+            cost: 800,
+            size: Tiny,
+            shape: Trapezoid,
+            grid_width: 0.9,
+            grid_height: 2.0,
+            top_width: Some(0.5),
+            hitbox_width: Some(1),
+            hitbox_height: Some(2),
             engine: Some((
-                thrust_vac: 60.0,    // kN
-                thrust_asl: 14.8,    // kN (reduced at sea level)
-                isp_vac: 345.0,      // seconds
-                isp_asl: 85.0,       // seconds
+                thrust_vac: 15.0,
+                thrust_asl: 12.0,
+                isp_vac: 330.0,
+                isp_asl: 295.0,
                 throttleable: true,
+                gimbal_range: 8.0,
+                propellant: Methalox,
             )),
-
             resources: {},
         ),
 
-        // Medium liquid engine - workhorse
         (
-            id: "engine_medium",
-            name: "LV-T45 Swivel",
-            description: "A reliable medium thrust engine with gimbal",
+            id: "engine_gecko",
+            name: "Gecko",
+            description: "High-thrust kerolox engine built for clusters. Gas generator cycle prioritizes reliability over efficiency. Use differential throttling for attitude control in 3, 5, or 7-engine arrangements.",
             category: Propulsion,
+            mass: 0.04,
+            cost: 600,
+            size: Tiny,
+            shape: Trapezoid,
+            grid_width: 0.9,
+            grid_height: 2.0,
+            top_width: Some(0.55),
+            hitbox_width: Some(1),
+            hitbox_height: Some(2),
+            engine: Some((
+                thrust_vac: 28.0,
+                thrust_asl: 22.0,
+                isp_vac: 315.0,
+                isp_asl: 280.0,
+                throttleable: true,
+                gimbal_range: 4.0,
+                propellant: Kerolox,
+            )),
+            resources: {},
+        ),
 
-            mass: 1.5,
+        (
+            id: "engine_firefly",
+            name: "Firefly",
+            description: "Vacuum-optimized hydrolox engine with exceptional specific impulse. Fixed nozzle keeps mass low. Expander cycle provides reliable ignition for deep space missions.",
+            category: Propulsion,
+            mass: 0.03,
             cost: 1200,
-
-            size: Medium,
-
-            attachments: (
-                top: Some((size: Medium)),
-                bottom: None,
-                radial: false,
-            ),
-
+            size: Tiny,
+            shape: Trapezoid,
+            grid_width: 0.95,
+            grid_height: 2.0,
+            top_width: Some(0.25),
+            hitbox_width: Some(1),
+            hitbox_height: Some(2),
             engine: Some((
-                thrust_vac: 215.0,
-                thrust_asl: 167.9,
-                isp_vac: 320.0,
-                isp_asl: 250.0,
+                thrust_vac: 8.0,
+                thrust_asl: 5.0,
+                isp_vac: 445.0,
+                isp_asl: 360.0,
                 throttleable: true,
+                gimbal_range: 0.0,
+                propellant: Hydrolox,
             )),
-
             resources: {},
         ),
 
-        // Large liquid engine - heavy lifter
         (
-            id: "engine_large",
-            name: "RE-M3 Mainsail",
-            description: "A powerful engine for heavy payloads",
+            id: "engine_sparrow",
+            name: "Sparrow",
+            description: "Precision landing engine with extreme gimbal range. Pintle injector ensures stable combustion across all conditions. First choice for single-engine lander configurations.",
             category: Propulsion,
-
-            mass: 6.0,
-            cost: 13000,
-
-            size: Large,
-
-            attachments: (
-                top: Some((size: Large)),
-                bottom: None,
-                radial: false,
-            ),
-
+            mass: 0.035,
+            cost: 700,
+            size: Tiny,
+            shape: Trapezoid,
+            grid_width: 0.7,
+            grid_height: 1.0,
+            top_width: Some(0.4),
+            hitbox_width: Some(1),
+            hitbox_height: Some(1),
             engine: Some((
-                thrust_vac: 1500.0,
-                thrust_asl: 1379.0,
-                isp_vac: 310.0,
+                thrust_vac: 20.0,
+                thrust_asl: 16.0,
+                isp_vac: 305.0,
+                isp_asl: 270.0,
+                throttleable: true,
+                gimbal_range: 15.0,
+                propellant: Kerolox,
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // SMALL ENGINES (3 grid wide = 1.5m)
+        // ============================================
+
+        (
+            id: "engine_wolf",
+            name: "Wolf",
+            description: "Modern kerolox workhorse for ascent and landing. Throttles 40-100% for propulsive landings. Proven across thousands of reusable first stage flights.",
+            category: Propulsion,
+            mass: 0.5,
+            cost: 3000,
+            size: Small,
+            shape: Trapezoid,
+            grid_width: 2.8,
+            grid_height: 4.0,
+            top_width: Some(1.3),
+            hitbox_width: Some(3),
+            hitbox_height: Some(4),
+            engine: Some((
+                thrust_vac: 850.0,
+                thrust_asl: 750.0,
+                isp_vac: 315.0,
                 isp_asl: 285.0,
                 throttleable: true,
+                gimbal_range: 8.0,
+                propellant: Kerolox,
             )),
-
             resources: {},
         ),
 
-        // Nuclear engine - high efficiency
         (
-            id: "engine_nuclear",
-            name: "LV-N Nerv",
-            description: "Nuclear thermal engine, extremely efficient but heavy",
+            id: "engine_falcon",
+            name: "Falcon",
+            description: "Compact methalox engine for rapid reusability. Full-flow staged combustion with extreme gimbal for boostback and landing. Minimal refurbishment between flights.",
             category: Propulsion,
+            mass: 0.45,
+            cost: 4000,
+            size: Small,
+            shape: Trapezoid,
+            grid_width: 1.8,
+            grid_height: 2.0,
+            top_width: Some(0.9),
+            hitbox_width: Some(3),
+            hitbox_height: Some(2),
+            engine: Some((
+                thrust_vac: 600.0,
+                thrust_asl: 520.0,
+                isp_vac: 355.0,
+                isp_asl: 320.0,
+                throttleable: true,
+                gimbal_range: 12.0,
+                propellant: Methalox,
+            )),
+            resources: {},
+        ),
 
-            mass: 3.0,
+        (
+            id: "engine_owl",
+            name: "Owl",
+            description: "Hydrolox upper stage with oversized vacuum bell. Expander cycle uses combustion heat to drive turbopumps. Essential for high-energy trajectories.",
+            category: Propulsion,
+            mass: 0.28,
+            cost: 5000,
+            size: Small,
+            shape: Trapezoid,
+            grid_width: 2.9,
+            grid_height: 3.0,
+            top_width: Some(0.6),
+            hitbox_width: Some(3),
+            hitbox_height: Some(3),
+            engine: Some((
+                thrust_vac: 180.0,
+                thrust_asl: 110.0,
+                isp_vac: 460.0,
+                isp_asl: 370.0,
+                throttleable: true,
+                gimbal_range: 4.0,
+                propellant: Hydrolox,
+            )),
+            resources: {},
+        ),
+
+        (
+            id: "engine_viper",
+            name: "Viper",
+            description: "Maximum thrust density kerolox engine. Oxidizer-rich staged combustion at extreme chamber pressure. Fixed nozzle—deploy in clusters or with aerodynamic control.",
+            category: Propulsion,
+            mass: 0.7,
+            cost: 3500,
+            size: Small,
+            shape: Trapezoid,
+            grid_width: 2.8,
+            grid_height: 3.0,
+            top_width: Some(1.6),
+            hitbox_width: Some(3),
+            hitbox_height: Some(3),
+            engine: Some((
+                thrust_vac: 1100.0,
+                thrust_asl: 950.0,
+                isp_vac: 325.0,
+                isp_asl: 295.0,
+                throttleable: true,
+                gimbal_range: 0.0,
+                propellant: Kerolox,
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // MEDIUM ENGINES (5 grid wide = 2.5m)
+        // ============================================
+
+        (
+            id: "engine_bear",
+            name: "Bear",
+            description: "Reliable methalox engine with conservative margins. Oxygen-rich staged combustion balances performance and reliability. Suitable for crewed vehicles, 25+ flights before overhaul.",
+            category: Propulsion,
+            mass: 1.8,
+            cost: 8000,
+            size: Medium,
+            shape: Trapezoid,
+            grid_width: 4.6,
+            grid_height: 5.0,
+            top_width: Some(2.0),
+            hitbox_width: Some(5),
+            hitbox_height: Some(5),
+            engine: Some((
+                thrust_vac: 2200.0,
+                thrust_asl: 1900.0,
+                isp_vac: 345.0,
+                isp_asl: 310.0,
+                throttleable: true,
+                gimbal_range: 8.0,
+                propellant: Methalox,
+            )),
+            resources: {},
+        ),
+
+        (
+            id: "engine_eagle",
+            name: "Eagle",
+            description: "RS-25 heritage hydrolox engine. Full-flow staged combustion with precise gimbal control. Flight-proven across hundreds of crewed missions. Accept no substitutes.",
+            category: Propulsion,
+            mass: 2.2,
+            cost: 12000,
+            size: Medium,
+            shape: Trapezoid,
+            grid_width: 4.8,
+            grid_height: 5.0,
+            top_width: Some(1.2),
+            hitbox_width: Some(5),
+            hitbox_height: Some(5),
+            engine: Some((
+                thrust_vac: 1400.0,
+                thrust_asl: 1100.0,
+                isp_vac: 450.0,
+                isp_asl: 365.0,
+                throttleable: true,
+                gimbal_range: 10.5,
+                propellant: Hydrolox,
+            )),
+            resources: {},
+        ),
+
+        (
+            id: "engine_panther",
+            name: "Panther",
+            description: "RD-180 heritage twin-chamber kerolox engine. Oxygen-rich staged combustion delivers exceptional thrust. Robust design tolerates operational abuse.",
+            category: Propulsion,
+            mass: 2.5,
+            cost: 7000,
+            size: Medium,
+            shape: Trapezoid,
+            grid_width: 4.6,
+            grid_height: 5.0,
+            top_width: Some(2.2),
+            hitbox_width: Some(5),
+            hitbox_height: Some(5),
+            engine: Some((
+                thrust_vac: 2000.0,
+                thrust_asl: 1750.0,
+                isp_vac: 335.0,
+                isp_asl: 305.0,
+                throttleable: true,
+                gimbal_range: 6.0,
+                propellant: Kerolox,
+            )),
+            resources: {},
+        ),
+
+        (
+            id: "engine_crane",
+            name: "Crane",
+            description: "Large lander engine with maximum gimbal authority. Wide bell optimized for vacuum performance. Methalox simplifies in-situ refueling on Moon or Mars.",
+            category: Propulsion,
+            mass: 1.4,
             cost: 10000,
-
-            size: Small,
-
-            attachments: (
-                top: Some((size: Small)),
-                bottom: None,
-                radial: false,
-            ),
-
+            size: Medium,
+            shape: Trapezoid,
+            grid_width: 3.6,
+            grid_height: 3.0,
+            top_width: Some(1.6),
+            hitbox_width: Some(5),
+            hitbox_height: Some(3),
             engine: Some((
-                thrust_vac: 60.0,
-                thrust_asl: 13.9,
-                isp_vac: 800.0,
-                isp_asl: 185.0,
+                thrust_vac: 1500.0,
+                thrust_asl: 1200.0,
+                isp_vac: 365.0,
+                isp_asl: 325.0,
                 throttleable: true,
+                gimbal_range: 15.0,
+                propellant: Methalox,
             )),
-
             resources: {},
         ),
 
-        // Interstellar drive - for star travel
+        // ============================================
+        // LARGE ENGINES (9 grid wide = 4.5m)
+        // ============================================
+
         (
-            id: "engine_interstellar",
-            name: "Daedalus Torch Drive",
-            description: "Fusion-powered engine for interstellar travel. Extremely efficient but low thrust.",
+            id: "engine_mammoth",
+            name: "Mammoth",
+            description: "F-1 heritage super-heavy kerolox engine. Single massive combustion chamber simplifies integration. Gas generator cycle prioritizes reliability for Moon-class rockets.",
             category: Propulsion,
-
-            mass: 15.0,
-            cost: 500000,
-
+            mass: 8.0,
+            cost: 20000,
             size: Large,
-            tech_required: "interstellar_propulsion",
-
-            attachments: (
-                top: Some((size: Large)),
-                bottom: None,
-                radial: false,
-            ),
-
+            shape: Trapezoid,
+            grid_width: 8.5,
+            grid_height: 7.0,
+            top_width: Some(3.8),
+            hitbox_width: Some(9),
+            hitbox_height: Some(7),
             engine: Some((
-                thrust_vac: 100.0,
-                thrust_asl: 0.0,  // Cannot operate in atmosphere
-                isp_vac: 15000.0, // Extremely high
-                isp_asl: 0.0,
+                thrust_vac: 7500.0,
+                thrust_asl: 6700.0,
+                isp_vac: 305.0,
+                isp_asl: 265.0,
                 throttleable: true,
+                gimbal_range: 6.0,
+                propellant: Kerolox,
             )),
-
             resources: {},
         ),
 
-        // Solid rocket booster
         (
-            id: "srb_small",
-            name: "RT-10 Hammer",
-            description: "A small solid rocket booster. Not throttleable.",
+            id: "engine_whale",
+            name: "Whale",
+            description: "RS-68 class hydrolox for heavy lift. Trades thrust for specific impulse. Outperforms kerolox alternatives for high-energy orbit insertions.",
             category: Propulsion,
-
-            mass: 0.75,   // Dry mass
-            cost: 400,
-
-            size: Small,
-
-            attachments: (
-                top: Some((size: Small)),
-                bottom: None,
-                radial: true,
-            ),
-
+            mass: 5.5,
+            cost: 25000,
+            size: Large,
+            shape: Trapezoid,
+            grid_width: 8.6,
+            grid_height: 6.0,
+            top_width: Some(2.4),
+            hitbox_width: Some(9),
+            hitbox_height: Some(6),
             engine: Some((
-                thrust_vac: 227.0,
-                thrust_asl: 197.9,
-                isp_vac: 195.0,
-                isp_asl: 170.0,
-                throttleable: false,  // SRBs cannot throttle
+                thrust_vac: 3500.0,
+                thrust_asl: 2800.0,
+                isp_vac: 445.0,
+                isp_asl: 360.0,
+                throttleable: true,
+                gimbal_range: 8.0,
+                propellant: Hydrolox,
             )),
+            resources: {},
+        ),
 
-            // SRBs include their own fuel
-            resources: {
-                "solid_fuel": 375.0,
-            },
+        (
+            id: "engine_bison",
+            name: "Bison",
+            description: "Cutting-edge reusable methalox engine. Full-flow staged combustion with extreme gimbal for booster return. Designed for 100+ flights before overhaul.",
+            category: Propulsion,
+            mass: 4.2,
+            cost: 22000,
+            size: Large,
+            shape: Trapezoid,
+            grid_width: 6.4,
+            grid_height: 4.0,
+            top_width: Some(3.0),
+            hitbox_width: Some(9),
+            hitbox_height: Some(4),
+            engine: Some((
+                thrust_vac: 5000.0,
+                thrust_asl: 4300.0,
+                isp_vac: 350.0,
+                isp_asl: 315.0,
+                throttleable: true,
+                gimbal_range: 12.0,
+                propellant: Methalox,
+            )),
+            resources: {},
+        ),
+
+        (
+            id: "engine_titan",
+            name: "Titan",
+            description: "Maximum vacuum performance kerolox engine. Enormous expansion ratio nozzle extracts every joule in space. Fixed mount pairs well with gimbaled boosters.",
+            category: Propulsion,
+            mass: 5.0,
+            cost: 18000,
+            size: Large,
+            shape: Trapezoid,
+            grid_width: 8.8,
+            grid_height: 6.0,
+            top_width: Some(1.8),
+            hitbox_width: Some(9),
+            hitbox_height: Some(6),
+            engine: Some((
+                thrust_vac: 4500.0,
+                thrust_asl: 3200.0,
+                isp_vac: 340.0,
+                isp_asl: 290.0,
+                throttleable: true,
+                gimbal_range: 0.0,
+                propellant: Kerolox,
+            )),
+            resources: {},
         ),
     ],
 )

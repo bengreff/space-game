@@ -60,13 +60,16 @@
 - [x] SOI encounter prediction (via trajectory)
 
 ### Week 11-12: Vehicle Editor
-- [ ] Editor mode vs flight mode
-- [ ] Part catalog (load from data files)
-- [ ] Grid-based part placement
-- [ ] Part attachment validation
-- [ ] Delete parts
-- [ ] Save blueprint to file
-- [ ] Load blueprint from file
+- [x] Editor mode vs flight mode
+- [x] Part catalog (load from data files)
+- [x] Grid-based part placement
+- [x] Part attachment validation
+- [x] Delete parts
+- [x] Save blueprint to file
+- [x] Load blueprint from file
+- [x] Part dragging/repositioning
+- [x] Procedural part rendering (engines, pods)
+- [x] Ghost preview with validity indication
 
 ### Week 13-14: Core Game Loop
 - [ ] Launch from surface position
@@ -244,9 +247,26 @@
 - [x] Ap/Pe markers on predicted trajectories
 - [ ] Auto-burn execution
 
+### Phase 2 Progress (Vehicle Editor)
+- [x] Editor mode vs flight mode toggle
+- [x] Part definitions loaded from RON files (engines, pods, tanks)
+- [x] Parts palette UI with categories
+- [x] Grid-based placement with snapping
+- [x] Ghost preview (green valid, red invalid)
+- [x] Part overlap detection
+- [x] Click to place parts
+- [x] Click to select placed parts
+- [x] Drag to reposition placed parts
+- [x] Delete selected parts
+- [x] Save/load blueprints to RON files
+- [x] Procedural engine rendering (per-engine details, rings, chambers)
+- [x] Procedural pod rendering (dark grey with window)
+- [x] Fuel display in tonnes when >= 1000 kg
+
 ### Next Up
-1. Vehicle editor (Week 11-12)
-2. Core game loop: launch, staging, fuel, save/load (Week 13-14)
+1. Core game loop: launch, staging, fuel, save/load (Week 13-14)
+2. Symmetry mode for part placement
+3. Staging UI in editor
 
 ---
 

@@ -51,6 +51,89 @@ fn body_to_system(pos: DVec2, body: &CelestialBody, time: f64) -> DVec2 {
 
 ---
 
+## Grid System
+
+- **1 grid square = 0.5m x 0.5m = 0.25 m²**
+- Part sizes are measured in grid squares
+- Size categories: Tiny (1), Small (3), Medium (5), Large (9) grid squares wide
+
+---
+
+## Fuel Tank System
+
+### Overview
+
+All fuel tanks store liquid oxygen (LOX) paired with one of three fuels:
+- **RP-1** (kerosene) - High density, moderate performance
+- **Methane (CH4)** - Balanced density and performance
+- **Hydrogen (LH2)** - Low density, high performance
+
+Tanks can switch between fuel types in the editor. Capacity and mass scale linearly with tank area.
+
+### Baseline Values (per 0.25 m² / 1 grid square)
+
+| Property | Value |
+|----------|-------|
+| **Dry Mass** | 35 kg |
+
+| Fuel Type | Oxygen (LOX) | Fuel | Total Propellant |
+|-----------|--------------|------|------------------|
+| **RP-1** | 470 kg | 185 kg | 655 kg |
+| **Methane** | 270 kg | 75 kg | 345 kg |
+| **Hydrogen** | 155 kg | 25 kg | 180 kg |
+
+### Scaling Formula
+
+For a tank with area A (in grid squares):
+
+```
+Dry Mass = 35 kg × A
+
+RP-1 Mode:
+  Oxygen   = 470 kg × A
+  RP-1     = 185 kg × A
+  Total    = 655 kg × A
+
+Methane Mode:
+  Oxygen   = 270 kg × A
+  Methane  = 75 kg × A
+  Total    = 345 kg × A
+
+Hydrogen Mode:
+  Oxygen   = 155 kg × A
+  Hydrogen = 25 kg × A
+  Total    = 180 kg × A
+```
+
+### Example Tank Sizes
+
+| Tank Size | Grid Squares | Area (m²) | Dry Mass | RP-1 Propellant | CH4 Propellant | LH2 Propellant |
+|-----------|--------------|-----------|----------|-----------------|----------------|----------------|
+| 1×1 | 1 | 0.25 | 35 kg | 655 kg | 345 kg | 180 kg |
+| 2×2 | 4 | 1.0 | 140 kg | 2,620 kg | 1,380 kg | 720 kg |
+| 3×3 | 9 | 2.25 | 315 kg | 5,895 kg | 3,105 kg | 1,620 kg |
+| 3×4 | 12 | 3.0 | 420 kg | 7,860 kg | 4,140 kg | 2,160 kg |
+| 5×5 | 25 | 6.25 | 875 kg | 16,375 kg | 8,625 kg | 4,500 kg |
+
+### Oxidizer to Fuel Ratios
+
+These ratios reflect realistic propellant combinations:
+
+| Fuel Type | O:F Ratio (by mass) |
+|-----------|---------------------|
+| **RP-1** | 2.54:1 |
+| **Methane** | 3.6:1 |
+| **Hydrogen** | 6.2:1 |
+
+### Design Notes
+
+- Hydrogen tanks hold less mass due to LH2's extremely low density (70.8 kg/m³ vs RP-1's 820 kg/m³)
+- Tank dry mass is constant regardless of fuel type (simplified model)
+- Tanks are switchable to allow players to experiment with different propellant combinations
+- Wet mass = Dry mass + Propellant mass
+
+---
+
 ## Core Data Structures
 
 ### Celestial Bodies
@@ -249,6 +332,7 @@ src/
 │                           # Keyboard/mouse input handling
 │                           # Time warp control with auto-reduction
 │                           # Maneuver trajectory prediction coordination
+│                           # Game mode switching (Flight/Editor)
 ├── lib.rs                  # Library root, re-exports
 │
 ├── bodies.rs               # CelestialBody, Orbit, SolarSystem
@@ -270,6 +354,31 @@ src/
 │   └── soi.rs              # SOI transition detection and execution
 │                           # Frame conversion between bodies
 │                           # On-rails time warp mode
+│
+├── parts/                  # Part definition system
+│   ├── mod.rs              # Re-exports, PlacedPartId
+│   ├── definition.rs       # PartDefinition, PartCategory, PartShape
+│   │                       # EngineData, TankData, PodData
+│   │                       # Propellant types (Kerolox, Methalox, etc.)
+│   ├── loader.rs           # Load parts from RON files
+│   │                       # PartDefinitions registry
+│   └── blueprint.rs        # VesselBlueprint save/load
+│                           # Serialization to/from RON files
+│
+├── editor/                 # Vehicle editor
+│   ├── mod.rs              # Re-exports
+│   ├── state.rs            # EditorState struct
+│   │                       # Part placement, selection, dragging
+│   │                       # Ghost preview state
+│   │                       # Camera offset/zoom
+│   ├── ui.rs               # egui UI panels
+│   │                       # Parts palette with categories
+│   │                       # Part info display
+│   │                       # Save/load/launch buttons
+│   └── render.rs           # Editor scene rendering
+│                           # Grid, placed parts, ghost preview
+│                           # Procedural engine/pod details
+│                           # Screen-to-world coordinate conversion
 │
 └── render/
     ├── mod.rs              # Re-exports
@@ -355,15 +464,17 @@ src/
 ```
 data/
 ├── bodies/
-│   ├── home_system.ron     # Home star system
-│   └── alpha_centauri.ron  # Second star system
+│   ├── home_system.ron     # Home star system (planned)
+│   └── alpha_centauri.ron  # Second star system (planned)
 ├── parts/
-│   ├── engines.ron
-│   ├── tanks.ron
-│   ├── structure.ron
-│   └── utility.ron
-├── resources.ron           # Resource definitions
-└── tech_tree.ron           # Tech tree structure
+│   ├── engines.ron         # 16 engines (Tiny to Large)
+│   │                       # Kerolox, Methalox, Hydrolox variants
+│   ├── pods.ron            # Command pods (Small, Medium)
+│   └── tanks.ron           # Fuel tanks (planned)
+├── blueprints/             # Saved vessel designs
+│   └── *.ron               # User-created blueprints
+├── resources.ron           # Resource definitions (planned)
+└── tech_tree.ron           # Tech tree structure (planned)
 ```
 
 ---
