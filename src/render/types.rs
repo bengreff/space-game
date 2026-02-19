@@ -106,11 +106,18 @@ pub struct ShipRenderData {
     pub thrust_kn: Option<f64>,
     pub delta_v: Option<f64>,        // m/s, Tsiolkovsky
     pub soi_surface_gravity: f64,    // m/s², for TWR calculation
+    pub g_force: f64,                // Felt acceleration in g's (thrust + drag, not gravity)
     // Staging
     pub current_stage: Option<usize>,  // Stages activated so far
     pub total_stages: Option<usize>,   // Total number of stages
     pub stages: Option<Vec<Vec<StagedPartInfo>>>,  // Full stage data for UI
     pub stage_delta_vs: Option<Vec<f64>>,  // Per-stage delta-v (m/s, vacuum)
+    // Thermal state
+    pub temperature: f64,       // Kelvin
+    pub heat_fraction: f32,     // 0.0-1.0 normalized for visual effects
+    pub heat_flux: f64,         // W/m² for HUD display
+    // Landing zone state
+    pub below_landing_altitude: bool,
 }
 
 /// Info about a part in a stage, for the staging UI

@@ -44,6 +44,20 @@ Clicking "Save" in the toolbar SHALL open a dialog with a text field bound to th
 
 Saving SHALL require a root part and non-empty parts list. The blueprint SHALL be validated: parts must not be empty, `root_part_index` must be in bounds, and all `parent_index` values must be valid.
 
+### Requirement: Disconnected part filtering
+
+When converting editor state to a blueprint via `to_blueprint()`, the system SHALL perform a BFS flood-fill from the root part through welding hitbox overlap to find all connected parts. Parts not reachable from the root SHALL be excluded from the blueprint. Stages SHALL be filtered to remove excluded part IDs, and empty stages SHALL be removed.
+
+#### Scenario: Disconnected part excluded at save
+
+- **WHEN** a part has been dragged away from the vessel leaving a gap (no welding hitbox overlap with any connected part)
+- **THEN** that part SHALL be silently excluded from the saved blueprint and from the launched vessel
+
+#### Scenario: All connected parts included
+
+- **WHEN** all parts have welding hitbox overlap forming a connected graph from the root
+- **THEN** all parts SHALL be included in the blueprint
+
 ### Requirement: Filename sanitization
 
 The save filename SHALL be derived from the blueprint name: alphanumeric characters, `-`, and `_` are preserved; spaces become `_`; all other characters become `_`. The file extension SHALL be `.ron`.

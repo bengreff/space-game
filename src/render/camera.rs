@@ -5,6 +5,8 @@ pub struct CameraUniform {
     pub position: [f32; 2],
     pub zoom: f32,
     pub aspect_ratio: f32,
+    pub rotation: f32,
+    pub _padding: [f32; 3],
 }
 
 /// Camera state for pan and zoom
@@ -12,6 +14,7 @@ pub struct Camera {
     pub position: [f64; 2],
     pub zoom: f32,
     pub aspect_ratio: f32,
+    pub rotation: f32,
     pub is_dragging: bool,
     pub last_mouse_pos: [f32; 2],
 }
@@ -22,6 +25,7 @@ impl Camera {
             position: [0.0, 0.0],
             zoom: 1.0,
             aspect_ratio,
+            rotation: 0.0,
             is_dragging: false,
             last_mouse_pos: [0.0, 0.0],
         }
@@ -32,6 +36,8 @@ impl Camera {
             position: [self.position[0] as f32, self.position[1] as f32],
             zoom: self.zoom,
             aspect_ratio: self.aspect_ratio,
+            rotation: self.rotation,
+            _padding: [0.0; 3],
         }
     }
 
@@ -40,16 +46,31 @@ impl Camera {
         let ndc_x = (screen_x / screen_width) * 2.0 - 1.0;
         let ndc_y = 1.0 - (screen_y / screen_height) * 2.0;
 
-        let world_x = (ndc_x * self.aspect_ratio / self.zoom) as f64 + self.position[0];
-        let world_y = (ndc_y / self.zoom) as f64 + self.position[1];
+        // Undo aspect ratio correction and zoom
+        let view_x = ndc_x * self.aspect_ratio / self.zoom;
+        let view_y = ndc_y / self.zoom;
+
+        // Undo rotation (apply inverse rotation)
+        let cos_r = self.rotation.cos();
+        let sin_r = self.rotation.sin();
+        let unrotated_x = view_x * cos_r + view_y * sin_r;
+        let unrotated_y = -view_x * sin_r + view_y * cos_r;
+
+        let world_x = unrotated_x as f64 + self.position[0];
+        let world_y = unrotated_y as f64 + self.position[1];
 
         [world_x, world_y]
     }
 
-    /// Pan the camera by a screen-space delta
+    /// Pan the camera by a screen-space delta (rotation-aware)
     pub fn pan(&mut self, dx: f32, dy: f32) {
-        self.position[0] -= (dx / self.zoom) as f64;
-        self.position[1] += (dy / self.zoom) as f64;
+        // Rotate the drag delta by negative camera rotation so panning feels natural
+        let cos_r = self.rotation.cos();
+        let sin_r = self.rotation.sin();
+        let rotated_dx = dx * cos_r + dy * sin_r;
+        let rotated_dy = -dx * sin_r + dy * cos_r;
+        self.position[0] -= (rotated_dx / self.zoom) as f64;
+        self.position[1] += (rotated_dy / self.zoom) as f64;
     }
 
     /// Zoom the camera by a factor, centered on a world position

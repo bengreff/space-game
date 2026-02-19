@@ -57,7 +57,7 @@ Ship rotation SHALL use an acceleration-based model:
 
 ### Requirement: Vessel physics data bridge
 
-The `VesselPhysicsData` struct SHALL bridge vessel data into physics: `total_mass` (tonnes), `max_thrust_vac` (kN), `max_thrust_asl` (kN), `vessel_height` (meters), `bottom_extent` (meters), `moment_of_inertia`, `torque` (kN*m from reaction wheels), and `gimbal_torque` (kN*m, signed).
+The `VesselPhysicsData` struct SHALL bridge vessel data into physics: `total_mass` (tonnes), `max_thrust_vac` (kN), `max_thrust_asl` (kN), `vessel_height` (meters), `bottom_extent` (meters), `moment_of_inertia`, `torque` (kN*m from reaction wheels), `gimbal_torque` (kN*m, signed), and `vessel_half_width` (meters, for aerodynamic cross-section).
 
 ## Thrust
 
@@ -96,16 +96,37 @@ When the ship is thrusting and time warp exceeds `RAILS_WARP_THRESHOLD`, the eff
 
 ## On-Rails Mode
 
+### Requirement: Below landing altitude check
+
+`Ship::below_landing_altitude()` SHALL return `true` when the ship's altitude above the current SOI body is non-negative and less than the body's `landing_altitude()`. This works for both atmospheric and airless bodies.
+
+### Requirement: Suborbital check
+
+`Ship::is_suborbital()` SHALL return `true` when any of the following are true:
+- The ship is in `Landed` state
+- The ship's orbital periapsis (from cached orbit or computed from state vectors) is below the body's radius
+
+For elliptical orbits, periapsis is `a * (1 - e)`. For hyperbolic orbits, periapsis is `|a| * (e - 1)`. If the orbit is parabolic (`1/a` near zero), the ship is considered suborbital.
+
 ### Requirement: On-rails mode entry criteria
 
 The ship SHALL enter on-rails mode when ALL of the following are true:
-- Time warp > `RAILS_WARP_THRESHOLD` (100.0)
+- Time warp > `RAILS_WARP_THRESHOLD` (10.0)
 - Ship state is `Flying`
-- Throttle is exactly 0.0
+- Ship is not actually thrusting (throttle > 0 AND engine thrust > 0)
+- Ship is NOT below landing altitude of the current SOI body
 
 #### Scenario: On-rails with throttle
-- **WHEN** time warp is 1000x but throttle is 0.5
+- **WHEN** time warp is 1000x but throttle is 0.5 and engines have thrust
 - **THEN** the ship SHALL NOT enter on-rails mode
+
+#### Scenario: On-rails blocked below landing altitude
+- **WHEN** time warp is 1000x and throttle is 0 but ship is below landing altitude
+- **THEN** the ship SHALL NOT enter on-rails mode
+
+### Requirement: Warp reset below landing altitude
+
+When the ship is below landing altitude and the current warp level exceeds `RAILS_WARP_THRESHOLD`, warp SHALL be automatically reset to 1x (warp index 0). This prevents high time warp in dangerous proximity to a body's surface.
 
 ### Requirement: On-rails mode propagation
 
@@ -119,37 +140,9 @@ While on-rails, the ship SHALL follow its cached Keplerian orbit exactly:
 
 When entering on-rails mode, the ship SHALL calculate and cache its current orbital elements. Only elliptical orbits (e < 1.0) can go on-rails; if orbit calculation fails, on-rails mode SHALL NOT be entered. When exiting on-rails mode, position and velocity SHALL be restored from the cached orbit at the current mean anomaly.
 
-## Landing
+## Collision and Landing
 
-### Requirement: Landed state behavior
-
-While landed, the ship SHALL:
-- Set rotation to the surface angle and rotational velocity to 0
-- Position on the surface at `(body_radius + launchpad_offset + bottom_extent) * [cos(angle), sin(angle)]`
-- If thrust acceleration exceeds surface gravity: transition to `Flying` with initial velocity `up_dir * net_accel * dt`
-- If thrust is insufficient: remain landed with zero velocity
-
-#### Scenario: Liftoff from surface
-- **WHEN** the ship is landed and thrust acceleration > surface gravity
-- **THEN** the ship state SHALL change to `Flying` and the ship SHALL have an initial upward velocity
-
-#### Scenario: Insufficient thrust on surface
-- **WHEN** the ship is landed and thrust acceleration <= surface gravity
-- **THEN** the ship SHALL remain `Landed` with zero velocity
-
-## Collision Detection
-
-### Requirement: Collision detection with bodies
-
-After each flying physics update, the ship SHALL check for collisions with ALL solar system bodies:
-1. Compute distance from ship absolute position to body world position
-2. If distance < body_radius + ship_radius (half vessel height or `SHIP_SIZE/2 = 5.0m` fallback):
-   - Switch SOI body if needed
-   - Place ship on surface at collision angle
-   - Zero velocity and throttle
-   - Set state to `Landed` with the collision surface angle
-   - Disable on-rails mode and clear cached orbit
-3. Launchpad collision takes priority (checked first for the launchpad body)
+See [Physics > Terrain Collision](../../physics/terrain_collision/spec.md) for collision detection with bodies, launchpad geometry, and landed state behavior.
 
 ## Autopilot
 

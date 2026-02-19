@@ -3,7 +3,7 @@ use crate::parts::{
     PlacedPart, PlacedPartId, SymmetryMode, VesselBlueprint,
     blueprint_to_parts, parts_to_blueprint,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Grid snap size in meters
 const GRID_SIZE: f64 = 0.5;
@@ -102,6 +102,7 @@ pub struct EditorState {
     pub dragging_part: Option<PlacedPartId>,
     pub drag_start_pos: Option<[f64; 2]>,  // Original position before drag
     pub drag_partner_start_pos: Option<[f64; 2]>,  // Mirror partner's original position
+    pub drag_offset: [f64; 2],             // Offset from mouse to part center at drag start
     pub drag_valid: bool,                   // Whether current drag position is valid
 
     // Stats display settings
@@ -143,6 +144,7 @@ impl EditorState {
             dragging_part: None,
             drag_start_pos: None,
             drag_partner_start_pos: None,
+            drag_offset: [0.0, 0.0],
             drag_valid: true,
             twr_settings: TwrSettings::default(),
         }
@@ -211,19 +213,59 @@ impl EditorState {
         self.focus_on_parts(part_defs);
     }
 
-    /// Convert editor state to a blueprint
-    pub fn to_blueprint(&self, _part_defs: &PartDefinitions) -> Result<VesselBlueprint, String> {
+    /// Find all parts connected to the root via welding hitbox overlap (BFS)
+    fn connected_part_ids(&self, part_defs: &PartDefinitions) -> HashSet<PlacedPartId> {
+        let Some(root_id) = self.root_part else {
+            return HashSet::new();
+        };
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(root_id);
+        visited.insert(root_id);
+        while let Some(current_id) = queue.pop_front() {
+            let current = &self.parts[&current_id];
+            let Some(current_def) = part_defs.get(&current.definition_id) else {
+                continue;
+            };
+            for (&other_id, other) in &self.parts {
+                if visited.contains(&other_id) {
+                    continue;
+                }
+                if let Some(other_def) = part_defs.get(&other.definition_id) {
+                    if Self::weld_bounds_overlap(current.position, current_def, other.position, other_def) {
+                        visited.insert(other_id);
+                        queue.push_back(other_id);
+                    }
+                }
+            }
+        }
+        visited
+    }
+
+    /// Convert editor state to a blueprint, filtering out disconnected parts
+    pub fn to_blueprint(&self, part_defs: &PartDefinitions) -> Result<VesselBlueprint, String> {
         let root_id = self.root_part.ok_or("No root part (command pod) placed")?;
 
         if self.parts.is_empty() {
             return Err("No parts placed".to_string());
         }
 
+        // Find connected parts and filter out disconnected ones
+        let connected = self.connected_part_ids(part_defs);
+        let filtered_parts: HashMap<PlacedPartId, PlacedPart> = self.parts.iter()
+            .filter(|(&id, _)| connected.contains(&id))
+            .map(|(&id, part)| (id, part.clone()))
+            .collect();
+        let filtered_stages: Vec<Vec<PlacedPartId>> = self.stages.iter()
+            .map(|stage| stage.iter().copied().filter(|id| connected.contains(id)).collect())
+            .filter(|stage: &Vec<PlacedPartId>| !stage.is_empty())
+            .collect();
+
         Ok(parts_to_blueprint(
-            &self.parts,
+            &filtered_parts,
             root_id,
             self.vessel_name.clone(),
-            &self.stages,
+            &filtered_stages,
         ))
     }
 
@@ -310,8 +352,54 @@ impl EditorState {
             }
         }
 
-        // Valid if no overlap with existing parts (both primary and mirror)
-        self.ghost_valid = !overlaps;
+        // Weld adjacency check: new part must touch at least one existing part
+        // (skip for the very first part)
+        // Decouplers can reach up to 10 grid squares above to attach
+        let is_decoupler = def.decoupler.is_some();
+        let extra_upward_reach = if is_decoupler { GRID_SIZE * 10.0 } else { 0.0 };
+
+        let mut weld_connected = self.parts.is_empty();
+        if !weld_connected {
+            for (_, part) in &self.parts {
+                if let Some(existing_def) = part_defs.get(&part.definition_id) {
+                    if Self::weld_bounds_overlap_reach(
+                        [snapped_x, snapped_y], def, extra_upward_reach,
+                        part.position, existing_def,
+                    ) {
+                        weld_connected = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Mirror ghost must also touch at least one existing part or the primary ghost
+        if weld_connected && self.mirror_ghost_position.is_some() {
+            let mirror_pos = self.mirror_ghost_position.unwrap();
+            let mut mirror_connected = false;
+            // Check against existing parts
+            for (_, part) in &self.parts {
+                if let Some(existing_def) = part_defs.get(&part.definition_id) {
+                    if Self::weld_bounds_overlap_reach(
+                        mirror_pos, def, extra_upward_reach,
+                        part.position, existing_def,
+                    ) {
+                        mirror_connected = true;
+                        break;
+                    }
+                }
+            }
+            // Check against primary ghost
+            if !mirror_connected {
+                mirror_connected = Self::weld_bounds_overlap(mirror_pos, def, [snapped_x, snapped_y], def);
+            }
+            if !mirror_connected {
+                weld_connected = false;
+            }
+        }
+
+        // Valid if no overlap with existing parts AND weld-connected
+        self.ghost_valid = !overlaps && weld_connected;
     }
 
     /// Calculate exact bounds for a part (no padding)
@@ -326,6 +414,27 @@ impl EditorState {
     fn bounds_overlap(a: &[f64; 4], b: &[f64; 4]) -> bool {
         // a and b are [min_x, min_y, max_x, max_y]
         a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+    }
+
+    /// Check if two parts' welding hitboxes overlap
+    fn weld_bounds_overlap(
+        pos_a: [f64; 2], def_a: &crate::parts::PartDefinition,
+        pos_b: [f64; 2], def_b: &crate::parts::PartDefinition,
+    ) -> bool {
+        let a = Self::calc_bounds(pos_a, def_a.weld_hitbox_width(), def_a.weld_hitbox_height());
+        let b = Self::calc_bounds(pos_b, def_b.weld_hitbox_width(), def_b.weld_hitbox_height());
+        Self::bounds_overlap(&a, &b)
+    }
+
+    /// Check weld overlap with extra upward reach on part A (for decoupler placement)
+    fn weld_bounds_overlap_reach(
+        pos_a: [f64; 2], def_a: &crate::parts::PartDefinition, extra_up: f64,
+        pos_b: [f64; 2], def_b: &crate::parts::PartDefinition,
+    ) -> bool {
+        let mut a = Self::calc_bounds(pos_a, def_a.weld_hitbox_width(), def_a.weld_hitbox_height());
+        a[3] += extra_up; // extend top edge upward
+        let b = Self::calc_bounds(pos_b, def_b.weld_hitbox_width(), def_b.weld_hitbox_height());
+        Self::bounds_overlap(&a, &b)
     }
 
     /// Place a part at the current ghost position
@@ -476,10 +585,14 @@ impl EditorState {
     }
 
     /// Start dragging a placed part (and its mirror partner if linked)
-    pub fn start_drag(&mut self, part_id: PlacedPartId) {
+    pub fn start_drag(&mut self, part_id: PlacedPartId, mouse_world: [f64; 2]) {
         if let Some(part) = self.parts.get(&part_id) {
             self.dragging_part = Some(part_id);
             self.drag_start_pos = Some(part.position);
+            self.drag_offset = [
+                part.position[0] - mouse_world[0],
+                part.position[1] - mouse_world[1],
+            ];
             self.drag_valid = true;
             self.selected_placed_part = Some(part_id);
             self.selected_part_def = None;
@@ -508,17 +621,21 @@ impl EditorState {
 
         let mirror_id = part.mirror_partner;
 
+        // Apply offset so the part doesn't jump to the cursor on first drag
+        let target_x = world_x + self.drag_offset[0];
+        let target_y = world_y + self.drag_offset[1];
+
         // Snap based on HITBOX dimensions
         let snapped_x = if def.hitbox_grid_width() % 2 == 1 {
-            (world_x / GRID_SIZE).floor() * GRID_SIZE + GRID_SIZE / 2.0
+            (target_x / GRID_SIZE).floor() * GRID_SIZE + GRID_SIZE / 2.0
         } else {
-            (world_x / GRID_SIZE + 0.5).floor() * GRID_SIZE
+            (target_x / GRID_SIZE + 0.5).floor() * GRID_SIZE
         };
 
         let snapped_y = if def.hitbox_grid_height() % 2 == 1 {
-            (world_y / GRID_SIZE).floor() * GRID_SIZE + GRID_SIZE / 2.0
+            (target_y / GRID_SIZE).floor() * GRID_SIZE + GRID_SIZE / 2.0
         } else {
-            (world_y / GRID_SIZE + 0.5).floor() * GRID_SIZE
+            (target_y / GRID_SIZE + 0.5).floor() * GRID_SIZE
         };
 
         // Check if new position would overlap any other part
@@ -699,7 +816,7 @@ impl EditorState {
     /// Zoom the editor camera
     pub fn zoom_camera(&mut self, factor: f32) {
         self.camera_zoom *= factor;
-        self.camera_zoom = self.camera_zoom.clamp(0.1, 16666.0);  // Zoom range
+        self.camera_zoom = self.camera_zoom.clamp(0.033, 16666.0);  // Zoom range
     }
 
     /// Center and zoom the camera to fit all placed parts
@@ -743,7 +860,7 @@ impl EditorState {
         // The editor camera maps: visible_half_extent ≈ 1/zoom (in meters)
         // We want extent to be ~60% of the view, so visible extent ≈ extent / 0.6
         self.camera_zoom = (0.6 / extent) as f32;
-        self.camera_zoom = self.camera_zoom.clamp(0.1, 16666.0);
+        self.camera_zoom = self.camera_zoom.clamp(0.033, 16666.0);
     }
 
     /// Check if the editor has any parts
@@ -807,15 +924,66 @@ impl EditorState {
         stats
     }
 
+    /// Compute fuel zones among non-decoupled editor parts.
+    /// BFS through weld adjacency; non-crossfeed decouplers act as barriers.
+    /// Returns a map from part ID to zone index.
+    fn compute_editor_fuel_zones(
+        &self,
+        part_defs: &PartDefinitions,
+        decoupled: &HashSet<PlacedPartId>,
+    ) -> HashMap<PlacedPartId, usize> {
+        let active_ids: Vec<PlacedPartId> = self.parts.keys()
+            .copied()
+            .filter(|id| !decoupled.contains(id))
+            .collect();
+
+        let mut zone_of: HashMap<PlacedPartId, usize> = HashMap::new();
+        let mut current_zone = 0usize;
+
+        for &start_id in &active_ids {
+            if zone_of.contains_key(&start_id) { continue; }
+
+            let mut queue = VecDeque::new();
+            zone_of.insert(start_id, current_zone);
+            queue.push_back(start_id);
+
+            while let Some(current_id) = queue.pop_front() {
+                let current = &self.parts[&current_id];
+                let Some(current_def) = part_defs.get(&current.definition_id) else { continue };
+
+                // Non-crossfeed decouplers are barriers: assigned to zone but don't propagate
+                let is_barrier = current_def.decoupler.is_some() && !current.crossfeed_enabled;
+                if is_barrier && current_id != start_id {
+                    continue;
+                }
+
+                for &other_id in &active_ids {
+                    if zone_of.contains_key(&other_id) { continue; }
+                    let other = &self.parts[&other_id];
+                    let Some(other_def) = part_defs.get(&other.definition_id) else { continue };
+                    if Self::weld_bounds_overlap(current.position, current_def, other.position, other_def) {
+                        zone_of.insert(other_id, current_zone);
+                        queue.push_back(other_id);
+                    }
+                }
+            }
+            current_zone += 1;
+        }
+
+        zone_of
+    }
+
     /// Calculate per-stage delta-v (vacuum) using the Tsiolkovsky rocket equation.
-    /// Simulates staging sequentially: decouplers fire, engines activate, all fuel burns.
+    /// Simulates staging sequentially: decouplers fire, engines activate.
+    /// Fuel zones (divided by non-crossfeed decouplers) determine which fuel
+    /// is accessible to active engines in each stage.
     pub fn calculate_stage_delta_v(&self, part_defs: &PartDefinitions) -> Vec<f64> {
         let g0 = 9.80665;
         let mut stage_dvs = Vec::new();
 
         // Track state across stages
-        let mut decoupled: std::collections::HashSet<PlacedPartId> = std::collections::HashSet::new();
-        let mut engines_enabled: std::collections::HashSet<PlacedPartId> = std::collections::HashSet::new();
+        let mut decoupled: HashSet<PlacedPartId> = HashSet::new();
+        let mut engines_enabled: HashSet<PlacedPartId> = HashSet::new();
 
         // Track remaining fuel per part (in tonnes)
         let mut fuel_remaining: HashMap<PlacedPartId, f64> = HashMap::new();
@@ -852,26 +1020,40 @@ impl EditorState {
             // 2. Enable engines in this stage
             for &part_id in stage {
                 if decoupled.contains(&part_id) { continue; }
-                let Some(_part) = self.parts.get(&part_id) else { continue };
-                let Some(def) = part_defs.get(&_part.definition_id) else { continue };
+                let Some(part) = self.parts.get(&part_id) else { continue };
+                let Some(def) = part_defs.get(&part.definition_id) else { continue };
                 if def.engine.is_some() {
                     engines_enabled.insert(part_id);
                 }
             }
 
-            // 3. Calculate wet mass and fuel mass of remaining parts
+            // 3. Compute fuel zones — non-crossfeed decouplers divide the rocket
+            let zone_of = self.compute_editor_fuel_zones(part_defs, &decoupled);
+
+            // 4. Find zones containing active (non-decoupled) engines
+            let engine_zones: HashSet<usize> = engines_enabled.iter()
+                .filter(|id| !decoupled.contains(id))
+                .filter_map(|id| zone_of.get(id).copied())
+                .collect();
+
+            // 5. Calculate wet mass of ALL remaining parts, but only count
+            //    fuel from tanks in engine zones as burnable
             let mut wet_mass = 0.0;
-            let mut fuel_mass = 0.0;
+            let mut burnable_fuel = 0.0;
             for (&part_id, part) in &self.parts {
                 if decoupled.contains(&part_id) { continue; }
                 let Some(def) = part_defs.get(&part.definition_id) else { continue };
-                wet_mass += def.mass;
                 let part_fuel = fuel_remaining.get(&part_id).copied().unwrap_or(0.0);
-                wet_mass += part_fuel;
-                fuel_mass += part_fuel;
+                wet_mass += def.mass + part_fuel;
+
+                if let Some(&zone) = zone_of.get(&part_id) {
+                    if engine_zones.contains(&zone) {
+                        burnable_fuel += part_fuel;
+                    }
+                }
             }
 
-            // 4. Calculate thrust-weighted average Isp of active engines
+            // 6. Calculate thrust-weighted average Isp of active engines
             let mut total_thrust = 0.0;
             let mut weighted_isp = 0.0;
             for &engine_id in &engines_enabled {
@@ -885,8 +1067,8 @@ impl EditorState {
             }
             let isp = if total_thrust > 0.0 { weighted_isp / total_thrust } else { 0.0 };
 
-            // 5. Δv = Isp * g0 * ln(wet / dry)
-            let dry_mass = wet_mass - fuel_mass;
+            // 7. Δv = Isp * g0 * ln(wet / dry)
+            let dry_mass = wet_mass - burnable_fuel;
             let dv = if isp > 0.0 && dry_mass > 0.0 && wet_mass > dry_mass {
                 isp * g0 * (wet_mass / dry_mass).ln()
             } else {
@@ -894,10 +1076,13 @@ impl EditorState {
             };
             stage_dvs.push(dv);
 
-            // 6. Consume all fuel in remaining parts
+            // 8. Consume only burnable fuel (in engine zones)
             for (&part_id, fuel) in fuel_remaining.iter_mut() {
-                if !decoupled.contains(&part_id) {
-                    *fuel = 0.0;
+                if decoupled.contains(&part_id) { continue; }
+                if let Some(&zone) = zone_of.get(&part_id) {
+                    if engine_zones.contains(&zone) {
+                        *fuel = 0.0;
+                    }
                 }
             }
         }

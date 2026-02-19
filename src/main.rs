@@ -13,7 +13,7 @@ use sunscatter::editor::{
 };
 use sunscatter::game::{Game, GameMode};
 use sunscatter::render::{RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, StagedPartInfo, Vertex};
-use sunscatter::ship::{AutopilotTarget, ShipState, VesselPhysicsData, SHIP_SIZE, MAX_THRUST_ACCELERATION};
+use sunscatter::ship::{AutopilotTarget, ShipState, VesselPhysicsData, SHIP_SIZE, MAX_THRUST_ACCELERATION, VESSEL_DESTRUCTION_TEMP, AMBIENT_TEMPERATURE, RAILS_WARP_THRESHOLD};
 
 // 1:1 Real-Scale Solar System Simulation
 // All physics use real-world values: masses, radii, distances, orbital velocities
@@ -223,16 +223,38 @@ fn render_flight_frame(
 ) {
     let dt = 1.0 / 60.0; // Approximate for now, actual dt passed separately
 
+    // Force warp to 1x if ship is below landing altitude at on-rails warp speeds (>10x)
+    if game.flight.ship.below_landing_altitude(&game.solar_system) {
+        let warp = WARP_LEVELS[game.flight.warp_index];
+        if warp > RAILS_WARP_THRESHOLD {
+            game.flight.warp_index = 0;
+        }
+    }
+
     // Update simulation with current time warp
     let time_warp = WARP_LEVELS[game.flight.warp_index];
     game.solar_system.update(dt * time_warp);
 
-    // Update engine gimbal angles based on rotation input (before computing physics data)
+    // Determine autopilot state and desired direction (before gimbal update)
+    let autopilot_target = render_state.get_autopilot_target();
+    let autopilot_active = autopilot_target != AutopilotTarget::Off && !game.flight.ship.on_rails;
+    let autopilot_target_angle = if autopilot_active {
+        let maneuver_node = render_state.get_selected_maneuver_node();
+        game.flight.ship.autopilot_target_angle(autopilot_target, maneuver_node)
+    } else {
+        None
+    };
+
+    // Update engine gimbal angles: driven by autopilot when SAS active, else by A/D input
     if let Some(ref mut vessel) = game.flight.vessel {
-        vessel.update_gimbal(
-            game.flight.ship_input.rotate_left,
-            game.flight.ship_input.rotate_right,
-        );
+        let (rotate_left, rotate_right) = if let Some(target_angle) = autopilot_target_angle {
+            // Autopilot commands gimbals based on desired rotation direction
+            let dir = game.flight.ship.autopilot_desired_direction(target_angle, None);
+            (dir > 0.0, dir < 0.0)
+        } else {
+            (game.flight.ship_input.rotate_left, game.flight.ship_input.rotate_right)
+        };
+        vessel.update_gimbal(rotate_left, rotate_right);
     }
 
     // Build VesselPhysicsData from flight vessel if available
@@ -246,27 +268,38 @@ fn render_flight_frame(
         moment_of_inertia: v.moment_of_inertia,
         torque: v.torque,
         gimbal_torque: v.compute_gimbal_torque(),
+        vessel_half_width: v.bounding_half_width(),
     });
 
-    // Update ship physics
-    game.flight.ship.update(dt * time_warp, time_warp, &game.flight.ship_input, &game.solar_system, vessel_physics.as_ref());
-
-    // Autopilot rotation control (disabled during on-rails warp)
-    let autopilot_target = render_state.get_autopilot_target();
-    if autopilot_target != AutopilotTarget::Off && !game.flight.ship.on_rails {
-        let maneuver_node = render_state.get_selected_maneuver_node();
-        if let Some(target_angle) = game.flight.ship.autopilot_target_angle(autopilot_target, maneuver_node) {
-            game.flight.ship.autopilot_rotate(target_angle, dt, vessel_physics.as_ref());
-        }
+    // Update ship physics (gimbal torque always applied in update_flying)
+    game.flight.ship.update(dt * time_warp, time_warp, &game.flight.ship_input, &game.solar_system, vessel_physics.as_ref(), autopilot_active);
+    if let Some(target_angle) = autopilot_target_angle {
+        game.flight.ship.autopilot_rotate(target_angle, dt * time_warp, vessel_physics.as_ref());
     }
 
     // Fuel consumption and vessel sync
     if let Some(ref mut vessel) = game.flight.vessel {
         vessel.throttle = game.flight.ship.throttle;
 
+        // Compute atmospheric pressure fraction for engine ISP interpolation
+        let atmo_pressure = {
+            let soi = &game.solar_system.bodies[game.flight.ship.soi_body];
+            if let Some(ref atmo) = soi.atmosphere {
+                let dist = (game.flight.ship.rel_position[0].powi(2) + game.flight.ship.rel_position[1].powi(2)).sqrt();
+                let alt = dist - soi.radius;
+                if alt >= 0.0 && alt < atmo.visible_height() {
+                    (atmo.pressure_at_altitude(alt) / 101_325.0).clamp(0.0, 1.0) // normalized to 1 atm
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            }
+        };
+
         // Always update engine states and consume fuel (updates active flags even at 0 throttle)
         let effective_dt = dt * time_warp;
-        vessel.consume_fuel(effective_dt, 0.0, &game.part_definitions);
+        vessel.consume_fuel(effective_dt, atmo_pressure, &game.part_definitions);
         vessel.recalculate_mass(&game.part_definitions);
 
         // Sync vessel state from ship
@@ -355,6 +388,48 @@ fn render_flight_frame(
         render_state.camera.position[1] = ship_abs_pos[1] * SCALE * BODY_SCALE;
     } else {
         render_state.update_tracking(&scaled_positions, SCALE);
+    }
+
+    // Camera rotation: surface-down when below landing altitude and suborbital
+    {
+        let below_landing = game.flight.ship.below_landing_altitude(&game.solar_system);
+        let is_suborbital = game.flight.ship.is_suborbital(&game.solar_system);
+
+        let target_rotation = if below_landing && is_suborbital {
+            // Rotate so surface is "down": ship's radial-in direction points screen-down
+            let rx = game.flight.ship.rel_position[0];
+            let ry = game.flight.ship.rel_position[1];
+            // atan2(ry, rx) = angle of ship from body center
+            // We want "up" on screen (positive Y) to align with radial-out
+            // So rotation = PI/2 - angle_from_body
+            (std::f64::consts::FRAC_PI_2 - ry.atan2(rx)) as f32
+        } else {
+            0.0
+        };
+
+        // Smooth interpolation with angle wrapping
+        let mut diff = target_rotation - render_state.camera.rotation;
+        while diff > std::f32::consts::PI {
+            diff -= std::f32::consts::TAU;
+        }
+        while diff < -std::f32::consts::PI {
+            diff += std::f32::consts::TAU;
+        }
+
+        let rate = 5.0 * dt as f32; // ~5 rad/s
+        if diff.abs() < rate {
+            render_state.camera.rotation = target_rotation;
+        } else {
+            render_state.camera.rotation += diff.signum() * rate;
+        }
+
+        // Normalize to [-PI, PI]
+        while render_state.camera.rotation > std::f32::consts::PI {
+            render_state.camera.rotation -= std::f32::consts::TAU;
+        }
+        while render_state.camera.rotation < -std::f32::consts::PI {
+            render_state.camera.rotation += std::f32::consts::TAU;
+        }
     }
 
     let bodies: Vec<_> = (0..game.solar_system.bodies.len())
@@ -470,7 +545,7 @@ fn render_flight_frame(
         .unwrap_or(0.0);
 
     // Build part render data and vessel stats from flight vessel
-    let (part_render_data, vessel_mass, vessel_fuel_frac, vessel_thrust, vessel_delta_v, vessel_size) =
+    let (part_render_data, vessel_mass, vessel_fuel_frac, vessel_thrust, vessel_delta_v, vessel_stage_delta_vs, vessel_size) =
         if let Some(ref vessel) = game.flight.vessel {
             let parts: Vec<ShipPartRenderData> = vessel.parts.iter()
                 .enumerate()
@@ -557,12 +632,45 @@ fn render_flight_frame(
             };
 
             let size = vessel.bounding_half_height() * 2.0;
-            let dv = vessel.calculate_delta_v();
+            let stage_dvs = vessel.calculate_stage_delta_v(&game.part_definitions);
+            let dv: f64 = stage_dvs.iter().sum();
 
-            (Some(parts), Some(vessel.total_mass), Some(fuel_frac), Some(vessel.active_thrust_vac()), Some(dv), size)
+            (Some(parts), Some(vessel.total_mass), Some(fuel_frac), Some(vessel.active_thrust_vac()), Some(dv), stage_dvs, size)
         } else {
-            (None, None, None, None, None, SHIP_SIZE)
+            (None, None, None, None, None, Vec::new(), SHIP_SIZE)
         };
+
+    let heat_fraction = ((game.flight.ship.temperature - AMBIENT_TEMPERATURE)
+        / (VESSEL_DESTRUCTION_TEMP - AMBIENT_TEMPERATURE))
+        .clamp(0.0, 1.0) as f32;
+
+    // Compute felt g-force (what crew experiences)
+    const G0: f64 = 9.80665;
+    let g_force = match &game.flight.ship.state {
+        ShipState::Landed { .. } => {
+            // On the ground, crew feels the normal force = surface gravity
+            soi_body.surface_gravity() / G0
+        }
+        ShipState::Flying => {
+            // In flight, crew feels thrust + drag as a vector sum (gravity is freefall, not felt)
+            let rot = game.flight.ship.rotation;
+            let thrust_mag = vessel_physics.as_ref()
+                .map(|v| if v.total_mass > 0.0 {
+                    game.flight.ship.throttle * v.max_thrust_vac / v.total_mass
+                } else { 0.0 })
+                .unwrap_or(0.0);
+            let thrust = [rot.cos() * thrust_mag, rot.sin() * thrust_mag];
+
+            let drag = {
+                let soi = &game.solar_system.bodies[game.flight.ship.soi_body];
+                game.flight.ship.compute_drag_accel(soi, vessel_physics.as_ref())
+            };
+
+            let net_x = thrust[0] + drag[0];
+            let net_y = thrust[1] + drag[1];
+            (net_x.powi(2) + net_y.powi(2)).sqrt() / G0
+        }
+    };
 
     let ship_render = ShipRenderData {
         x: ship_abs_pos[0] * SCALE * BODY_SCALE,
@@ -585,11 +693,14 @@ fn render_flight_frame(
         thrust_kn: vessel_thrust,
         delta_v: vessel_delta_v,
         soi_surface_gravity: game.solar_system.bodies[game.flight.ship.soi_body].surface_gravity(),
+        g_force,
         current_stage: game.flight.vessel.as_ref().map(|v| v.current_stage),
         total_stages: game.flight.vessel.as_ref().map(|v| v.stages.len()),
-        stage_delta_vs: game.flight.vessel.as_ref().map(|v| {
-            v.calculate_stage_delta_v(&game.part_definitions)
-        }),
+        temperature: game.flight.ship.temperature,
+        heat_fraction,
+        heat_flux: game.flight.ship.heat_flux,
+        below_landing_altitude: game.flight.ship.below_landing_altitude(&game.solar_system),
+        stage_delta_vs: if vessel_stage_delta_vs.is_empty() { None } else { Some(vessel_stage_delta_vs) },
         stages: game.flight.vessel.as_ref().map(|v| {
             v.stages.iter().map(|stage| {
                 stage.iter().map(|&part_idx| {
@@ -731,7 +842,11 @@ fn render_flight_frame(
                             }
                         }
 
-                        vessel.recalculate_mass(&game.part_definitions);
+                        // Recenter parts on new COM and shift ship position to match
+                        let com_offset = vessel.recenter_on_com(&game.part_definitions);
+                        let rot = game.flight.ship.rotation;
+                        game.flight.ship.rel_position[0] += com_offset[0] * rot.cos() - com_offset[1] * rot.sin();
+                        game.flight.ship.rel_position[1] += com_offset[0] * rot.sin() + com_offset[1] * rot.cos();
                     }
                 }
             }
@@ -744,6 +859,14 @@ fn render_flight_frame(
         if let Some(ref mut vessel) = game.flight.vessel {
             vessel.stages = new_stages;
         }
+    }
+
+    // Thermal destruction check
+    if game.flight.ship.temperature >= VESSEL_DESTRUCTION_TEMP {
+        game.flight.vessel = None;
+        game.flight.ship.temperature = AMBIENT_TEMPERATURE;
+        game.flight.ship.heat_flux = 0.0;
+        log::info!("Vessel destroyed by aerodynamic heating!");
     }
 }
 
@@ -962,7 +1085,8 @@ fn handle_editor_mouse_input(
                 screen_width, screen_height,
                 &game.editor, &game.part_definitions
             ) {
-                game.editor.start_drag(part_id);
+                let mouse_world = screen_to_world(mouse_pos[0], mouse_pos[1], screen_width, screen_height, &game.editor);
+                game.editor.start_drag(part_id, mouse_world);
             } else if game.editor.selected_part_def.is_some() {
                 // Try to place a part
                 game.editor.place_part(&game.part_definitions);
@@ -1065,6 +1189,11 @@ fn handle_flight_keyboard(
         if *named_key == winit::keyboard::NamedKey::Space && pressed {
             if let Some(ref mut vessel) = game.flight.vessel {
                 vessel.activate_next_stage(&game.part_definitions);
+                // Recenter parts on new COM and shift ship position to match
+                let com_offset = vessel.recenter_on_com(&game.part_definitions);
+                let rot = game.flight.ship.rotation;
+                game.flight.ship.rel_position[0] += com_offset[0] * rot.cos() - com_offset[1] * rot.sin();
+                game.flight.ship.rel_position[1] += com_offset[0] * rot.sin() + com_offset[1] * rot.cos();
             }
         }
     }

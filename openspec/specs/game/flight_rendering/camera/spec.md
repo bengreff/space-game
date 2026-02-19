@@ -10,7 +10,7 @@ The camera position is stored as `[f64; 2]` to prevent precision loss at large d
 
 ### Requirement: Camera initial state
 
-A new Camera SHALL initialize with: position `[0.0, 0.0]`, zoom `1.0`, `is_dragging = false`, `last_mouse_pos = [0.0, 0.0]`.
+A new Camera SHALL initialize with: position `[0.0, 0.0]`, zoom `1.0`, rotation `0.0`, `is_dragging = false`, `last_mouse_pos = [0.0, 0.0]`.
 
 ### Requirement: Camera zoom clamping
 
@@ -20,9 +20,21 @@ Zoom SHALL be clamped to `[0.00001, 1e10]` on `zoom_by()` and `[0.001, 1e10]` on
 
 When zooming at a world position, the camera SHALL reposition so that the world coordinate under the cursor remains stationary on screen: `position[i] = world_pos[i] - (world_pos[i] - old_pos[i]) * (old_zoom / new_zoom)`.
 
+### Requirement: Camera rotation field
+
+The Camera SHALL have a `rotation: f32` field representing the camera rotation in radians. The `CameraUniform` sent to the GPU SHALL include this rotation value. The rotation is applied in the vertex shader, `world_to_screen`, `screen_to_world`, and panning calculations.
+
+### Requirement: Camera surface-down rotation
+
+When the ship is both below landing altitude AND suborbital, the camera SHALL rotate so that the body's surface is oriented downward on screen. The target rotation SHALL be `PI/2 - atan2(rel_y, rel_x)`, where `rel_x` and `rel_y` are the ship's position relative to the SOI body center. When the ship is not below landing altitude or not suborbital, the target rotation SHALL be 0.0 (no rotation).
+
+### Requirement: Camera rotation interpolation
+
+Camera rotation SHALL smoothly interpolate toward the target rotation at a rate of approximately 5 radians per second. Angle wrapping SHALL be handled by normalizing the difference to [-PI, PI]. When the remaining difference is less than one step, the rotation SHALL snap to the target. The rotation SHALL be normalized to [-PI, PI] after each update.
+
 ### Requirement: Camera panning
 
-The `pan(dx, dy)` method SHALL adjust position by `(-dx / zoom, +dy / zoom)`, accounting for the screen-to-world direction flip on the Y axis.
+The `pan(dx, dy)` method SHALL be rotation-aware: the screen-space drag delta SHALL be rotated by the negative camera rotation before applying the pan, so that dragging feels natural regardless of camera orientation. The adjusted delta is `rotated_dx = dx*cos(r) + dy*sin(r)`, `rotated_dy = -dx*sin(r) + dy*cos(r)`, then position is updated by `(-rotated_dx / zoom, +rotated_dy / zoom)`.
 
 ### Requirement: Camera aspect ratio updates on resize
 
@@ -32,16 +44,29 @@ When the window is resized, `camera.aspect_ratio = new_width / new_height` SHALL
 
 ### Requirement: Screen to world coordinate conversion
 
-`screen_to_world` SHALL convert pixel coordinates to world coordinates:
+`screen_to_world` SHALL convert pixel coordinates to world coordinates, accounting for camera rotation:
 1. NDC: `ndc_x = (screen_x / width) * 2 - 1`, `ndc_y = 1 - (screen_y / height) * 2`
-2. World: `world_x = ndc_x * aspect_ratio / zoom + position[0]`, `world_y = ndc_y / zoom + position[1]`
+2. Undo aspect ratio and zoom: `view_x = ndc_x * aspect_ratio / zoom`, `view_y = ndc_y / zoom`
+3. Undo rotation (inverse rotation): `unrotated_x = view_x * cos(r) + view_y * sin(r)`, `unrotated_y = -view_x * sin(r) + view_y * cos(r)`
+4. World: `world_x = unrotated_x + position[0]`, `world_y = unrotated_y + position[1]`
 
 ### Requirement: World to screen coordinate conversion
 
-`world_to_screen` SHALL convert world coordinates to pixel coordinates:
-1. View: `view_x = (world_x - position[0]) * zoom`, `view_y = (world_y - position[1]) * zoom`
-2. NDC: `ndc_x = view_x / aspect_ratio`, `ndc_y = view_y`
-3. Screen: `screen_x = (ndc_x + 1) * 0.5 * width`, `screen_y = (1 - ndc_y) * 0.5 * height`
+`world_to_screen` SHALL convert world coordinates to pixel coordinates, accounting for camera rotation:
+1. Relative: `rel_x = world_x - position[0]`, `rel_y = world_y - position[1]`
+2. Apply rotation: `rotated_x = rel_x * cos(r) - rel_y * sin(r)`, `rotated_y = rel_x * sin(r) + rel_y * cos(r)`
+3. Apply zoom: `view_x = rotated_x * zoom`, `view_y = rotated_y * zoom`
+4. NDC: `ndc_x = view_x / aspect_ratio`, `ndc_y = view_y`
+5. Screen: `screen_x = (ndc_x + 1) * 0.5 * width`, `screen_y = (1 - ndc_y) * 0.5 * height`
+
+### Requirement: Shader rotation support
+
+The vertex shader SHALL apply camera rotation to vertex positions before zoom and aspect ratio correction:
+1. Rotate: `rotated = (position.x * cos(r) - position.y * sin(r), position.x * sin(r) + position.y * cos(r))`
+2. Zoom: `view_pos = rotated * zoom`
+3. Aspect ratio: `corrected_x = view_pos.x / aspect_ratio`
+
+The `CameraUniform` struct SHALL include `rotation: f32` and padding to maintain 32-byte alignment.
 
 ## Body Tracking
 

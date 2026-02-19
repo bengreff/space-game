@@ -571,17 +571,13 @@ pub fn render_editor_ui(
                                         if ui.selectable_label(selected, fuel_type.display_name()).clicked() {
                                             if let Some(p) = editor.parts.get_mut(&part_id) {
                                                 p.fuel_type = *fuel_type;
-                                                if *fuel_type == FuelType::Empty {
-                                                    p.tank_filled = false;
-                                                }
+                                                p.tank_filled = *fuel_type != FuelType::Empty;
                                             }
                                             // Apply to mirror partner
                                             if let Some(mid) = mirror_id {
                                                 if let Some(mp) = editor.parts.get_mut(&mid) {
                                                     mp.fuel_type = *fuel_type;
-                                                    if *fuel_type == FuelType::Empty {
-                                                        mp.tank_filled = false;
-                                                    }
+                                                    mp.tank_filled = *fuel_type != FuelType::Empty;
                                                 }
                                             }
                                         }

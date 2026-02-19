@@ -150,6 +150,8 @@ impl Game {
         self.flight.ship.throttle = 0.0;
         self.flight.ship.on_rails = false;
         self.flight.ship.cached_orbit = None;
+        self.flight.ship.temperature = crate::ship::AMBIENT_TEMPERATURE;
+        self.flight.ship.heat_flux = 0.0;
         self.flight.ship.state = crate::ship::ShipState::Landed {
             body_index: earth_idx,
             surface_angle,
@@ -210,6 +212,7 @@ impl Game {
                     &self.flight.ship_input,
                     &self.solar_system,
                     None,
+                    false,
                 );
 
                 // Update flight vessel if present (fuel consumption, etc.)

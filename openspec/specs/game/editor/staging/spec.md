@@ -86,14 +86,19 @@ Delta-v calculation SHALL simulate stages sequentially in order. For each stage:
 
 1. **Fire decouplers**: Mark decoupler and all parts with top edge at or below the decoupler's bottom edge (0.01m tolerance) as decoupled.
 2. **Enable engines**: Mark non-decoupled engines in this stage as active.
-3. **Compute wet mass**: Sum mass + remaining fuel for all non-decoupled parts.
-4. **Compute Isp**: Thrust-weighted average of `isp_vac` across all active non-decoupled engines.
-5. **Apply Tsiolkovsky**: Calculate delta-v from wet/dry mass ratio.
-6. **Consume fuel**: Set all non-decoupled tank fuel to 0.
+3. **Compute fuel zones**: Perform BFS through welding hitbox overlap among non-decoupled parts, treating decouplers with `crossfeed_enabled = false` as barriers that block traversal.
+4. **Compute wet mass**: Sum mass + remaining fuel for all non-decoupled parts.
+5. **Compute Isp**: Thrust-weighted average of `isp_vac` across all active non-decoupled engines.
+6. **Apply Tsiolkovsky**: Calculate delta-v from wet/dry mass ratio.
+7. **Consume fuel**: Set fuel to 0 only for tanks in fuel zones that contain at least one active engine. Tanks in zones without active engines SHALL retain their fuel for later stages.
 
 #### Scenario: Zero delta-v cases
 - **WHEN** Isp <= 0, dry mass <= 0, or wet mass <= dry mass
 - **THEN** the stage delta-v SHALL be 0.0
+
+#### Scenario: Multi-stage fuel isolation
+- **WHEN** a vessel has two stages separated by a non-crossfeed decoupler, each with its own engines and tanks
+- **THEN** firing the first stage SHALL only consume fuel from tanks in the same fuel zone as the active engines, preserving upper stage fuel for later
 
 ### Requirement: Fuel tracking initialization
 

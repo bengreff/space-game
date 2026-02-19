@@ -7,9 +7,25 @@ pub struct Atmosphere {
 }
 
 impl Atmosphere {
-    /// Visible atmosphere height in meters (~5 scale heights, where pressure drops to ~0.7%)
+    /// Atmosphere cutoff height in meters (~100km for Earth's 8.5km scale height)
     pub fn visible_height(&self) -> f64 {
-        self.scale_height * 5.0
+        self.scale_height * (100_000.0 / 8_500.0)
+    }
+
+
+    /// Pressure at a given altitude (meters above surface)
+    pub fn pressure_at_altitude(&self, altitude: f64) -> f64 {
+        self.surface_pressure * (-altitude / self.scale_height).exp()
+    }
+
+    /// Surface density (kg/m³) using ideal gas law with fixed T=250K, R=287 J/(kg·K) for N2/O2
+    pub fn surface_density(&self) -> f64 {
+        self.surface_pressure / (287.0 * 250.0)
+    }
+
+    /// Density at a given altitude (meters above surface)
+    pub fn density_at_altitude(&self, altitude: f64) -> f64 {
+        self.surface_density() * (-altitude / self.scale_height).exp()
     }
 }
 
@@ -24,12 +40,31 @@ pub struct CelestialBody {
     pub orbit: Option<Orbit>,  // Orbital parameters (None for root)
     pub soi_radius: f64,     // Sphere of influence radius
     pub atmosphere: Option<Atmosphere>, // Atmospheric data (None = no atmosphere)
+    pub sidereal_period: Option<f64>,  // Rotation period in seconds (None = tidally locked / negligible)
 }
 
 impl CelestialBody {
     /// Surface gravity in m/s² (g = GM/r²)
     pub fn surface_gravity(&self) -> f64 {
         G * self.mass / (self.radius * self.radius)
+    }
+
+    /// Landing altitude: the height below which warp is restricted and on-rails is blocked.
+    /// For atmospheric bodies, uses the atmosphere visible height.
+    /// For airless bodies, uses 1% of body radius.
+    pub fn landing_altitude(&self) -> f64 {
+        match &self.atmosphere {
+            Some(atmo) => atmo.visible_height(),
+            None => self.radius * 0.01,
+        }
+    }
+
+    /// Surface rotational velocity at a given distance from body center (m/s)
+    pub fn surface_velocity_at(&self, distance: f64) -> f64 {
+        match self.sidereal_period {
+            Some(period) if period > 0.0 => std::f64::consts::TAU * distance / period,
+            _ => 0.0,
+        }
     }
 }
 
@@ -250,6 +285,7 @@ impl SolarSystem {
             orbit: None,
             soi_radius: f64::INFINITY, // Sun's SOI is effectively infinite
             atmosphere: None,
+            sidereal_period: None,
         });
 
         // === MERCURY (index 1) ===
@@ -269,6 +305,7 @@ impl SolarSystem {
             }),
             soi_radius: calculate_soi(mercury_sma, mercury_mass, sun_mass),
             atmosphere: None, // No significant atmosphere
+            sidereal_period: None,
         });
 
         // === VENUS (index 2) ===
@@ -292,6 +329,7 @@ impl SolarSystem {
                 scale_height: 15_900.0,    // 15.9 km
                 color: [0.90, 0.70, 0.30], // Yellowish-orange haze
             }),
+            sidereal_period: None,
         });
 
         // === EARTH (index 3) ===
@@ -316,6 +354,7 @@ impl SolarSystem {
                 scale_height: 8_500.0,       // 8.5 km
                 color: [0.25, 0.55, 1.00],   // Sky blue
             }),
+            sidereal_period: None,
         });
 
         // === MOON (index 4) ===
@@ -335,6 +374,7 @@ impl SolarSystem {
             }),
             soi_radius: calculate_soi(moon_sma, moon_mass, earth_mass),
             atmosphere: None, // Negligible exosphere
+            sidereal_period: None, // Tidally locked
         });
 
         // === MARS (index 5) ===
@@ -359,6 +399,7 @@ impl SolarSystem {
                 scale_height: 11_100.0,      // 11.1 km
                 color: [0.80, 0.55, 0.35],   // Dusty butterscotch
             }),
+            sidereal_period: None,
         });
 
         // === PHOBOS (index 6) ===
@@ -378,6 +419,7 @@ impl SolarSystem {
             }),
             soi_radius: calculate_soi(phobos_sma, phobos_mass, mars_mass),
             atmosphere: None,
+            sidereal_period: None,
         });
 
         // === DEIMOS (index 7) ===
@@ -397,6 +439,7 @@ impl SolarSystem {
             }),
             soi_radius: calculate_soi(deimos_sma, deimos_mass, mars_mass),
             atmosphere: None,
+            sidereal_period: None,
         });
 
         // === JUPITER (index 8) ===
@@ -421,6 +464,7 @@ impl SolarSystem {
                 scale_height: 27_000.0,      // 27 km
                 color: [0.75, 0.60, 0.40],   // Warm tan
             }),
+            sidereal_period: None,
         });
 
         // === IO (index 9) ===
@@ -440,6 +484,7 @@ impl SolarSystem {
             }),
             soi_radius: calculate_soi(io_sma, io_mass, jupiter_mass),
             atmosphere: None, // Negligible SO₂ atmosphere
+            sidereal_period: None,
         });
 
         // === EUROPA (index 10) ===
@@ -459,6 +504,7 @@ impl SolarSystem {
             }),
             soi_radius: calculate_soi(europa_sma, europa_mass, jupiter_mass),
             atmosphere: None, // Tenuous O₂ exosphere
+            sidereal_period: None,
         });
 
         // === GANYMEDE (index 11) ===
@@ -478,6 +524,7 @@ impl SolarSystem {
             }),
             soi_radius: calculate_soi(ganymede_sma, ganymede_mass, jupiter_mass),
             atmosphere: None, // Tenuous O₂ exosphere
+            sidereal_period: None,
         });
 
         // === CALLISTO (index 12) ===
@@ -497,6 +544,7 @@ impl SolarSystem {
             }),
             soi_radius: calculate_soi(callisto_sma, callisto_mass, jupiter_mass),
             atmosphere: None,
+            sidereal_period: None,
         });
 
         // === SATURN (index 13) ===
@@ -521,6 +569,7 @@ impl SolarSystem {
                 scale_height: 59_500.0,      // 59.5 km
                 color: [0.85, 0.80, 0.50],   // Pale gold
             }),
+            sidereal_period: None,
         });
 
         // === TITAN (index 14) ===
@@ -544,6 +593,7 @@ impl SolarSystem {
                 scale_height: 21_000.0,      // 21 km
                 color: [0.85, 0.55, 0.20],   // Deep orange haze
             }),
+            sidereal_period: None, // Tidally locked to Saturn
         });
 
         // === RHEA (index 15) ===
@@ -563,6 +613,7 @@ impl SolarSystem {
             }),
             soi_radius: calculate_soi(rhea_sma, rhea_mass, saturn_mass),
             atmosphere: None,
+            sidereal_period: None,
         });
 
         // === IAPETUS (index 16) ===
@@ -582,6 +633,7 @@ impl SolarSystem {
             }),
             soi_radius: calculate_soi(iapetus_sma, iapetus_mass, saturn_mass),
             atmosphere: None,
+            sidereal_period: None,
         });
 
         // === DIONE (index 17) ===
@@ -601,6 +653,7 @@ impl SolarSystem {
             }),
             soi_radius: calculate_soi(dione_sma, dione_mass, saturn_mass),
             atmosphere: None,
+            sidereal_period: None,
         });
 
         // === URANUS (index 18) ===
@@ -624,6 +677,7 @@ impl SolarSystem {
                 scale_height: 27_700.0,      // 27.7 km
                 color: [0.50, 0.80, 0.90],   // Pale cyan
             }),
+            sidereal_period: None,
         });
 
         // === NEPTUNE (index 19) ===
@@ -647,6 +701,7 @@ impl SolarSystem {
                 scale_height: 19_700.0,      // 19.7 km
                 color: [0.20, 0.40, 0.90],   // Deep vivid blue
             }),
+            sidereal_period: None,
         });
 
         Self { bodies, time: 0.0 }

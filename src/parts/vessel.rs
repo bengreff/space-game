@@ -188,7 +188,10 @@ impl FlightVessel {
         let mut moment_of_inertia = 0.0;
         for (i, bp_part) in blueprint.parts.iter().enumerate() {
             let def = part_defs.get(&bp_part.definition_id).unwrap();
-            let part_mass = def.wet_mass();
+            // Use actual part mass (dry + fuel), not def.wet_mass() which lacks loaded fuel
+            let base_mass = def.mass;
+            let resource_mass: f64 = parts[i].resources.values().sum::<f64>() * 0.001;
+            let part_mass = base_mass + resource_mass;
             let r_sq = parts[i].local_position[0].powi(2) + parts[i].local_position[1].powi(2);
             moment_of_inertia += part_mass * r_sq;
 
@@ -226,7 +229,8 @@ impl FlightVessel {
         })
     }
 
-    /// Recalculate mass and center of mass (call after resource consumption or staging)
+    /// Recalculate mass, center of mass, and moment of inertia
+    /// (call after resource consumption or staging)
     pub fn recalculate_mass(&mut self, part_defs: &PartDefinitions) {
         self.total_mass = 0.0;
         let mut com = [0.0, 0.0];
@@ -250,6 +254,74 @@ impl FlightVessel {
             self.center_of_mass[0] = com[0] / self.total_mass;
             self.center_of_mass[1] = com[1] / self.total_mass;
         }
+
+        // Recalculate moment of inertia with current masses
+        let mut moi = 0.0;
+        for part in &self.parts {
+            if part.destroyed || part.decoupled {
+                continue;
+            }
+            let def = match part_defs.get(&part.definition_id) {
+                Some(d) => d,
+                None => continue,
+            };
+            let base_mass = def.mass;
+            let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
+            let part_mass = base_mass + resource_mass;
+
+            let r_sq = part.local_position[0].powi(2) + part.local_position[1].powi(2);
+            moi += part_mass * r_sq;
+
+            let w = def.width();
+            let h = def.height();
+            moi += part_mass * (w * w + h * h) / 12.0;
+        }
+        self.moment_of_inertia = moi.max(0.1);
+    }
+
+    /// Recenter all part local_positions around the new center of mass after decoupling.
+    /// Returns the COM offset in vessel-local coordinates (before rotation) so the caller
+    /// can shift the ship's world position to keep the vessel in the same physical location.
+    pub fn recenter_on_com(&mut self, part_defs: &PartDefinitions) -> [f64; 2] {
+        // First, recalculate mass to get the current COM
+        self.recalculate_mass(part_defs);
+
+        let com = self.center_of_mass;
+        if com[0].abs() < 1e-9 && com[1].abs() < 1e-9 {
+            return [0.0, 0.0]; // Already centered
+        }
+
+        // Shift all part positions so COM is at origin
+        for part in &mut self.parts {
+            part.local_position[0] -= com[0];
+            part.local_position[1] -= com[1];
+        }
+
+        // Reset COM to origin and recalculate MOI with new positions
+        self.center_of_mass = [0.0, 0.0];
+        let mut moi = 0.0;
+        for part in &self.parts {
+            if part.destroyed || part.decoupled {
+                continue;
+            }
+            let def = match part_defs.get(&part.definition_id) {
+                Some(d) => d,
+                None => continue,
+            };
+            let base_mass = def.mass;
+            let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
+            let part_mass = base_mass + resource_mass;
+
+            let r_sq = part.local_position[0].powi(2) + part.local_position[1].powi(2);
+            moi += part_mass * r_sq;
+            let w = def.width();
+            let h = def.height();
+            moi += part_mass * (w * w + h * h) / 12.0;
+        }
+        self.moment_of_inertia = moi.max(0.1);
+
+        // Return the old COM offset so the ship position can be corrected
+        com
     }
 
     /// Update engine_active flags based on fuel availability within each fuel zone.
@@ -571,6 +643,20 @@ impl FlightVessel {
         total
     }
 
+    /// Get the bounding half-width of the vessel (max extent from COM in X)
+    pub fn bounding_half_width(&self) -> f64 {
+        let mut max_extent = 0.0f64;
+        for part in &self.parts {
+            if part.destroyed || part.decoupled {
+                continue;
+            }
+            let right = part.local_position[0] + part.hitbox_half_extents[0];
+            let left = part.local_position[0] - part.hitbox_half_extents[0];
+            max_extent = max_extent.max(right.abs()).max(left.abs());
+        }
+        max_extent.max(0.5)
+    }
+
     /// Get the bounding half-height of the vessel (max extent from COM in Y)
     pub fn bounding_half_height(&self) -> f64 {
         let mut max_extent = 0.0f64;
@@ -829,8 +915,68 @@ impl FlightVessel {
         ]
     }
 
+    /// Compute fuel zones using simulated decoupled state (for delta-v calculation).
+    /// Same algorithm as compute_fuel_zones but uses a provided decoupled vec
+    /// instead of reading from part state.
+    fn compute_fuel_zones_simulated(
+        &self,
+        part_defs: &PartDefinitions,
+        sim_decoupled: &[bool],
+    ) -> Vec<usize> {
+        use std::collections::VecDeque;
+
+        let n = self.parts.len();
+        // Build adjacency from weld hitbox overlap, skipping simulated-decoupled parts
+        let mut connections = vec![Vec::new(); n];
+        for i in 0..n {
+            if sim_decoupled[i] { continue; }
+            let Some(def_i) = part_defs.get(&self.parts[i].definition_id) else { continue };
+            let weld_hw_i = def_i.weld_hitbox_width() / 2.0;
+            let weld_hh_i = def_i.weld_hitbox_height() / 2.0;
+            for j in (i + 1)..n {
+                if sim_decoupled[j] { continue; }
+                let Some(def_j) = part_defs.get(&self.parts[j].definition_id) else { continue };
+                let weld_hw_j = def_j.weld_hitbox_width() / 2.0;
+                let weld_hh_j = def_j.weld_hitbox_height() / 2.0;
+                let dx = (self.parts[i].local_position[0] - self.parts[j].local_position[0]).abs();
+                let dy = (self.parts[i].local_position[1] - self.parts[j].local_position[1]).abs();
+                if dx < weld_hw_i + weld_hw_j && dy < weld_hh_i + weld_hh_j {
+                    connections[i].push(j);
+                    connections[j].push(i);
+                }
+            }
+        }
+
+        // Flood-fill zones; non-crossfeed decouplers are barriers
+        let mut zones = vec![usize::MAX; n];
+        let mut current_zone = 0;
+        for start in 0..n {
+            if zones[start] != usize::MAX || sim_decoupled[start] { continue; }
+            let mut queue = VecDeque::new();
+            zones[start] = current_zone;
+            queue.push_back(start);
+            while let Some(idx) = queue.pop_front() {
+                let is_barrier = {
+                    let def = part_defs.get(&self.parts[idx].definition_id);
+                    def.map(|d| d.decoupler.is_some()).unwrap_or(false)
+                        && !self.parts[idx].crossfeed_enabled
+                };
+                if is_barrier && idx != start { continue; }
+                for &neighbor in &connections[idx] {
+                    if zones[neighbor] != usize::MAX { continue; }
+                    zones[neighbor] = current_zone;
+                    queue.push_back(neighbor);
+                }
+            }
+            current_zone += 1;
+        }
+        zones
+    }
+
     /// Calculate per-stage delta-v (vacuum) using the Tsiolkovsky rocket equation.
-    /// Simulates staging sequentially: decouplers fire, engines activate, all fuel burns.
+    /// Simulates staging sequentially: decouplers fire, engines activate.
+    /// Fuel zones (divided by non-crossfeed decouplers) determine which fuel
+    /// is accessible to active engines in each stage.
     pub fn calculate_stage_delta_v(&self, part_defs: &PartDefinitions) -> Vec<f64> {
         let g0 = 9.80665;
         let mut stage_dvs = Vec::new();
@@ -876,18 +1022,31 @@ impl FlightVessel {
                 }
             }
 
-            // 3. Calculate wet mass and fuel mass
+            // 3. Compute fuel zones with simulated decoupled state
+            let zones = self.compute_fuel_zones_simulated(part_defs, &decoupled);
+
+            // 4. Find zones containing active (non-decoupled) engines
+            let engine_zones: std::collections::HashSet<usize> = (0..self.parts.len())
+                .filter(|&i| !decoupled[i] && engines_enabled[i] && zones[i] != usize::MAX)
+                .map(|i| zones[i])
+                .collect();
+
+            // 5. Calculate wet mass of ALL remaining parts, but only count
+            //    fuel from tanks in engine zones as burnable
             let mut wet_mass = 0.0;
-            let mut fuel_mass = 0.0;
+            let mut burnable_fuel = 0.0;
             for i in 0..self.parts.len() {
                 if decoupled[i] { continue; }
                 let base_mass = part_defs.get(&self.parts[i].definition_id)
                     .map(|d| d.mass).unwrap_or(0.0);
                 wet_mass += base_mass + fuel_remaining[i];
-                fuel_mass += fuel_remaining[i];
+
+                if zones[i] != usize::MAX && engine_zones.contains(&zones[i]) {
+                    burnable_fuel += fuel_remaining[i];
+                }
             }
 
-            // 4. Calculate thrust-weighted average Isp
+            // 6. Calculate thrust-weighted average Isp
             let mut total_thrust = 0.0;
             let mut weighted_isp = 0.0;
             for i in 0..self.parts.len() {
@@ -897,8 +1056,8 @@ impl FlightVessel {
             }
             let isp = if total_thrust > 0.0 { weighted_isp / total_thrust } else { 0.0 };
 
-            // 5. Δv = Isp * g0 * ln(wet / dry)
-            let dry_mass = wet_mass - fuel_mass;
+            // 7. Δv = Isp * g0 * ln(wet / dry)
+            let dry_mass = wet_mass - burnable_fuel;
             let dv = if isp > 0.0 && dry_mass > 0.0 && wet_mass > dry_mass {
                 isp * g0 * (wet_mass / dry_mass).ln()
             } else {
@@ -906,9 +1065,10 @@ impl FlightVessel {
             };
             stage_dvs.push(dv);
 
-            // 6. Consume all fuel in remaining parts
+            // 8. Consume only burnable fuel (in engine zones)
             for i in 0..self.parts.len() {
-                if !decoupled[i] {
+                if decoupled[i] { continue; }
+                if zones[i] != usize::MAX && engine_zones.contains(&zones[i]) {
                     fuel_remaining[i] = 0.0;
                 }
             }

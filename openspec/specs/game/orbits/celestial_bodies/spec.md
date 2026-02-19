@@ -16,7 +16,7 @@ The system SHALL define `PHYSICS_SCALE = 1.0`, meaning all values match real lif
 
 ### Requirement: Celestial body properties
 
-Each `CelestialBody` SHALL have the following properties: `name` (String), `mass` (kg, f64), `radius` (meters, f64), `color` (RGBA [f32; 4]), `parent` (Optional index of parent body, None for root), `orbit` (Optional Keplerian orbital elements, None for root), `soi_radius` (meters, f64), and `atmosphere` (Optional atmospheric data).
+Each `CelestialBody` SHALL have the following properties: `name` (String), `mass` (kg, f64), `radius` (meters, f64), `color` (RGBA [f32; 4]), `parent` (Optional index of parent body, None for root), `orbit` (Optional Keplerian orbital elements, None for root), `soi_radius` (meters, f64), `atmosphere` (Optional atmospheric data), and `sidereal_period` (Optional rotation period in seconds, None for tidally locked or negligible rotation).
 
 ### Requirement: Surface gravity calculation
 
@@ -28,7 +28,21 @@ SOI radius SHALL be calculated using the formula `soi = semi_major_axis * (mass 
 
 ### Requirement: Atmosphere data
 
-Bodies with atmospheres SHALL define `Atmosphere` with: `surface_pressure` (Pascals), `scale_height` (meters), and `color` (RGB [f32; 3]). The visible atmosphere height SHALL be `scale_height * 5.0` (~0.7% pressure level).
+Bodies with atmospheres SHALL define `Atmosphere` with: `surface_pressure` (Pascals), `scale_height` (meters), and `color` (RGB [f32; 3]). The visible atmosphere height SHALL be `scale_height * (100_000 / 8_500)` (~100 km for Earth-like scale heights).
+
+### Requirement: Landing altitude
+
+Each `CelestialBody` SHALL provide a `landing_altitude()` that returns the altitude below which warp is restricted and on-rails mode is blocked:
+- For atmospheric bodies: the atmosphere `visible_height()`
+- For airless bodies: `radius * 0.01` (1% of body radius)
+
+#### Scenario: Earth landing altitude
+- **WHEN** Earth has an atmosphere with scale_height 8,500 m
+- **THEN** `landing_altitude()` SHALL return approximately 100,000 m
+
+#### Scenario: Moon landing altitude
+- **WHEN** the Moon has no atmosphere and radius 1,737,000 m
+- **THEN** `landing_altitude()` SHALL return approximately 17,370 m (1% of radius)
 
 ## Solar System
 

@@ -14,12 +14,16 @@ An egui top panel named "time_warp_panel" SHALL display time warp controls and o
 - Current warp level shown as selected via `egui::SelectableLabel`
 
 #### Scenario: Warp blocking while thrusting
-- **WHEN** throttle > 0.0
-- **THEN** warp levels where warp > 100.0 SHALL be disabled
+- **WHEN** throttle > 0.0 AND ship has positive thrust acceleration
+- **THEN** warp levels where warp > `RAILS_WARP_THRESHOLD` (10.0) SHALL be disabled
 
 #### Scenario: Warp blocking near SOI boundary
 - **WHEN** `time_to_intercept / warp_rate < 0.5` seconds of real time
 - **THEN** that warp level SHALL be disabled
+
+#### Scenario: Warp blocking below landing altitude
+- **WHEN** ship is below the current SOI body's landing altitude
+- **THEN** warp levels where warp > `RAILS_WARP_THRESHOLD` (10.0) SHALL be disabled (greyed out)
 
 #### Scenario: Current warp display
 - After separator: "Current: {warp}x" where warp is cast to i64
@@ -59,11 +63,11 @@ The SAS system SHALL display buttons for: "PRO" (Prograde), "RET" (Retrograde), 
 
 ### Requirement: Vessel stats display
 
-The bottom panel SHALL show: mass ("M: {mass:.2}t"), thrust ("T: {thrust:.0}kN"), TWR ("TWR: {value:.2}" green if >= 1.0, red if < 1.0), and delta-v ("Dv: {formatted}").
+The bottom panel SHALL show: mass ("M: {mass:.2}t"), thrust ("T: {thrust:.0}kN"), TWR ("TWR: {value:.2}" green if >= 1.0, red if < 1.0), delta-v ("Dv: {formatted}"), and G-force ("G: {value:.1}" color-coded: white < 3g, yellow < 6g, red >= 6g).
 
 ### Requirement: Velocity and altitude display
 
-Right side of bottom panel SHALL show: "VEL" label with value at font size 13 strong, and "ALT" label with value at font size 13 strong.
+Right side of bottom panel SHALL show: "VEL" label with value at font size 13 strong, and "ALT" label with value at font size 13 strong. When `heat_fraction > 0.01`, a temperature readout ("{temp}K") SHALL appear after altitude, colored by severity: yellow (`< 0.33`), orange (`< 0.66`), red (`>= 0.66`).
 
 #### Scenario: Velocity formatting
 - `>= 1000` -> "{X.XX} km/s", else "{X.X} m/s"
@@ -93,7 +97,15 @@ When vessel has fuel data, show fuel bar with 10px gap below throttle.
 - `> 0.3` -> blue `rgb(80, 160, 220)`, `> 0.1` -> amber `rgb(220, 180, 80)`, `<= 0.1` -> red `rgb(220, 80, 80)`
 - Bar height 80px, width 20px
 
-### Requirement: Stage indicator below fuel bar
+### Requirement: Heat bar below fuel bar
+
+When ship temperature exceeds 350K, a vertical heat bar SHALL be shown:
+- "HEAT" label at font size 10, temperature readout in Kelvin at font size 11
+- Bar height 80px, width 20px, fill from bottom proportional to `heat_fraction`
+- Colors: `< 0.33` -> yellow `rgb(220, 200, 80)`, `< 0.66` -> orange `rgb(220, 140, 40)`, `>= 0.66` -> red `rgb(220, 60, 60)`
+- Background `rgb(40, 40, 50)`, border gray 1px
+
+### Requirement: Stage indicator below fuel/heat bars
 
 When vessel has stages, show "STG" label and "{current}/{total}" at font size 12 strong.
 

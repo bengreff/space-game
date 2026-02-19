@@ -3,7 +3,7 @@ use wgpu::util::DeviceExt;
 use winit::window::Window;
 use egui_wgpu::ScreenDescriptor;
 
-use crate::ship::AutopilotTarget;
+use crate::ship::{AutopilotTarget, RAILS_WARP_THRESHOLD};
 use super::camera::Camera;
 use super::types::{
     BodyData, ManeuverNode, OrbitRenderData, ShipOrbitData, ShipRenderData, Vertex,
@@ -49,6 +49,12 @@ pub struct RenderState {
     pub vessel_stage_delta_vs: Vec<f64>,  // Per-stage delta-v (m/s, vacuum)
     pub staging_reorder: Option<Vec<Vec<usize>>>,  // Request to reorder stages (part indices)
     pub ship_soi_surface_gravity: f64,     // m/s², for TWR
+    pub ship_g_force: f64,                 // Felt acceleration in g's (thrust + drag, not gravity)
+    // Thermal state
+    pub ship_temperature: f64,            // Kelvin
+    pub ship_heat_fraction: f32,          // 0.0-1.0, for visual effects
+    pub ship_heat_flux: f64,              // W/m², for HUD display
+    pub ship_below_landing_altitude: bool, // Whether warp > 10x should be blocked
     // Part click state
     pub selected_flight_part: Option<usize>,  // index into flight_parts_cache
     pub flight_parts_cache: Vec<super::types::ShipPartRenderData>,
@@ -307,6 +313,11 @@ impl RenderState {
             vessel_stage_delta_vs: Vec::new(),
             staging_reorder: None,
             ship_soi_surface_gravity: 9.81,
+            ship_g_force: 0.0,
+            ship_temperature: 300.0,
+            ship_heat_fraction: 0.0,
+            ship_heat_flux: 0.0,
+            ship_below_landing_altitude: false,
             selected_flight_part: None,
             flight_parts_cache: Vec::new(),
             ship_render_x: 0.0,
@@ -383,11 +394,19 @@ impl RenderState {
 
     /// Convert world position to screen position
     pub fn world_to_screen(&self, world_x: f32, world_y: f32) -> (f32, f32) {
-        // Apply camera transform: view_pos = (world_pos - camera_pos) * zoom
-        let view_x = (world_x - self.camera.position[0] as f32) * self.camera.zoom;
-        let view_y = (world_y - self.camera.position[1] as f32) * self.camera.zoom;
+        // Apply camera transform: view_pos = (world_pos - camera_pos)
+        let rel_x = world_x - self.camera.position[0] as f32;
+        let rel_y = world_y - self.camera.position[1] as f32;
 
-        // Correct for aspect ratio
+        // Apply rotation
+        let cos_r = self.camera.rotation.cos();
+        let sin_r = self.camera.rotation.sin();
+        let rotated_x = rel_x * cos_r - rel_y * sin_r;
+        let rotated_y = rel_x * sin_r + rel_y * cos_r;
+
+        // Apply zoom and aspect ratio correction
+        let view_x = rotated_x * self.camera.zoom;
+        let view_y = rotated_y * self.camera.zoom;
         let ndc_x = view_x / self.camera.aspect_ratio;
         let ndc_y = view_y;
 
@@ -420,6 +439,7 @@ impl RenderState {
         let size = self.size;
         let camera_pos = self.camera.position;
         let camera_zoom = self.camera.zoom;
+        let camera_rotation = self.camera.rotation;
         let aspect_ratio = self.camera.aspect_ratio;
         let scale_factor = self.window.scale_factor() as f32;
         let ship_orbit = self.ship_orbit_info.clone();
@@ -434,7 +454,12 @@ impl RenderState {
         let vessel_delta_v = self.vessel_delta_v;
         let vessel_current_stage = self.vessel_current_stage;
         let vessel_total_stages = self.vessel_total_stages;
+        let ship_acceleration = self.ship_acceleration;
+        let ship_below_landing_altitude = self.ship_below_landing_altitude;
         let ship_soi_surface_gravity = self.ship_soi_surface_gravity;
+        let ship_g_force = self.ship_g_force;
+        let ship_temperature = self.ship_temperature;
+        let ship_heat_fraction = self.ship_heat_fraction;
         let selected_flight_part = self.selected_flight_part;
         let flight_parts_cache = self.flight_parts_cache.clone();
         let ap_markers = self.ap_markers.clone();
@@ -477,13 +502,16 @@ impl RenderState {
                         };
 
                         let is_selected = i == current_warp_index;
-                        // Block selecting warp > 100x while thrusting (max physics warp)
-                        let blocked_throttle = ship_throttle > 0.0 && warp > 100.0;
+                        // Block selecting warp > max physics warp while actually producing thrust
+                        let actually_thrusting = ship_throttle > 0.0 && ship_acceleration > 0.0;
+                        let blocked_throttle = actually_thrusting && warp > RAILS_WARP_THRESHOLD;
                         // Block warps that would reach SOI boundary in < 0.5 seconds
                         let blocked_intercept = ship_time_to_intercept
                             .map(|t| t / warp < 0.5)
                             .unwrap_or(false);
-                        let blocked = blocked_throttle || blocked_intercept;
+                        // Block on-rails warp when below landing altitude
+                        let blocked_landing = ship_below_landing_altitude && warp > RAILS_WARP_THRESHOLD;
+                        let blocked = blocked_throttle || blocked_intercept || blocked_landing;
                         let button = ui.add_enabled(!blocked, egui::SelectableLabel::new(is_selected, &label));
                         if button.clicked() && !blocked {
                             new_warp_index = i;
@@ -665,6 +693,19 @@ impl RenderState {
                                 }
                             }
                         }
+
+                        // G-force display
+                        {
+                            let g_color = if ship_g_force < 3.0 {
+                                egui::Color32::WHITE
+                            } else if ship_g_force < 6.0 {
+                                egui::Color32::from_rgb(220, 200, 80)
+                            } else {
+                                egui::Color32::from_rgb(220, 80, 80)
+                            };
+                            ui.label(egui::RichText::new("G").size(11.0).color(egui::Color32::GRAY));
+                            ui.label(egui::RichText::new(format!("{:.1}", ship_g_force)).size(11.0).color(g_color));
+                        }
                         if let Some(dv) = vessel_delta_v {
                             ui.label(egui::RichText::new("Δv").size(11.0).color(egui::Color32::GRAY));
                             let dv_str = if dv >= 1000.0 {
@@ -683,6 +724,20 @@ impl RenderState {
                         ui.add_space(20.0);
                         ui.label(egui::RichText::new("ALT").size(11.0).color(egui::Color32::GRAY));
                         ui.label(egui::RichText::new(&alt_str).size(13.0).strong().color(egui::Color32::WHITE));
+
+                        // Temperature readout (shown when heating)
+                        if ship_heat_fraction > 0.01 {
+                            ui.add_space(20.0);
+                            let temp_color = if ship_heat_fraction < 0.33 {
+                                egui::Color32::from_rgb(220, 200, 80)
+                            } else if ship_heat_fraction < 0.66 {
+                                egui::Color32::from_rgb(220, 140, 40)
+                            } else {
+                                egui::Color32::from_rgb(220, 60, 60)
+                            };
+                            ui.label(egui::RichText::new(format!("{}K", ship_temperature as i32))
+                                .size(13.0).strong().color(temp_color));
+                        }
                     });
                 });
 
@@ -781,6 +836,43 @@ impl RenderState {
                         fuel_painter.rect_stroke(fuel_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
                     }
 
+                    // Heat bar (shown when temperature > 350K)
+                    if ship_temperature > 350.0 {
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new("HEAT").size(10.0).color(egui::Color32::GRAY));
+                        ui.add_space(3.0);
+
+                        ui.label(egui::RichText::new(format!("{}K", ship_temperature as i32))
+                            .size(11.0)
+                            .color(egui::Color32::WHITE));
+                        ui.add_space(3.0);
+
+                        let heat_bar_height = 80.0;
+                        let bar_width = 20.0;
+                        let (heat_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(bar_width, heat_bar_height),
+                            egui::Sense::hover()
+                        );
+
+                        let heat_painter = ui.painter();
+                        heat_painter.rect_filled(heat_rect, 2.0, egui::Color32::from_rgb(40, 40, 50));
+
+                        let heat_fill = heat_bar_height * ship_heat_fraction;
+                        let heat_fill_rect = egui::Rect::from_min_size(
+                            egui::pos2(heat_rect.min.x, heat_rect.max.y - heat_fill),
+                            egui::vec2(bar_width, heat_fill)
+                        );
+                        let heat_color = if ship_heat_fraction < 0.33 {
+                            egui::Color32::from_rgb(220, 200, 80)  // yellow
+                        } else if ship_heat_fraction < 0.66 {
+                            egui::Color32::from_rgb(220, 140, 40)  // orange
+                        } else {
+                            egui::Color32::from_rgb(220, 60, 60)   // red
+                        };
+                        heat_painter.rect_filled(heat_fill_rect, 2.0, heat_color);
+                        heat_painter.rect_stroke(heat_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+                    }
+
                     // Stage indicator
                     if let (Some(current), Some(total)) = (vessel_current_stage, vessel_total_stages) {
                         if total > 0 {
@@ -805,8 +897,14 @@ impl RenderState {
 
                         // Convert world to screen coordinates (in pixels)
                         // Calculate relative position in f64, then convert to f32 for screen
-                        let view_x = ((body.x - camera_pos[0]) as f32) * camera_zoom;
-                        let view_y = ((body.y - camera_pos[1]) as f32) * camera_zoom;
+                        let rel_x = (body.x - camera_pos[0]) as f32;
+                        let rel_y = (body.y - camera_pos[1]) as f32;
+                        let cos_r = camera_rotation.cos();
+                        let sin_r = camera_rotation.sin();
+                        let rot_x = rel_x * cos_r - rel_y * sin_r;
+                        let rot_y = rel_x * sin_r + rel_y * cos_r;
+                        let view_x = rot_x * camera_zoom;
+                        let view_y = rot_y * camera_zoom;
                         let ndc_x = view_x / aspect_ratio;
                         let ndc_y = view_y;
                         let screen_x_px = (ndc_x + 1.0) * 0.5 * size.width as f32;
@@ -838,8 +936,14 @@ impl RenderState {
 
             // Helper to convert world position to screen position
             let world_to_screen = |world_rel: [f64; 2]| -> (f32, f32) {
-                let view_x = (world_rel[0] as f32) * camera_zoom;
-                let view_y = (world_rel[1] as f32) * camera_zoom;
+                let rx = world_rel[0] as f32;
+                let ry = world_rel[1] as f32;
+                let cos_r = camera_rotation.cos();
+                let sin_r = camera_rotation.sin();
+                let rot_x = rx * cos_r - ry * sin_r;
+                let rot_y = rx * sin_r + ry * cos_r;
+                let view_x = rot_x * camera_zoom;
+                let view_y = rot_y * camera_zoom;
                 let ndc_x = view_x / aspect_ratio;
                 let ndc_y = view_y;
                 let screen_x_px = (ndc_x + 1.0) * 0.5 * size.width as f32;
@@ -1406,8 +1510,14 @@ impl RenderState {
         let scale_factor = self.window.scale_factor() as f32;
         for node in &self.maneuver_nodes {
             if let Some(world_pos) = self.maneuver_node_world_position(node) {
-                let view_x = ((world_pos[0] - self.camera.position[0]) as f32) * self.camera.zoom;
-                let view_y = ((world_pos[1] - self.camera.position[1]) as f32) * self.camera.zoom;
+                let rel_x = (world_pos[0] - self.camera.position[0]) as f32;
+                let rel_y = (world_pos[1] - self.camera.position[1]) as f32;
+                let cos_r = self.camera.rotation.cos();
+                let sin_r = self.camera.rotation.sin();
+                let rot_x = rel_x * cos_r - rel_y * sin_r;
+                let rot_y = rel_x * sin_r + rel_y * cos_r;
+                let view_x = rot_x * self.camera.zoom;
+                let view_y = rot_y * self.camera.zoom;
                 let ndc_x = view_x / self.camera.aspect_ratio;
                 let ndc_y = view_y;
                 let scr_x = (ndc_x + 1.0) * 0.5 * self.size.width as f32 / scale_factor;
@@ -1634,6 +1744,11 @@ impl RenderState {
             self.vessel_stages = s.stages.clone().unwrap_or_default();
             self.vessel_stage_delta_vs = s.stage_delta_vs.clone().unwrap_or_default();
             self.ship_soi_surface_gravity = s.soi_surface_gravity;
+            self.ship_g_force = s.g_force;
+            self.ship_temperature = s.temperature;
+            self.ship_heat_fraction = s.heat_fraction;
+            self.ship_heat_flux = s.heat_flux;
+            self.ship_below_landing_altitude = s.below_landing_altitude;
             self.ship_render_x = s.x;
             self.ship_render_y = s.y;
             self.ship_render_rotation = s.rotation;
@@ -2568,9 +2683,27 @@ impl RenderState {
                                 // Rotate around origin by vessel rotation
                                 let rx = vx * cos_r - vy * sin_r;
                                 let ry = vx * sin_r + vy * cos_r;
+                                // Apply heat tinting to part color
+                                let color = if ship_data.heat_fraction > 0.01 {
+                                    let h = ship_data.heat_fraction;
+                                    let r = vert.color[0] + (1.0 - vert.color[0]) * h;
+                                    let g = if h < 0.5 {
+                                        vert.color[1] + (0.6 - vert.color[1]) * h * 2.0
+                                    } else {
+                                        0.6 + (1.0 - 0.6) * (h - 0.5) * 2.0
+                                    };
+                                    let b = if h < 0.5 {
+                                        vert.color[2] * (1.0 - h * 2.0)
+                                    } else {
+                                        (h - 0.5) * 2.0
+                                    };
+                                    [r, g, b, vert.color[3]]
+                                } else {
+                                    vert.color
+                                };
                                 all_vertices.push(Vertex {
                                     position: [part_center_x + rx, part_center_y + ry],
-                                    color: vert.color,
+                                    color,
                                 });
                             }
 
@@ -2630,6 +2763,9 @@ impl RenderState {
                     // Fallback: draw triangle when no parts available
                     let base_index = all_vertices.len() as u32;
 
+                    // Apply heat tinting to ship color
+                    let tri_color = apply_heat_tint(ship_data.color, ship_data.heat_fraction);
+
                     let nose_angle = rotation;
                     let back_left_angle = rotation + std::f32::consts::PI * 0.8;
                     let back_right_angle = rotation - std::f32::consts::PI * 0.8;
@@ -2639,21 +2775,21 @@ impl RenderState {
                             rel_x + size * nose_angle.cos(),
                             rel_y + size * nose_angle.sin(),
                         ],
-                        color: ship_data.color,
+                        color: tri_color,
                     });
                     all_vertices.push(Vertex {
                         position: [
                             rel_x + size * 0.6 * back_left_angle.cos(),
                             rel_y + size * 0.6 * back_left_angle.sin(),
                         ],
-                        color: ship_data.color,
+                        color: tri_color,
                     });
                     all_vertices.push(Vertex {
                         position: [
                             rel_x + size * 0.6 * back_right_angle.cos(),
                             rel_y + size * 0.6 * back_right_angle.sin(),
                         ],
-                        color: ship_data.color,
+                        color: tri_color,
                     });
 
                     all_indices.push(base_index);
@@ -2675,13 +2811,16 @@ impl RenderState {
                 let back_left_angle = rotation + std::f32::consts::PI * 0.8;
                 let back_right_angle = rotation - std::f32::consts::PI * 0.8;
 
+                // Apply heat tinting to indicator color
+                let indicator_color = apply_heat_tint(ship_data.color, ship_data.heat_fraction);
+
                 // Outer triangle (indicator)
                 all_vertices.push(Vertex {
                     position: [
                         rel_x + indicator_size * nose_angle.cos(),
                         rel_y + indicator_size * nose_angle.sin(),
                     ],
-                    color: ship_data.color,
+                    color: indicator_color,
                 });
 
                 all_vertices.push(Vertex {
@@ -2689,7 +2828,7 @@ impl RenderState {
                         rel_x + indicator_size * 0.6 * back_left_angle.cos(),
                         rel_y + indicator_size * 0.6 * back_left_angle.sin(),
                     ],
-                    color: ship_data.color,
+                    color: indicator_color,
                 });
 
                 all_vertices.push(Vertex {
@@ -2697,16 +2836,16 @@ impl RenderState {
                         rel_x + indicator_size * 0.6 * back_right_angle.cos(),
                         rel_y + indicator_size * 0.6 * back_right_angle.sin(),
                     ],
-                    color: ship_data.color,
+                    color: indicator_color,
                 });
 
                 // Inner triangle (darker, for outline effect)
                 let inner_size = indicator_size * 0.6;
                 let inner_color = [
-                    ship_data.color[0] * 0.3,
-                    ship_data.color[1] * 0.3,
-                    ship_data.color[2] * 0.3,
-                    ship_data.color[3],
+                    indicator_color[0] * 0.3,
+                    indicator_color[1] * 0.3,
+                    indicator_color[2] * 0.3,
+                    indicator_color[3],
                 ];
 
                 all_vertices.push(Vertex {
@@ -2763,14 +2902,17 @@ impl RenderState {
         let cam_y = self.camera.position[1];
         let pixels_per_world_unit = self.camera.zoom * self.size.height as f32 / 2.0;
 
-        let outer_color: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
-
+        // Atmosphere uses alpha channel to encode t (0=surface, 1=edge).
+        // Fragment shader applies exp(-8*t) for non-linear falloff.
         for &(bx, by, radius, _, atmo_height, atmo_color) in bodies {
             if atmo_height <= 0.0 {
                 continue;
             }
 
-            let inner_color: [f32; 4] = [atmo_color[0], atmo_color[1], atmo_color[2], 1.0];
+            // Negative alpha flags atmosphere for the shader's exp(-8*t) falloff.
+            // Inner (surface): alpha = -1.0 (t=0), Outer (edge): alpha = -2.0 (t=1)
+            let inner_color: [f32; 4] = [atmo_color[0], atmo_color[1], atmo_color[2], -1.0];
+            let outer_color: [f32; 4] = [atmo_color[0], atmo_color[1], atmo_color[2], -2.0];
 
             let cx = bx * scale;
             let cy = by * scale;
@@ -3706,4 +3848,25 @@ impl RenderState {
     pub fn egui_context(&self) -> &egui::Context {
         &self.egui_ctx
     }
+}
+
+/// Apply heat tinting to a color based on heat_fraction (0-1).
+/// Transitions from original -> orange -> white.
+fn apply_heat_tint(color: [f32; 4], heat_fraction: f32) -> [f32; 4] {
+    if heat_fraction <= 0.01 {
+        return color;
+    }
+    let h = heat_fraction;
+    let r = color[0] + (1.0 - color[0]) * h;
+    let g = if h < 0.5 {
+        color[1] + (0.6 - color[1]) * h * 2.0
+    } else {
+        0.6 + (1.0 - 0.6) * (h - 0.5) * 2.0
+    };
+    let b = if h < 0.5 {
+        color[2] * (1.0 - h * 2.0)
+    } else {
+        (h - 0.5) * 2.0
+    };
+    [r, g, b, color[3]]
 }

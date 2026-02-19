@@ -34,6 +34,10 @@ The ghost SHALL render in green (`[0.3, 0.9, 0.3, 0.4]`) when placement is valid
 
 The ghost SHALL be marked invalid when its hitbox AABB overlaps any existing part's hitbox AABB. Touching edges (exact boundary contact) SHALL NOT count as overlap.
 
+### Requirement: Weld adjacency check
+
+The ghost SHALL be marked invalid unless its welding hitbox (build hitbox * 1.05) overlaps at least one existing part's welding hitbox. This check is skipped when placing the first part (no existing parts). Decouplers SHALL have an extended upward reach of 10 grid squares (5.0m) for the weld adjacency check, allowing them to be placed up to 10 squares below the part they attach to.
+
 ### Requirement: Mirror ghost preview
 
 When symmetry mode is Mirror and a palette part is selected, the editor SHALL display two ghost previews: the primary ghost at the cursor position (grid-snapped) and a mirrored ghost reflected across the center line. The mirrored ghost X position SHALL be `center_line_x * 2 - primary_x`. The mirrored ghost Y position SHALL equal the primary ghost Y position.
@@ -50,7 +54,7 @@ When symmetry mode is Mirror and a palette part is selected, the editor SHALL di
 
 ### Requirement: Mirror ghost validity
 
-Both mirror ghosts SHALL share the same validity state. The ghost pair SHALL be valid only when NEITHER ghost overlaps any existing part. Both ghosts SHALL render in green when valid and red when invalid.
+Both mirror ghosts SHALL share the same validity state. The ghost pair SHALL be valid only when NEITHER ghost overlaps any existing part AND both ghosts are weld-connected (the mirror ghost must touch at least one existing part or the primary ghost via welding hitbox overlap). Both ghosts SHALL render in green when valid and red when invalid.
 
 #### Scenario: One ghost overlaps
 
@@ -134,7 +138,7 @@ For tanks selected in the palette, the info panel SHALL display: dry mass, grid 
 
 ### Requirement: Tank info for placed parts
 
-For placed tanks, the info panel SHALL additionally display: fuel type selector buttons, fill/empty toggle, progress bars for oxidizer and fuel amounts, and dry/propellant/total mass breakdown.
+For placed tanks, the info panel SHALL additionally display: fuel type selector buttons, fill/empty toggle, progress bars for oxidizer and fuel amounts, and dry/propellant/total mass breakdown. Selecting a non-Empty fuel type SHALL automatically set `tank_filled` to true. Selecting Empty SHALL set `tank_filled` to false.
 
 ### Requirement: Pod info
 
@@ -163,6 +167,10 @@ The info panel for placed parts SHALL include a "Delete Part" button. If the par
 - **THEN** both the selected part and its mirror partner SHALL be deleted
 
 ## Dragging
+
+### Requirement: Drag offset
+
+When a drag begins, the offset between the part center and the mouse cursor SHALL be recorded. During the drag, this offset SHALL be applied so the part does not jump to the cursor position.
 
 ### Requirement: Drag grid snapping
 
