@@ -76,6 +76,8 @@ pub struct BlueprintPart {
     pub tank_filled: bool,
     #[serde(default)]
     pub crossfeed_enabled: bool,
+    #[serde(default)]
+    pub mirror_partner_index: Option<usize>,
 }
 
 /// How a part is attached to its parent
@@ -102,6 +104,8 @@ pub struct PlacedPart {
     pub tank_filled: bool,    // Whether the tank is filled with the selected fuel
     // Decoupler-specific state
     pub crossfeed_enabled: bool, // Whether fuel can flow through this decoupler
+    // Mirror symmetry link
+    pub mirror_partner: Option<PlacedPartId>,
 }
 
 impl PlacedPart {
@@ -122,6 +126,7 @@ impl PlacedPart {
             fuel_type: FuelType::Empty,
             tank_filled: false,
             crossfeed_enabled: false,
+            mirror_partner: None,
         }
     }
 
@@ -137,44 +142,28 @@ impl PlacedPart {
 pub enum SymmetryMode {
     #[default]
     Off,
-    Radial2,
-    Radial3,
-    Radial4,
-    Radial6,
-    Radial8,
+    Mirror,
 }
 
 impl SymmetryMode {
     pub fn count(&self) -> usize {
         match self {
             SymmetryMode::Off => 1,
-            SymmetryMode::Radial2 => 2,
-            SymmetryMode::Radial3 => 3,
-            SymmetryMode::Radial4 => 4,
-            SymmetryMode::Radial6 => 6,
-            SymmetryMode::Radial8 => 8,
+            SymmetryMode::Mirror => 2,
         }
     }
 
     pub fn cycle_next(&self) -> SymmetryMode {
         match self {
-            SymmetryMode::Off => SymmetryMode::Radial2,
-            SymmetryMode::Radial2 => SymmetryMode::Radial3,
-            SymmetryMode::Radial3 => SymmetryMode::Radial4,
-            SymmetryMode::Radial4 => SymmetryMode::Radial6,
-            SymmetryMode::Radial6 => SymmetryMode::Radial8,
-            SymmetryMode::Radial8 => SymmetryMode::Off,
+            SymmetryMode::Off => SymmetryMode::Mirror,
+            SymmetryMode::Mirror => SymmetryMode::Off,
         }
     }
 
     pub fn display(&self) -> &'static str {
         match self {
             SymmetryMode::Off => "Off",
-            SymmetryMode::Radial2 => "x2",
-            SymmetryMode::Radial3 => "x3",
-            SymmetryMode::Radial4 => "x4",
-            SymmetryMode::Radial6 => "x6",
-            SymmetryMode::Radial8 => "x8",
+            SymmetryMode::Mirror => "Mirror",
         }
     }
 }
@@ -203,6 +192,8 @@ pub fn parts_to_blueprint(
     for (_id, part) in parts.iter() {
         let parent_index = part.parent_id.and_then(|pid| id_to_index.get(&pid).copied());
 
+        let mirror_partner_index = part.mirror_partner.and_then(|pid| id_to_index.get(&pid).copied());
+
         blueprint_parts.push(BlueprintPart {
             definition_id: part.definition_id.clone(),
             position: part.position,
@@ -213,6 +204,7 @@ pub fn parts_to_blueprint(
             fuel_type: part.fuel_type,
             tank_filled: part.tank_filled,
             crossfeed_enabled: part.crossfeed_enabled,
+            mirror_partner_index,
         });
     }
 
@@ -257,7 +249,7 @@ pub fn blueprint_to_parts(
         parts.insert(id, part);
     }
 
-    // Second pass: link parents and children
+    // Second pass: link parents, children, and mirror partners
     for (idx, bp_part) in blueprint.parts.iter().enumerate() {
         let id = index_to_id[&idx];
 
@@ -269,6 +261,14 @@ pub fn blueprint_to_parts(
             }
             if let Some(parent) = parts.get_mut(&parent_id) {
                 parent.children.push(id);
+            }
+        }
+
+        if let Some(mirror_idx) = bp_part.mirror_partner_index {
+            if let Some(&mirror_id) = index_to_id.get(&mirror_idx) {
+                if let Some(part) = parts.get_mut(&id) {
+                    part.mirror_partner = Some(mirror_id);
+                }
             }
         }
     }

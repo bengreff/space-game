@@ -139,9 +139,12 @@ pub fn generate_part_vertices(
             continue;
         };
 
-        let is_selected = editor.selected_placed_part == Some(*id);
-        let is_hovered = editor.hovered_part == Some(*id);
-        let is_dragging = editor.dragging_part == Some(*id);
+        let is_selected = editor.selected_placed_part == Some(*id)
+            || editor.selected_placed_part.and_then(|sel| editor.parts.get(&sel)?.mirror_partner) == Some(*id);
+        let is_hovered = editor.hovered_part == Some(*id)
+            || editor.hovered_part.and_then(|hov| editor.parts.get(&hov)?.mirror_partner) == Some(*id);
+        let is_dragging = editor.dragging_part == Some(*id)
+            || editor.dragging_part.and_then(|d| editor.parts.get(&d)?.mirror_partner) == Some(*id);
         let drag_invalid = is_dragging && !editor.drag_valid;
 
         let color = if is_selected {
@@ -314,42 +317,28 @@ pub fn generate_part_vertices(
     vertices
 }
 
-/// Generate vertices for the ghost preview
-/// Note: Vertices are output in CAMERA-RELATIVE coordinates
-pub fn generate_ghost_vertices(
+/// Generate ghost vertices for a single ghost at the given world position
+fn generate_single_ghost_vertices(
+    vertices: &mut Vec<Vertex>,
+    def: &PartDefinition,
+    position: [f64; 2],
+    ghost_valid: bool,
     editor: &EditorState,
     part_defs: &PartDefinitions,
-) -> Vec<Vertex> {
-    let mut vertices = Vec::new();
-
-    let Some(ref def_id) = editor.selected_part_def else {
-        return vertices;
-    };
-
-    let Some(position) = editor.ghost_position else {
-        return vertices;
-    };
-
-    let Some(def) = part_defs.get(def_id) else {
-        return vertices;
-    };
-
+) {
     let ghost_alpha = 0.5;
 
     let half_w = (def.width() / 2.0) as f32;
     let half_h = (def.height() / 2.0) as f32;
-    // Convert to camera-relative coordinates
     let cam_x = editor.camera_offset[0] as f32;
     let cam_y = editor.camera_offset[1] as f32;
     let x = position[0] as f32 - cam_x;
     let y = position[1] as f32 - cam_y;
 
-    // For engines, use dedicated engine rendering with ghost overlay
     if def.category == PartCategory::Propulsion && def.engine.is_some() {
-        generate_engine_details(&mut vertices, def, x, y, ghost_alpha);
+        generate_engine_details(vertices, def, x, y, ghost_alpha);
 
-        // Draw validity overlay
-        let overlay_color = if editor.ghost_valid {
+        let overlay_color = if ghost_valid {
             [0.3, 0.9, 0.3, 0.25]
         } else {
             [0.9, 0.3, 0.3, 0.25]
@@ -361,16 +350,13 @@ pub fn generate_ghost_vertices(
         vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay_color });
         vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: overlay_color });
         vertices.push(Vertex { position: [x - half_top_w, y + half_h], color: overlay_color });
-
-        return vertices;
+        return;
     }
 
-    // For pods, use dedicated pod rendering with ghost overlay
     if def.category == PartCategory::Pods {
-        generate_pod_details(&mut vertices, def, x, y, ghost_alpha);
+        generate_pod_details(vertices, def, x, y, ghost_alpha);
 
-        // Draw validity overlay
-        let overlay_color = if editor.ghost_valid {
+        let overlay_color = if ghost_valid {
             [0.3, 0.9, 0.3, 0.25]
         } else {
             [0.9, 0.3, 0.3, 0.25]
@@ -382,23 +368,17 @@ pub fn generate_ghost_vertices(
         vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay_color });
         vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: overlay_color });
         vertices.push(Vertex { position: [x - half_top_w, y + half_h], color: overlay_color });
-
-        return vertices;
+        return;
     }
 
-    // For decouplers, use dedicated decoupler rendering with ghost overlay
     if def.decoupler.is_some() {
-        generate_decoupler_details(&mut vertices, def, x, y, ghost_alpha);
+        generate_decoupler_details(vertices, def, x, y, ghost_alpha);
 
-        // Check for adapter against existing placed parts
-        // Use world position for adapter check (not camera-relative)
         let ghost_world_x = position[0] as f32;
         let ghost_world_y = position[1] as f32;
-        // Generate adapter at camera-relative coords but check against world positions
-        generate_decoupler_adapter(&mut vertices, def, x, y, ghost_world_x, ghost_world_y, &editor.parts, part_defs, ghost_alpha);
+        generate_decoupler_adapter(vertices, def, x, y, ghost_world_x, ghost_world_y, &editor.parts, part_defs, ghost_alpha);
 
-        // Draw validity overlay over full hitbox
-        let overlay_color = if editor.ghost_valid {
+        let overlay_color = if ghost_valid {
             [0.3, 0.9, 0.3, 0.25]
         } else {
             [0.9, 0.3, 0.3, 0.25]
@@ -410,12 +390,10 @@ pub fn generate_ghost_vertices(
         vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: overlay_color });
         vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: overlay_color });
         vertices.push(Vertex { position: [x - half_w, y + hitbox_half_h], color: overlay_color });
-
-        return vertices;
+        return;
     }
 
-    // Draw non-engine ghost based on shape
-    let color = if editor.ghost_valid {
+    let color = if ghost_valid {
         GHOST_VALID_COLOR
     } else {
         GHOST_INVALID_COLOR
@@ -447,6 +425,35 @@ pub fn generate_ghost_vertices(
             vertices.push(Vertex { position: [x + half_top_w, y + half_h], color });
             vertices.push(Vertex { position: [x - half_top_w, y + half_h], color });
         }
+    }
+}
+
+/// Generate vertices for the ghost preview (primary + mirror if applicable)
+/// Note: Vertices are output in CAMERA-RELATIVE coordinates
+pub fn generate_ghost_vertices(
+    editor: &EditorState,
+    part_defs: &PartDefinitions,
+) -> Vec<Vertex> {
+    let mut vertices = Vec::new();
+
+    let Some(ref def_id) = editor.selected_part_def else {
+        return vertices;
+    };
+
+    let Some(position) = editor.ghost_position else {
+        return vertices;
+    };
+
+    let Some(def) = part_defs.get(def_id) else {
+        return vertices;
+    };
+
+    // Render primary ghost
+    generate_single_ghost_vertices(&mut vertices, def, position, editor.ghost_valid, editor, part_defs);
+
+    // Render mirror ghost if applicable
+    if let Some(mirror_pos) = editor.mirror_ghost_position {
+        generate_single_ghost_vertices(&mut vertices, def, mirror_pos, editor.ghost_valid, editor, part_defs);
     }
 
     vertices

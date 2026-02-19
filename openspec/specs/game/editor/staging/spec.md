@@ -26,6 +26,20 @@ Stages SHALL be displayed in reverse index order: highest stage index at top, lo
 
 Each part in a stage SHALL display its `PartDefinition.name`. If the definition is not found, it SHALL display "Part {id}".
 
+### Requirement: Mirrored pair display
+
+When a part and its `mirror_partner` are both in the same stage, they SHALL be displayed as a single entry with " x2" appended to the part name. Drag-reordering a mirrored entry in staging SHALL move both parts together.
+
+#### Scenario: Mirrored pair shows as single entry
+
+- **WHEN** engine A and its mirror partner engine B are both in stage 0
+- **THEN** the staging panel SHALL show one entry: "Engine Name x2"
+
+#### Scenario: Only one partner in stage
+
+- **WHEN** engine A is in stage 0 but its mirror partner engine B is in stage 1
+- **THEN** each stage SHALL show its respective engine as a normal entry (no x2 badge)
+
 ### Requirement: Empty stage display
 
 Empty stages SHALL display "(empty)" in weak/gray style.

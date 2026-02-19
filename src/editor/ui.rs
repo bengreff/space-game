@@ -321,15 +321,36 @@ pub fn render_editor_ui(
                             ui.weak("(empty)");
                         }
 
+                        // Track which partner IDs have been rendered to avoid duplicates
+                        let mut rendered_partners: Vec<PlacedPartId> = Vec::new();
+
                         for &part_id in &editor.stages[stage_idx] {
-                            let name = editor.parts.get(&part_id)
+                            // Skip if this part was already rendered as part of a mirrored pair
+                            if rendered_partners.contains(&part_id) {
+                                continue;
+                            }
+
+                            let part = editor.parts.get(&part_id);
+                            let name = part
                                 .and_then(|p| part_defs.get(&p.definition_id))
                                 .map(|d| d.name.clone())
                                 .unwrap_or_else(|| format!("Part {}", part_id));
 
+                            // Check if this part has a mirror partner in the same stage
+                            let mirror_in_same_stage = part
+                                .and_then(|p| p.mirror_partner)
+                                .filter(|mid| editor.stages[stage_idx].contains(mid));
+
+                            let display_name = if let Some(mid) = mirror_in_same_stage {
+                                rendered_partners.push(mid);
+                                format!("{} x2", name)
+                            } else {
+                                name
+                            };
+
                             let item_id = egui::Id::new(("staging_item", part_id));
                             ui.dnd_drag_source(item_id, StagingDrag::Part(part_id), |ui| {
-                                ui.label(&name);
+                                ui.label(&display_name);
                             });
                         }
                     });
@@ -361,11 +382,16 @@ pub fn render_editor_ui(
                 } else if let Some((drag, target_idx)) = drop_action {
                     match drag {
                         StagingDrag::Part(part_id) => {
+                            // Also move mirror partner if linked
+                            let mirror_id = editor.parts.get(&part_id).and_then(|p| p.mirror_partner);
                             for stage in &mut editor.stages {
-                                stage.retain(|&id| id != part_id);
+                                stage.retain(|&id| id != part_id && Some(id) != mirror_id);
                             }
                             if target_idx < editor.stages.len() {
                                 editor.stages[target_idx].push(part_id);
+                                if let Some(mid) = mirror_id {
+                                    editor.stages[target_idx].push(mid);
+                                }
                             }
                         }
                         StagingDrag::Stage(from_idx) => {
@@ -536,6 +562,8 @@ pub fn render_editor_ui(
                                 ui.separator();
                                 ui.label("Fuel Type:");
 
+                                let mirror_id = part.mirror_partner;
+
                                 // Fuel type selector buttons
                                 ui.horizontal_wrapped(|ui| {
                                     for fuel_type in FuelType::all() {
@@ -543,9 +571,17 @@ pub fn render_editor_ui(
                                         if ui.selectable_label(selected, fuel_type.display_name()).clicked() {
                                             if let Some(p) = editor.parts.get_mut(&part_id) {
                                                 p.fuel_type = *fuel_type;
-                                                // Empty tanks when switching type
                                                 if *fuel_type == FuelType::Empty {
                                                     p.tank_filled = false;
+                                                }
+                                            }
+                                            // Apply to mirror partner
+                                            if let Some(mid) = mirror_id {
+                                                if let Some(mp) = editor.parts.get_mut(&mid) {
+                                                    mp.fuel_type = *fuel_type;
+                                                    if *fuel_type == FuelType::Empty {
+                                                        mp.tank_filled = false;
+                                                    }
                                                 }
                                             }
                                         }
@@ -578,6 +614,11 @@ pub fn render_editor_ui(
                                             if let Some(p) = editor.parts.get_mut(&part_id) {
                                                 p.tank_filled = false;
                                             }
+                                            if let Some(mid) = mirror_id {
+                                                if let Some(mp) = editor.parts.get_mut(&mid) {
+                                                    mp.tank_filled = false;
+                                                }
+                                            }
                                         }
                                     } else {
                                         // Empty bars showing capacity
@@ -596,6 +637,11 @@ pub fn render_editor_ui(
                                         if ui.button("Fill Tank").clicked() {
                                             if let Some(p) = editor.parts.get_mut(&part_id) {
                                                 p.tank_filled = true;
+                                            }
+                                            if let Some(mid) = mirror_id {
+                                                if let Some(mp) = editor.parts.get_mut(&mid) {
+                                                    mp.tank_filled = true;
+                                                }
                                             }
                                         }
                                     }
@@ -632,12 +678,22 @@ pub fn render_editor_ui(
                                     if let Some(p) = editor.parts.get_mut(&part_id) {
                                         p.crossfeed_enabled = crossfeed;
                                     }
+                                    if let Some(mid) = part.mirror_partner {
+                                        if let Some(mp) = editor.parts.get_mut(&mid) {
+                                            mp.crossfeed_enabled = crossfeed;
+                                        }
+                                    }
                                 }
                             }
 
                             ui.separator();
 
-                            if ui.button("Delete Part").clicked() {
+                            let delete_label = if part.mirror_partner.is_some() {
+                                "Delete Parts (x2)"
+                            } else {
+                                "Delete Part"
+                            };
+                            if ui.button(delete_label).clicked() {
                                 editor.part_to_delete = Some(part_id);
                             }
                         }

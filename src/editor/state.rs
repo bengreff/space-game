@@ -74,6 +74,7 @@ pub struct EditorState {
     pub selected_placed_part: Option<PlacedPartId>,
     pub ghost_position: Option<[f64; 2]>,
     pub ghost_valid: bool,
+    pub mirror_ghost_position: Option<[f64; 2]>,
 
     // Camera (zoom is pixels per meter)
     pub camera_offset: [f64; 2],
@@ -100,6 +101,7 @@ pub struct EditorState {
     // Dragging state
     pub dragging_part: Option<PlacedPartId>,
     pub drag_start_pos: Option<[f64; 2]>,  // Original position before drag
+    pub drag_partner_start_pos: Option<[f64; 2]>,  // Mirror partner's original position
     pub drag_valid: bool,                   // Whether current drag position is valid
 
     // Stats display settings
@@ -125,6 +127,7 @@ impl EditorState {
             selected_placed_part: None,
             ghost_position: None,
             ghost_valid: false,
+            mirror_ghost_position: None,
             camera_offset: [GRID_SIZE / 2.0, GRID_SIZE / 2.0],  // Center on middle of a square
             camera_zoom: 1.0,  // Start zoomed out to see workspace
             keys_held: CameraKeys::default(),
@@ -139,6 +142,7 @@ impl EditorState {
             part_to_delete: None,
             dragging_part: None,
             drag_start_pos: None,
+            drag_partner_start_pos: None,
             drag_valid: true,
             twr_settings: TwrSettings::default(),
         }
@@ -172,6 +176,7 @@ impl EditorState {
         self.selected_placed_part = None;
         self.ghost_position = None;
         self.ghost_valid = false;
+        self.mirror_ghost_position = None;
         self.stages.clear();
         self.staging_selected_engine = None;
         self.vessel_name = "Untitled Vessel".to_string();
@@ -222,17 +227,26 @@ impl EditorState {
         ))
     }
 
+    /// Get the center line X coordinate (root part's X position)
+    pub fn center_line_x(&self) -> Option<f64> {
+        self.root_part
+            .and_then(|id| self.parts.get(&id))
+            .map(|part| part.position[0])
+    }
+
     /// Update ghost position based on mouse world coordinates
     pub fn update_ghost(&mut self, world_x: f64, world_y: f64, part_defs: &PartDefinitions) {
         let Some(ref def_id) = self.selected_part_def else {
             self.ghost_position = None;
             self.ghost_valid = false;
+            self.mirror_ghost_position = None;
             return;
         };
 
         let Some(def) = part_defs.get(def_id) else {
             self.ghost_position = None;
             self.ghost_valid = false;
+            self.mirror_ghost_position = None;
             return;
         };
 
@@ -270,7 +284,33 @@ impl EditorState {
             }
         }
 
-        // Valid if no overlap with existing parts
+        // Compute mirror ghost if in Mirror mode with a center line
+        self.mirror_ghost_position = None;
+        if self.symmetry_mode == SymmetryMode::Mirror {
+            if let Some(center_x) = self.center_line_x() {
+                let mirror_x = center_x * 2.0 - snapped_x;
+                // Only mirror if ghost is not on the center line
+                if (snapped_x - center_x).abs() > GRID_SIZE * 0.1 {
+                    self.mirror_ghost_position = Some([mirror_x, snapped_y]);
+
+                    // Check mirror ghost overlap too
+                    if !overlaps {
+                        let mirror_bounds = Self::calc_bounds([mirror_x, snapped_y], def.hitbox_width(), def.hitbox_height());
+                        for (_, part) in &self.parts {
+                            if let Some(existing_def) = part_defs.get(&part.definition_id) {
+                                let existing_bounds = Self::calc_bounds(part.position, existing_def.hitbox_width(), existing_def.hitbox_height());
+                                if Self::bounds_overlap(&mirror_bounds, &existing_bounds) {
+                                    overlaps = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Valid if no overlap with existing parts (both primary and mirror)
         self.ghost_valid = !overlaps;
     }
 
@@ -308,48 +348,80 @@ impl EditorState {
         let def = part_defs.get(def_id);
         let is_engine = def.map(|d| d.engine.is_some()).unwrap_or(false);
         let is_decoupler = def.map(|d| d.decoupler.is_some()).unwrap_or(false);
+        let needs_staging = is_engine || is_decoupler;
 
-        let part = PlacedPart::new(id, def_id.clone(), position);
+        let mut part = PlacedPart::new(id, def_id.clone(), position);
 
         // First part becomes root
         if self.root_part.is_none() {
             self.root_part = Some(id);
         }
 
-        self.parts.insert(id, part);
+        // Mirror placement: place two linked parts if mirror ghost exists
+        if let Some(mirror_pos) = self.mirror_ghost_position {
+            let mirror_id = self.next_part_id;
+            self.next_part_id += 1;
 
-        // Auto-add engines to stage 1
-        if is_engine {
-            if self.stages.is_empty() {
-                self.stages.push(Vec::new());
-            }
-            self.stages[0].push(id);
-        }
+            // Link the two parts
+            part.mirror_partner = Some(mirror_id);
+            let mut mirror_part = PlacedPart::new(mirror_id, def_id.clone(), mirror_pos);
+            mirror_part.mirror_partner = Some(id);
 
-        // Auto-add decouplers to stage 1
-        if is_decoupler {
-            if self.stages.is_empty() {
-                self.stages.push(Vec::new());
+            self.parts.insert(id, part);
+            self.parts.insert(mirror_id, mirror_part);
+
+            if needs_staging {
+                if self.stages.is_empty() {
+                    self.stages.push(Vec::new());
+                }
+                self.stages[0].push(id);
+                self.stages[0].push(mirror_id);
             }
-            self.stages[0].push(id);
+        } else {
+            // Single placement (Off mode, or on center line in Mirror mode)
+            self.parts.insert(id, part);
+
+            if needs_staging {
+                if self.stages.is_empty() {
+                    self.stages.push(Vec::new());
+                }
+                self.stages[0].push(id);
+            }
         }
 
         true
     }
 
-    /// Delete a part
+    /// Delete a part (and its mirror partner if linked)
     pub fn delete_part(&mut self, part_id: PlacedPartId) {
+        // Check for mirror partner before removing
+        let mirror_id = self.parts.get(&part_id).and_then(|p| p.mirror_partner);
+
         self.parts.remove(&part_id);
 
+        // Also remove mirror partner
+        if let Some(mid) = mirror_id {
+            self.parts.remove(&mid);
+
+            // Clear staging selection if it was the partner
+            if self.staging_selected_engine == Some(mid) {
+                self.staging_selected_engine = None;
+            }
+            // Clear selection if partner was selected
+            if self.selected_placed_part == Some(mid) {
+                self.selected_placed_part = None;
+            }
+        }
+
         // Update root if deleted
-        if self.root_part == Some(part_id) {
+        if self.root_part == Some(part_id) || self.root_part == mirror_id {
             // Set new root to any remaining part
             self.root_part = self.parts.keys().next().copied();
         }
 
-        // Remove from stages and clean up empty stages
+        // Remove both from stages and clean up empty stages
         for stage in &mut self.stages {
-            stage.retain(|&sid| sid != part_id);
+            stage.retain(|&sid| sid != part_id && Some(sid) != mirror_id);
         }
         self.stages.retain(|s| !s.is_empty());
 
@@ -394,6 +466,7 @@ impl EditorState {
         self.selected_placed_part = None;
         self.ghost_position = None;
         self.ghost_valid = false;
+        self.mirror_ghost_position = None;
     }
 
     /// Select a placed part
@@ -402,7 +475,7 @@ impl EditorState {
         self.selected_part_def = None;
     }
 
-    /// Start dragging a placed part
+    /// Start dragging a placed part (and its mirror partner if linked)
     pub fn start_drag(&mut self, part_id: PlacedPartId) {
         if let Some(part) = self.parts.get(&part_id) {
             self.dragging_part = Some(part_id);
@@ -410,10 +483,15 @@ impl EditorState {
             self.drag_valid = true;
             self.selected_placed_part = Some(part_id);
             self.selected_part_def = None;
+
+            // Save mirror partner's position if linked
+            self.drag_partner_start_pos = part.mirror_partner
+                .and_then(|mid| self.parts.get(&mid))
+                .map(|p| p.position);
         }
     }
 
-    /// Update the position of the part being dragged
+    /// Update the position of the part being dragged (and mirror partner if linked)
     pub fn update_drag(&mut self, world_x: f64, world_y: f64, part_defs: &PartDefinitions) {
         let Some(part_id) = self.dragging_part else {
             return;
@@ -427,6 +505,8 @@ impl EditorState {
         let Some(def) = part_defs.get(&part.definition_id) else {
             return;
         };
+
+        let mirror_id = part.mirror_partner;
 
         // Snap based on HITBOX dimensions
         let snapped_x = if def.hitbox_grid_width() % 2 == 1 {
@@ -446,14 +526,49 @@ impl EditorState {
 
         let mut overlaps = false;
         for (&other_id, other_part) in &self.parts {
-            if other_id == part_id {
-                continue; // Skip the part being dragged
+            if other_id == part_id || Some(other_id) == mirror_id {
+                continue; // Skip the part being dragged and its mirror partner
             }
             if let Some(other_def) = part_defs.get(&other_part.definition_id) {
                 let other_bounds = Self::calc_bounds(other_part.position, other_def.hitbox_width(), other_def.hitbox_height());
                 if Self::bounds_overlap(&new_bounds, &other_bounds) {
                     overlaps = true;
                     break;
+                }
+            }
+        }
+
+        // Check mirror partner overlap if linked
+        if let Some(mid) = mirror_id {
+            if !overlaps {
+                if let Some(center_x) = self.center_line_x() {
+                    let mirror_x = center_x * 2.0 - snapped_x;
+                    let mirror_bounds = Self::calc_bounds([mirror_x, snapped_y], def.hitbox_width(), def.hitbox_height());
+
+                    // Also check primary vs mirror overlap
+                    if Self::bounds_overlap(&new_bounds, &mirror_bounds) {
+                        overlaps = true;
+                    }
+
+                    if !overlaps {
+                        for (&other_id, other_part) in &self.parts {
+                            if other_id == part_id || other_id == mid {
+                                continue;
+                            }
+                            if let Some(other_def) = part_defs.get(&other_part.definition_id) {
+                                let other_bounds = Self::calc_bounds(other_part.position, other_def.hitbox_width(), other_def.hitbox_height());
+                                if Self::bounds_overlap(&mirror_bounds, &other_bounds) {
+                                    overlaps = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // Update mirror partner position
+                    if let Some(mirror_part) = self.parts.get_mut(&mid) {
+                        mirror_part.position = [mirror_x, snapped_y];
+                    }
                 }
             }
         }
@@ -476,6 +591,8 @@ impl EditorState {
             return;
         };
 
+        let partner_start_pos = self.drag_partner_start_pos.take();
+
         // Check final validity
         let Some(part) = self.parts.get(&part_id) else {
             return;
@@ -485,12 +602,13 @@ impl EditorState {
             return;
         };
 
+        let mirror_id = part.mirror_partner;
         let current_pos = part.position;
         let bounds = Self::calc_bounds(current_pos, def.hitbox_width(), def.hitbox_height());
 
         let mut overlaps = false;
         for (&other_id, other_part) in &self.parts {
-            if other_id == part_id {
+            if other_id == part_id || Some(other_id) == mirror_id {
                 continue;
             }
             if let Some(other_def) = part_defs.get(&other_part.definition_id) {
@@ -502,10 +620,44 @@ impl EditorState {
             }
         }
 
-        // Revert to original position if invalid
+        // Check mirror partner overlap
+        if !overlaps {
+            if let Some(mid) = mirror_id {
+                if let Some(mirror_part) = self.parts.get(&mid) {
+                    let mirror_bounds = Self::calc_bounds(mirror_part.position, def.hitbox_width(), def.hitbox_height());
+
+                    // Check primary vs mirror
+                    if Self::bounds_overlap(&bounds, &mirror_bounds) {
+                        overlaps = true;
+                    }
+
+                    if !overlaps {
+                        for (&other_id, other_part) in &self.parts {
+                            if other_id == part_id || other_id == mid {
+                                continue;
+                            }
+                            if let Some(other_def) = part_defs.get(&other_part.definition_id) {
+                                let other_bounds = Self::calc_bounds(other_part.position, other_def.hitbox_width(), other_def.hitbox_height());
+                                if Self::bounds_overlap(&mirror_bounds, &other_bounds) {
+                                    overlaps = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Revert to original positions if invalid
         if overlaps {
             if let Some(part) = self.parts.get_mut(&part_id) {
                 part.position = start_pos;
+            }
+            if let (Some(mid), Some(partner_pos)) = (mirror_id, partner_start_pos) {
+                if let Some(mirror_part) = self.parts.get_mut(&mid) {
+                    mirror_part.position = partner_pos;
+                }
             }
         }
 
@@ -515,10 +667,21 @@ impl EditorState {
     /// Cancel dragging and revert to original position
     pub fn cancel_drag(&mut self) {
         if let (Some(part_id), Some(start_pos)) = (self.dragging_part.take(), self.drag_start_pos.take()) {
+            // Get mirror partner before mutating
+            let mirror_id = self.parts.get(&part_id).and_then(|p| p.mirror_partner);
+
             if let Some(part) = self.parts.get_mut(&part_id) {
                 part.position = start_pos;
             }
+
+            // Revert mirror partner position
+            if let (Some(mid), Some(partner_pos)) = (mirror_id, self.drag_partner_start_pos.take()) {
+                if let Some(mirror_part) = self.parts.get_mut(&mid) {
+                    mirror_part.position = partner_pos;
+                }
+            }
         }
+        self.drag_partner_start_pos = None;
         self.drag_valid = true;
     }
 

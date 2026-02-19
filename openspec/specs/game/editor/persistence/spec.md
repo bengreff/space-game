@@ -10,11 +10,25 @@ A `VesselBlueprint` SHALL contain: `name` (String), `parts` (Vec of `BlueprintPa
 
 ### Requirement: BlueprintPart structure
 
-A `BlueprintPart` SHALL contain: `definition_id`, `position` ([f64; 2]), `rotation` (f64), `parent_index` (Option<usize>), `attachment_type` (Root/Stack/Radial), `stage` (u32), `fuel_type` (default Empty), `tank_filled` (default false), and `crossfeed_enabled` (default false).
+A `BlueprintPart` SHALL contain: `definition_id`, `position` ([f64; 2]), `rotation` (f64), `parent_index` (Option<usize>), `attachment_type` (Root/Stack/Radial), `stage` (u32), `fuel_type` (default Empty), `tank_filled` (default false), `crossfeed_enabled` (default false), and `mirror_partner_index` (default None).
+
+### Requirement: Mirror partner serialization
+
+`BlueprintPart` SHALL have a `mirror_partner_index: Option<usize>` field with `#[serde(default)]`. During blueprint save, `mirror_partner` PlacedPartId SHALL be converted to the partner's index in the parts vec. During blueprint load, the index SHALL be converted back to a PlacedPartId. Old blueprints without this field SHALL deserialize with `None`.
+
+#### Scenario: Save and load preserves mirror links
+
+- **WHEN** a vessel with mirror-linked parts is saved and loaded
+- **THEN** the mirror links SHALL be preserved and both parts SHALL reference each other
+
+#### Scenario: Old blueprint compatibility
+
+- **WHEN** a blueprint saved before mirror symmetry is loaded
+- **THEN** all parts SHALL have `mirror_partner = None` and load successfully
 
 ### Requirement: Backward-compatible deserialization
 
-The `fuel_type`, `tank_filled`, and `crossfeed_enabled` fields SHALL use `#[serde(default)]` so older blueprints without these fields can still be loaded.
+The `fuel_type`, `tank_filled`, `crossfeed_enabled`, and `mirror_partner_index` fields SHALL use `#[serde(default)]` so older blueprints without these fields can still be loaded.
 
 ### Requirement: RON serialization
 
