@@ -305,7 +305,9 @@ impl EditorState {
         let id = self.next_part_id;
         self.next_part_id += 1;
 
-        let is_engine = part_defs.get(def_id).map(|d| d.engine.is_some()).unwrap_or(false);
+        let def = part_defs.get(def_id);
+        let is_engine = def.map(|d| d.engine.is_some()).unwrap_or(false);
+        let is_decoupler = def.map(|d| d.decoupler.is_some()).unwrap_or(false);
 
         let part = PlacedPart::new(id, def_id.clone(), position);
 
@@ -318,6 +320,14 @@ impl EditorState {
 
         // Auto-add engines to stage 1
         if is_engine {
+            if self.stages.is_empty() {
+                self.stages.push(Vec::new());
+            }
+            self.stages[0].push(id);
+        }
+
+        // Auto-add decouplers to stage 1
+        if is_decoupler {
             if self.stages.is_empty() {
                 self.stages.push(Vec::new());
             }
@@ -632,6 +642,104 @@ impl EditorState {
         stats.wet_mass = stats.dry_mass + resource_mass;
 
         stats
+    }
+
+    /// Calculate per-stage delta-v (vacuum) using the Tsiolkovsky rocket equation.
+    /// Simulates staging sequentially: decouplers fire, engines activate, all fuel burns.
+    pub fn calculate_stage_delta_v(&self, part_defs: &PartDefinitions) -> Vec<f64> {
+        let g0 = 9.80665;
+        let mut stage_dvs = Vec::new();
+
+        // Track state across stages
+        let mut decoupled: std::collections::HashSet<PlacedPartId> = std::collections::HashSet::new();
+        let mut engines_enabled: std::collections::HashSet<PlacedPartId> = std::collections::HashSet::new();
+
+        // Track remaining fuel per part (in tonnes)
+        let mut fuel_remaining: HashMap<PlacedPartId, f64> = HashMap::new();
+        for (&part_id, part) in &self.parts {
+            let Some(def) = part_defs.get(&part.definition_id) else { continue };
+            if let Some(ref tank) = def.tank {
+                if part.tank_filled && part.fuel_type != FuelType::Empty {
+                    let (ox_kg, fuel_kg) = tank.propellant_capacity(part.fuel_type);
+                    fuel_remaining.insert(part_id, (ox_kg + fuel_kg) / 1000.0);
+                }
+            }
+        }
+
+        for stage in &self.stages {
+            // 1. Fire decouplers in this stage
+            for &part_id in stage {
+                if decoupled.contains(&part_id) { continue; }
+                let Some(part) = self.parts.get(&part_id) else { continue };
+                let Some(def) = part_defs.get(&part.definition_id) else { continue };
+                if def.decoupler.is_some() {
+                    let decoupler_bottom = part.position[1] - def.hitbox_height() / 2.0;
+                    decoupled.insert(part_id);
+                    for (&other_id, other_part) in &self.parts {
+                        if decoupled.contains(&other_id) { continue; }
+                        let Some(other_def) = part_defs.get(&other_part.definition_id) else { continue };
+                        let other_top = other_part.position[1] + other_def.hitbox_height() / 2.0;
+                        if other_top <= decoupler_bottom + 0.01 {
+                            decoupled.insert(other_id);
+                        }
+                    }
+                }
+            }
+
+            // 2. Enable engines in this stage
+            for &part_id in stage {
+                if decoupled.contains(&part_id) { continue; }
+                let Some(_part) = self.parts.get(&part_id) else { continue };
+                let Some(def) = part_defs.get(&_part.definition_id) else { continue };
+                if def.engine.is_some() {
+                    engines_enabled.insert(part_id);
+                }
+            }
+
+            // 3. Calculate wet mass and fuel mass of remaining parts
+            let mut wet_mass = 0.0;
+            let mut fuel_mass = 0.0;
+            for (&part_id, part) in &self.parts {
+                if decoupled.contains(&part_id) { continue; }
+                let Some(def) = part_defs.get(&part.definition_id) else { continue };
+                wet_mass += def.mass;
+                let part_fuel = fuel_remaining.get(&part_id).copied().unwrap_or(0.0);
+                wet_mass += part_fuel;
+                fuel_mass += part_fuel;
+            }
+
+            // 4. Calculate thrust-weighted average Isp of active engines
+            let mut total_thrust = 0.0;
+            let mut weighted_isp = 0.0;
+            for &engine_id in &engines_enabled {
+                if decoupled.contains(&engine_id) { continue; }
+                let Some(part) = self.parts.get(&engine_id) else { continue };
+                let Some(def) = part_defs.get(&part.definition_id) else { continue };
+                if let Some(ref engine) = def.engine {
+                    total_thrust += engine.thrust_vac;
+                    weighted_isp += engine.thrust_vac * engine.isp_vac;
+                }
+            }
+            let isp = if total_thrust > 0.0 { weighted_isp / total_thrust } else { 0.0 };
+
+            // 5. Δv = Isp * g0 * ln(wet / dry)
+            let dry_mass = wet_mass - fuel_mass;
+            let dv = if isp > 0.0 && dry_mass > 0.0 && wet_mass > dry_mass {
+                isp * g0 * (wet_mass / dry_mass).ln()
+            } else {
+                0.0
+            };
+            stage_dvs.push(dv);
+
+            // 6. Consume all fuel in remaining parts
+            for (&part_id, fuel) in fuel_remaining.iter_mut() {
+                if !decoupled.contains(&part_id) {
+                    *fuel = 0.0;
+                }
+            }
+        }
+
+        stage_dvs
     }
 }
 

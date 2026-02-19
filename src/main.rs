@@ -12,7 +12,7 @@ use sunscatter::editor::{
     generate_ghost_vertices, screen_to_world, part_at_screen_pos, BodyInfo,
 };
 use sunscatter::game::{Game, GameMode};
-use sunscatter::render::{RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, Vertex};
+use sunscatter::render::{RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, StagedPartInfo, Vertex};
 use sunscatter::ship::{AutopilotTarget, ShipState, VesselPhysicsData, SHIP_SIZE, MAX_THRUST_ACCELERATION};
 
 // 1:1 Real-Scale Solar System Simulation
@@ -227,6 +227,14 @@ fn render_flight_frame(
     let time_warp = WARP_LEVELS[game.flight.warp_index];
     game.solar_system.update(dt * time_warp);
 
+    // Update engine gimbal angles based on rotation input (before computing physics data)
+    if let Some(ref mut vessel) = game.flight.vessel {
+        vessel.update_gimbal(
+            game.flight.ship_input.rotate_left,
+            game.flight.ship_input.rotate_right,
+        );
+    }
+
     // Build VesselPhysicsData from flight vessel if available
     // Uses active_thrust which excludes engines without fuel
     let vessel_physics = game.flight.vessel.as_ref().map(|v| VesselPhysicsData {
@@ -237,6 +245,7 @@ fn render_flight_frame(
         bottom_extent: v.bottom_extent(),
         moment_of_inertia: v.moment_of_inertia,
         torque: v.torque,
+        gimbal_torque: v.compute_gimbal_torque(),
     });
 
     // Update ship physics
@@ -257,7 +266,7 @@ fn render_flight_frame(
 
         // Always update engine states and consume fuel (updates active flags even at 0 throttle)
         let effective_dt = dt * time_warp;
-        vessel.consume_fuel(effective_dt, 0.0);
+        vessel.consume_fuel(effective_dt, 0.0, &game.part_definitions);
         vessel.recalculate_mass(&game.part_definitions);
 
         // Sync vessel state from ship
@@ -479,16 +488,18 @@ fn render_flight_frame(
                     let engine_isp_asl = if is_engine { Some(p.engine_isp_asl) } else { None };
                     let propellant_name = p.propellant_type.map(|pt| pt.display_name().to_string());
 
-                    // Tank info: sum all propellant resources in this part
+                    // Tank info: separate oxidizer and fuel
                     let has_tank = def.map(|d| d.tank.is_some()).unwrap_or(false);
-                    let (fuel_type_name, fuel_current, fuel_max) = if has_tank {
-                        let propellant_names = ["oxygen", "rp1", "methane", "hydrogen"];
-                        let current: f64 = propellant_names.iter()
+                    let (fuel_type_name, fuel_current, fuel_max, ox_current, ox_max) = if has_tank {
+                        let fuel_names = ["rp1", "methane", "hydrogen"];
+                        let f_current: f64 = fuel_names.iter()
                             .filter_map(|n| p.resources.get(*n))
                             .sum();
-                        let max: f64 = propellant_names.iter()
+                        let f_max: f64 = fuel_names.iter()
                             .filter_map(|n| p.max_resources.get(*n))
                             .sum();
+                        let o_current = p.resources.get("oxygen").copied().unwrap_or(0.0);
+                        let o_max = p.max_resources.get("oxygen").copied().unwrap_or(0.0);
                         // Determine fuel type name from what's loaded
                         let ft_name = if p.max_resources.contains_key("rp1") {
                             Some("LOX/RP-1".to_string())
@@ -496,14 +507,14 @@ fn render_flight_frame(
                             Some("LOX/CH4".to_string())
                         } else if p.max_resources.contains_key("hydrogen") {
                             Some("LOX/LH2".to_string())
-                        } else if max > 0.0 {
+                        } else if o_max > 0.0 {
                             Some("LOX".to_string())
                         } else {
                             Some("Empty".to_string())
                         };
-                        (ft_name, Some(current), Some(max))
+                        (ft_name, Some(f_current), Some(f_max), Some(o_current), Some(o_max))
                     } else {
-                        (None, None, None)
+                        (None, None, None, None, None)
                     };
 
                     // Pod info
@@ -528,7 +539,12 @@ fn render_flight_frame(
                         fuel_type_name,
                         fuel_current,
                         fuel_max,
+                        ox_current,
+                        ox_max,
                         crew_capacity,
+                        is_decoupler: def.map(|d| d.decoupler.is_some()).unwrap_or(false),
+                        crossfeed_enabled: p.crossfeed_enabled,
+                        gimbal_angle: p.gimbal_angle,
                     }
                 })
                 .collect();
@@ -571,6 +587,23 @@ fn render_flight_frame(
         soi_surface_gravity: game.solar_system.bodies[game.flight.ship.soi_body].surface_gravity(),
         current_stage: game.flight.vessel.as_ref().map(|v| v.current_stage),
         total_stages: game.flight.vessel.as_ref().map(|v| v.stages.len()),
+        stage_delta_vs: game.flight.vessel.as_ref().map(|v| {
+            v.calculate_stage_delta_v(&game.part_definitions)
+        }),
+        stages: game.flight.vessel.as_ref().map(|v| {
+            v.stages.iter().map(|stage| {
+                stage.iter().map(|&part_idx| {
+                    let name = if part_idx < v.parts.len() {
+                        game.part_definitions.get(&v.parts[part_idx].definition_id)
+                            .map(|d| d.name.clone())
+                            .unwrap_or_else(|| format!("Part {}", part_idx))
+                    } else {
+                        format!("Part {}", part_idx)
+                    };
+                    StagedPartInfo { part_index: part_idx, name }
+                }).collect()
+            }).collect()
+        }),
     };
 
     render_state.update_bodies_orbits_and_ship(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions));
@@ -659,6 +692,59 @@ fn render_flight_frame(
             }
         }
     }
+
+    // Process crossfeed toggle request from part info popup
+    if let Some((part_idx, enabled)) = render_state.crossfeed_toggle_request.take() {
+        if let Some(ref mut vessel) = game.flight.vessel {
+            if part_idx < vessel.parts.len() {
+                vessel.parts[part_idx].crossfeed_enabled = enabled;
+            }
+        }
+    }
+
+    // Process manual decouple request from part info popup
+    if let Some(part_idx) = render_state.decouple_request.take() {
+        if let Some(ref mut vessel) = game.flight.vessel {
+            if part_idx < vessel.parts.len() && !vessel.parts[part_idx].decoupled {
+                let def = game.part_definitions.get(&vessel.parts[part_idx].definition_id);
+                if let Some(def) = def {
+                    if def.decoupler.is_some() {
+                        let decoupler_bottom = vessel.parts[part_idx].local_position[1]
+                            - def.hitbox_height() / 2.0;
+
+                        // Mark the decoupler itself as decoupled
+                        vessel.parts[part_idx].decoupled = true;
+
+                        // Mark all parts whose top edge is at or below the decoupler bottom
+                        for i in 0..vessel.parts.len() {
+                            if i == part_idx || vessel.parts[i].decoupled {
+                                continue;
+                            }
+                            let other_def = game.part_definitions.get(&vessel.parts[i].definition_id);
+                            let other_top = if let Some(od) = other_def {
+                                vessel.parts[i].local_position[1] + od.hitbox_height() / 2.0
+                            } else {
+                                vessel.parts[i].local_position[1] + vessel.parts[i].hitbox_half_extents[1]
+                            };
+                            if other_top <= decoupler_bottom + 0.01 {
+                                vessel.parts[i].decoupled = true;
+                            }
+                        }
+
+                        vessel.recalculate_mass(&game.part_definitions);
+                    }
+                }
+            }
+        }
+        render_state.selected_flight_part = None;
+    }
+
+    // Process staging reorder request from flight staging panel
+    if let Some(new_stages) = render_state.staging_reorder.take() {
+        if let Some(ref mut vessel) = game.flight.vessel {
+            vessel.stages = new_stages;
+        }
+    }
 }
 
 /// Render an editor mode frame
@@ -708,6 +794,8 @@ fn render_editor_frame(
     // Render with editor UI
     let mut action = EditorAction::None;
 
+    let stage_delta_vs = game.editor.calculate_stage_delta_v(&part_defs);
+
     let result = render_state.render_editor(&vertices, |ctx| {
         action = render_editor_ui(
             ctx,
@@ -716,6 +804,7 @@ fn render_editor_frame(
             &blueprint_names,
             &stats,
             &bodies,
+            &stage_delta_vs,
         );
     });
 
@@ -975,7 +1064,7 @@ fn handle_flight_keyboard(
     if let Key::Named(named_key) = logical_key {
         if *named_key == winit::keyboard::NamedKey::Space && pressed {
             if let Some(ref mut vessel) = game.flight.vessel {
-                vessel.activate_next_stage();
+                vessel.activate_next_stage(&game.part_definitions);
             }
         }
     }

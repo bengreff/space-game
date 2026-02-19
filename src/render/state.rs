@@ -45,6 +45,9 @@ pub struct RenderState {
     pub vessel_delta_v: Option<f64>,       // m/s
     pub vessel_current_stage: Option<usize>,  // Stages activated so far
     pub vessel_total_stages: Option<usize>,   // Total stages
+    pub vessel_stages: Vec<Vec<super::types::StagedPartInfo>>,  // Full stage data for UI
+    pub vessel_stage_delta_vs: Vec<f64>,  // Per-stage delta-v (m/s, vacuum)
+    pub staging_reorder: Option<Vec<Vec<usize>>>,  // Request to reorder stages (part indices)
     pub ship_soi_surface_gravity: f64,     // m/s², for TWR
     // Part click state
     pub selected_flight_part: Option<usize>,  // index into flight_parts_cache
@@ -54,6 +57,8 @@ pub struct RenderState {
     pub ship_render_rotation: f64,
     pub ship_render_scale: f64,     // SCALE * BODY_SCALE used for rendering
     pub engine_toggle_request: Option<(usize, bool)>,  // (part_index, enabled)
+    pub crossfeed_toggle_request: Option<(usize, bool)>,  // (part_index, crossfeed_enabled)
+    pub decouple_request: Option<usize>,  // part_index to manually decouple
     pub ap_markers: Vec<([f64; 2], f64)>, // Apoapsis markers: (world pos relative to camera, altitude)
     pub pe_markers: Vec<([f64; 2], f64)>, // Periapsis markers: (world pos relative to camera, altitude)
     // Maneuver node state
@@ -298,6 +303,9 @@ impl RenderState {
             vessel_delta_v: None,
             vessel_current_stage: None,
             vessel_total_stages: None,
+            vessel_stages: Vec::new(),
+            vessel_stage_delta_vs: Vec::new(),
+            staging_reorder: None,
             ship_soi_surface_gravity: 9.81,
             selected_flight_part: None,
             flight_parts_cache: Vec::new(),
@@ -306,6 +314,8 @@ impl RenderState {
             ship_render_rotation: 0.0,
             ship_render_scale: 1.0,
             engine_toggle_request: None,
+            crossfeed_toggle_request: None,
+            decouple_request: None,
             ap_markers: Vec::new(),
             pe_markers: Vec::new(),
             pending_orbit_click: None,
@@ -434,6 +444,8 @@ impl RenderState {
         let maneuver_nodes = self.maneuver_nodes.clone();
         let current_trajectory = self.current_trajectory.clone();
         let current_autopilot = self.autopilot_target;
+        let vessel_stages = self.vessel_stages.clone();
+        let vessel_stage_delta_vs = self.vessel_stage_delta_vs.clone();
 
         let mut new_warp_index = current_warp_index;
         let mut create_node_at: Option<(f64, usize)> = None;
@@ -443,6 +455,9 @@ impl RenderState {
         let mut radial_delta: f64 = 0.0;
         let mut new_autopilot_target = current_autopilot;
         let mut engine_toggle_req: Option<(usize, bool)> = None;
+        let mut crossfeed_toggle_req: Option<(usize, bool)> = None;
+        let mut decouple_req: Option<usize> = None;
+        let mut staging_reorder_req: Option<Vec<Vec<usize>>> = None;
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
@@ -954,6 +969,170 @@ impl RenderState {
                 }
             }
 
+            // Right panel - Staging (always visible when vessel has stages)
+            if !vessel_stages.is_empty() {
+                egui::SidePanel::right("flight_staging_panel")
+                    .default_width(150.0)
+                    .show(ctx, |ui| {
+                        ui.heading("Staging");
+                        ui.separator();
+
+                        // Total Δv
+                        let total_dv: f64 = vessel_stage_delta_vs.iter().sum();
+                        if total_dv > 0.0 {
+                            let dv_str = if total_dv >= 1000.0 {
+                                format!("{:.1} km/s", total_dv / 1000.0)
+                            } else {
+                                format!("{:.0} m/s", total_dv)
+                            };
+                            ui.label(egui::RichText::new(format!("Total Δv: {}", dv_str))
+                                .size(12.0).strong());
+                        }
+
+                        if let Some(current) = vessel_current_stage {
+                            ui.label(egui::RichText::new(format!("Active: {}/{}", current, vessel_stages.len()))
+                                .size(11.0).color(egui::Color32::GRAY));
+                        }
+                        ui.separator();
+
+                        // Drag payload: either a part or a whole stage
+                        #[derive(Clone, Copy)]
+                        enum FlightStageDrag {
+                            Part(usize),   // part_index
+                            Stage(usize),  // stage_index
+                        }
+
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            let mut insert_stage_at: Option<usize> = None;
+                            let mut move_stage_to: Option<(usize, usize)> = None;
+                            let mut delete_stage_at: Option<usize> = None;
+                            let mut drop_action: Option<(FlightStageDrag, usize)> = None;
+
+                            // Helper: "+" gap that doubles as a drop zone for stage reordering
+                            let plus_gap = |ui: &mut egui::Ui, insert_pos: usize,
+                                                 insert_out: &mut Option<usize>,
+                                                 move_out: &mut Option<(usize, usize)>| {
+                                let frame = egui::Frame::none();
+                                let (inner, dropped) = ui.dnd_drop_zone::<FlightStageDrag, ()>(frame, |ui| {
+                                    if ui.small_button("+").on_hover_text("Insert stage here").clicked() {
+                                        *insert_out = Some(insert_pos);
+                                    }
+                                });
+                                if inner.response.hovered() && egui::DragAndDrop::has_any_payload(ui.ctx()) {
+                                    inner.response.highlight();
+                                }
+                                if let Some(payload) = dropped {
+                                    if let FlightStageDrag::Stage(from_idx) = *payload {
+                                        *move_out = Some((from_idx, insert_pos));
+                                    }
+                                }
+                            };
+
+                            for stage_idx in (0..vessel_stages.len()).rev() {
+                                plus_gap(ui, stage_idx + 1, &mut insert_stage_at, &mut move_stage_to);
+
+                                let frame = egui::Frame::group(ui.style());
+                                let (_, dropped_payload) = ui.dnd_drop_zone::<FlightStageDrag, ()>(frame, |ui| {
+                                    ui.horizontal(|ui| {
+                                        let activated = vessel_current_stage.map_or(false, |c| stage_idx < c);
+                                        let label_color = if activated {
+                                            egui::Color32::DARK_GRAY
+                                        } else {
+                                            egui::Color32::WHITE
+                                        };
+                                        let stage_drag_id = egui::Id::new(("flight_staging_stage", stage_idx));
+                                        ui.dnd_drag_source(stage_drag_id, FlightStageDrag::Stage(stage_idx), |ui| {
+                                            ui.label(egui::RichText::new(format!("Stage {}", stage_idx + 1)).color(label_color));
+                                        });
+                                        // Per-stage Δv
+                                        let stage_dv = vessel_stage_delta_vs.get(stage_idx).copied().unwrap_or(0.0);
+                                        if stage_dv > 0.0 {
+                                            let dv_str = if stage_dv >= 1000.0 {
+                                                format!("{:.1}km/s", stage_dv / 1000.0)
+                                            } else {
+                                                format!("{:.0}m/s", stage_dv)
+                                            };
+                                            ui.label(egui::RichText::new(dv_str)
+                                                .size(10.0).color(egui::Color32::from_rgb(120, 200, 120)));
+                                        }
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if ui.small_button("\u{2715}").on_hover_text("Delete stage").clicked() {
+                                                delete_stage_at = Some(stage_idx);
+                                            }
+                                        });
+                                    });
+
+                                    if vessel_stages[stage_idx].is_empty() {
+                                        ui.weak("(empty)");
+                                    }
+
+                                    for part_info in &vessel_stages[stage_idx] {
+                                        let item_id = egui::Id::new(("flight_staging_item", part_info.part_index));
+                                        ui.dnd_drag_source(item_id, FlightStageDrag::Part(part_info.part_index), |ui| {
+                                            ui.label(&part_info.name);
+                                        });
+                                    }
+                                });
+
+                                if let Some(payload) = dropped_payload {
+                                    drop_action = Some((*payload, stage_idx));
+                                }
+                            }
+
+                            plus_gap(ui, 0, &mut insert_stage_at, &mut move_stage_to);
+
+                            // Build new stages if any action occurred
+                            if move_stage_to.is_some() || insert_stage_at.is_some() || delete_stage_at.is_some() || drop_action.is_some() {
+                                let mut new_stages: Vec<Vec<usize>> = vessel_stages.iter()
+                                    .map(|stage| stage.iter().map(|p| p.part_index).collect())
+                                    .collect();
+
+                                if let Some((from_idx, to_pos)) = move_stage_to {
+                                    if from_idx < new_stages.len() {
+                                        let stage = new_stages.remove(from_idx);
+                                        let insert_at = if from_idx < to_pos {
+                                            (to_pos - 1).min(new_stages.len())
+                                        } else {
+                                            to_pos.min(new_stages.len())
+                                        };
+                                        new_stages.insert(insert_at, stage);
+                                    }
+                                } else if let Some(idx) = insert_stage_at {
+                                    new_stages.insert(idx, Vec::new());
+                                } else if let Some(idx) = delete_stage_at {
+                                    if idx < new_stages.len() {
+                                        new_stages.remove(idx);
+                                    }
+                                } else if let Some((drag, target_idx)) = drop_action {
+                                    match drag {
+                                        FlightStageDrag::Part(part_idx) => {
+                                            for stage in &mut new_stages {
+                                                stage.retain(|&idx| idx != part_idx);
+                                            }
+                                            if target_idx < new_stages.len() {
+                                                new_stages[target_idx].push(part_idx);
+                                            }
+                                        }
+                                        FlightStageDrag::Stage(from_idx) => {
+                                            if from_idx != target_idx && from_idx < new_stages.len() {
+                                                let stage = new_stages.remove(from_idx);
+                                                let insert_at = if from_idx < target_idx {
+                                                    (target_idx - 1).min(new_stages.len())
+                                                } else {
+                                                    target_idx.min(new_stages.len())
+                                                };
+                                                new_stages.insert(insert_at, stage);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                staging_reorder_req = Some(new_stages);
+                            }
+                        });
+                    });
+            }
+
             // Right panel for selected maneuver node
             if let Some(node_id) = selected_maneuver_node {
                 if let Some(node) = maneuver_nodes.iter().find(|n| n.id == node_id) {
@@ -1069,12 +1248,25 @@ impl RenderState {
                                 ui.separator();
                                 ui.label(egui::RichText::new("Fuel Tank").strong());
                                 ui.label(format!("Type: {}", fuel_name));
+                                // Oxidizer bar
+                                if let (Some(current), Some(max)) = (part.ox_current, part.ox_max) {
+                                    if max > 0.0 {
+                                        let frac = (current / max) as f32;
+                                        let bar = egui::ProgressBar::new(frac)
+                                            .text(format!("O2: {:.0}/{:.0} kg", current, max))
+                                            .fill(egui::Color32::from_rgb(80, 140, 200));
+                                        ui.add(bar);
+                                    }
+                                }
+                                // Fuel bar
                                 if let (Some(current), Some(max)) = (part.fuel_current, part.fuel_max) {
-                                    ui.label(format!("{:.1} / {:.1} kg", current, max));
-                                    let frac = if max > 0.0 { (current / max) as f32 } else { 0.0 };
-                                    let bar = egui::ProgressBar::new(frac)
-                                        .text(format!("{:.0}%", frac * 100.0));
-                                    ui.add(bar);
+                                    if max > 0.0 {
+                                        let frac = (current / max) as f32;
+                                        let bar = egui::ProgressBar::new(frac)
+                                            .text(format!("Fuel: {:.0}/{:.0} kg", current, max))
+                                            .fill(egui::Color32::from_rgb(200, 160, 60));
+                                        ui.add(bar);
+                                    }
                                 }
                             }
 
@@ -1083,6 +1275,25 @@ impl RenderState {
                                 ui.separator();
                                 ui.label(egui::RichText::new("Command Pod").strong());
                                 ui.label(format!("Crew capacity: {}", crew));
+                            }
+
+                            // Decoupler info
+                            if part.is_decoupler {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Decoupler").strong());
+
+                                let crossfeed_label = if part.crossfeed_enabled {
+                                    "Disable Crossfeed"
+                                } else {
+                                    "Enable Crossfeed"
+                                };
+                                if ui.button(crossfeed_label).clicked() {
+                                    crossfeed_toggle_req = Some((part.part_index, !part.crossfeed_enabled));
+                                }
+
+                                if ui.button("Decouple").clicked() {
+                                    decouple_req = Some(part.part_index);
+                                }
                             }
                         });
                 }
@@ -1154,6 +1365,17 @@ impl RenderState {
         // Store engine toggle request for main.rs to process
         if engine_toggle_req.is_some() {
             self.engine_toggle_request = engine_toggle_req;
+        }
+        // Store crossfeed toggle and decouple requests for main.rs to process
+        if crossfeed_toggle_req.is_some() {
+            self.crossfeed_toggle_request = crossfeed_toggle_req;
+        }
+        if decouple_req.is_some() {
+            self.decouple_request = decouple_req;
+        }
+        // Store staging reorder request for main.rs to process
+        if staging_reorder_req.is_some() {
+            self.staging_reorder = staging_reorder_req;
         }
         // Apply slider deltas to selected node with non-linear scaling
         // Full deflection = 1000 m/s per second, minimal = ~1 m/s per second
@@ -1409,6 +1631,8 @@ impl RenderState {
             self.vessel_delta_v = s.delta_v;
             self.vessel_current_stage = s.current_stage;
             self.vessel_total_stages = s.total_stages;
+            self.vessel_stages = s.stages.clone().unwrap_or_default();
+            self.vessel_stage_delta_vs = s.stage_delta_vs.clone().unwrap_or_default();
             self.ship_soi_surface_gravity = s.soi_surface_gravity;
             self.ship_render_x = s.x;
             self.ship_render_y = s.y;
@@ -2320,12 +2544,27 @@ impl RenderState {
                                 );
                             }
 
-                            // Scale and rotate each vertex, then offset to vessel center
+                            // Apply gimbal rotation for engine parts, then scale
+                            // and rotate each vertex by vessel rotation
+                            let gimbal = if def.engine.is_some() {
+                                part_data.gimbal_angle as f32
+                            } else {
+                                0.0
+                            };
                             let base_index = all_vertices.len() as u32;
                             let scale_factor = render_scale;
                             for vert in &part_verts {
-                                let vx = vert.position[0] * scale_factor;
-                                let vy = vert.position[1] * scale_factor;
+                                let mut vx = vert.position[0] * scale_factor;
+                                let mut vy = vert.position[1] * scale_factor;
+                                // Apply gimbal rotation in part-local space
+                                if gimbal.abs() > 1e-6 {
+                                    let gc = gimbal.cos();
+                                    let gs = gimbal.sin();
+                                    let gx = vx * gc - vy * gs;
+                                    let gy = vx * gs + vy * gc;
+                                    vx = gx;
+                                    vy = gy;
+                                }
                                 // Rotate around origin by vessel rotation
                                 let rx = vx * cos_r - vy * sin_r;
                                 let ry = vx * sin_r + vy * cos_r;
@@ -2342,6 +2581,47 @@ impl RenderState {
                                     all_indices.push(base_index + i);
                                     all_indices.push(base_index + i + 1);
                                     all_indices.push(base_index + i + 2);
+                                }
+                            }
+                        }
+                    }
+
+                    // Second pass: draw decoupler adapter fairings
+                    for part_data in parts {
+                        if let Some(decoupler_def) = defs.get(&part_data.definition_id) {
+                            if decoupler_def.decoupler.is_none() {
+                                continue;
+                            }
+
+                            // Generate adapter vertices at origin using the same function
+                            // We need to build a temporary parts map for the adapter check
+                            let dec_x = part_data.local_x as f32;
+                            let dec_y = part_data.local_y as f32;
+                            let mut adapter_verts: Vec<Vertex> = Vec::new();
+                            crate::editor::generate_flight_decoupler_adapter(
+                                &mut adapter_verts, decoupler_def,
+                                dec_x, dec_y, parts, defs, 1.0,
+                            );
+
+                            if !adapter_verts.is_empty() {
+                                let base_index = all_vertices.len() as u32;
+                                for vert in &adapter_verts {
+                                    let vx = vert.position[0] * render_scale;
+                                    let vy = vert.position[1] * render_scale;
+                                    let rx = vx * cos_r - vy * sin_r;
+                                    let ry = vx * sin_r + vy * cos_r;
+                                    all_vertices.push(Vertex {
+                                        position: [rel_x + rx, rel_y + ry],
+                                        color: vert.color,
+                                    });
+                                }
+                                let num_verts = adapter_verts.len() as u32;
+                                for i in (0..num_verts).step_by(3) {
+                                    if i + 2 < num_verts {
+                                        all_indices.push(base_index + i);
+                                        all_indices.push(base_index + i + 1);
+                                        all_indices.push(base_index + i + 2);
+                                    }
                                 }
                             }
                         }

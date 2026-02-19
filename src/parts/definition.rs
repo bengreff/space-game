@@ -194,6 +194,12 @@ impl TankData {
     }
 }
 
+/// Decoupler-specific data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecouplerData {
+    pub ejection_force: f64,  // Force in kN when decoupling
+}
+
 /// Pod-specific data (for command modules)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PodData {
@@ -230,6 +236,8 @@ pub struct PartDefinition {
     pub tank: Option<TankData>,
     #[serde(default)]
     pub pod: Option<PodData>,
+    #[serde(default)]
+    pub decoupler: Option<DecouplerData>,
     #[serde(default)]
     pub resources: HashMap<String, f64>,
 }

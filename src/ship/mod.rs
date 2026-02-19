@@ -35,7 +35,8 @@ pub struct VesselPhysicsData {
     pub vessel_height: f64,    // meters (half-height for collision)
     pub bottom_extent: f64,    // meters (COM to bottom, for surface placement)
     pub moment_of_inertia: f64,
-    pub torque: f64,           // Nm from reaction wheels
+    pub torque: f64,           // kN·m from reaction wheels
+    pub gimbal_torque: f64,    // kN·m from gimbaled engines (signed: + = CCW)
 }
 
 /// Rotation drag (natural deceleration) in radians/second² (9 degrees/s/s)
@@ -337,15 +338,18 @@ impl Ship {
 
     /// Update while flying (physics simulation with sub-stepping)
     fn update_flying(&mut self, dt: f64, input: &ShipInput, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>) {
-        // Rotation with acceleration model
-        let rot_accel = vessel
+        // Rotation with acceleration model: reaction wheels + engine gimbal
+        let rw_accel = vessel
             .map(|v| if v.moment_of_inertia > 0.0 { v.torque / v.moment_of_inertia } else { ROTATION_ACCEL })
             .unwrap_or(ROTATION_ACCEL);
+        let gimbal_accel = vessel
+            .map(|v| if v.moment_of_inertia > 0.0 { v.gimbal_torque / v.moment_of_inertia } else { 0.0 })
+            .unwrap_or(0.0);
 
         if input.rotate_left {
-            self.rotational_velocity += rot_accel * dt;
+            self.rotational_velocity += rw_accel * dt;
         } else if input.rotate_right {
-            self.rotational_velocity -= rot_accel * dt;
+            self.rotational_velocity -= rw_accel * dt;
         } else {
             // Apply drag when no rotation input
             if self.rotational_velocity.abs() > 0.0 {
@@ -359,6 +363,9 @@ impl Ship {
                 }
             }
         }
+        // Gimbal torque is always applied (already signed from update_gimbal;
+        // non-zero only when A/D is pressed and engines are thrusting)
+        self.rotational_velocity += gimbal_accel * dt;
         self.rotation += self.rotational_velocity * dt;
 
         // Cap physics substeps to prevent lag at high time warp when not on rails

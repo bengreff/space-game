@@ -1,5 +1,74 @@
 // Structural Part Definitions
 
 (
-    parts: [],
+    parts: [
+        // === DECOUPLERS ===
+        // Thin ring-shaped parts that separate stages.
+        // Visual height is 0.5 grid squares (drawn on bottom half of 1-square hitbox).
+
+        (
+            id: "decoupler_tiny",
+            name: "TD-1 Decoupler",
+            description: "Tiny stack decoupler for probe-scale vehicles.",
+            category: Structural,
+            mass: 0.01,
+            cost: 50,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 0.5,
+            hitbox_height: Some(1),
+            decoupler: Some((
+                ejection_force: 5.0,
+            )),
+        ),
+        (
+            id: "decoupler_small",
+            name: "TD-12 Decoupler",
+            description: "Small stack decoupler for light upper stages.",
+            category: Structural,
+            mass: 0.05,
+            cost: 150,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 0.5,
+            hitbox_height: Some(1),
+            decoupler: Some((
+                ejection_force: 15.0,
+            )),
+        ),
+        (
+            id: "decoupler_medium",
+            name: "TD-25 Decoupler",
+            description: "Medium stack decoupler for standard interstages.",
+            category: Structural,
+            mass: 0.1,
+            cost: 300,
+            size: Medium,
+            shape: Rectangle,
+            grid_width: 5.0,
+            grid_height: 0.5,
+            hitbox_height: Some(1),
+            decoupler: Some((
+                ejection_force: 30.0,
+            )),
+        ),
+        (
+            id: "decoupler_large",
+            name: "TD-50 Decoupler",
+            description: "Large stack decoupler for heavy-lift boosters.",
+            category: Structural,
+            mass: 0.2,
+            cost: 600,
+            size: Large,
+            shape: Rectangle,
+            grid_width: 9.0,
+            grid_height: 0.5,
+            hitbox_height: Some(1),
+            decoupler: Some((
+                ejection_force: 60.0,
+            )),
+        ),
+    ],
 )

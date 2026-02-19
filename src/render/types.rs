@@ -69,10 +69,17 @@ pub struct ShipPartRenderData {
     pub propellant_name: Option<String>,
     // Tank info
     pub fuel_type_name: Option<String>,
-    pub fuel_current: Option<f64>,  // kg
+    pub fuel_current: Option<f64>,  // kg (fuel only, not oxidizer)
     pub fuel_max: Option<f64>,      // kg
+    pub ox_current: Option<f64>,    // kg (oxidizer)
+    pub ox_max: Option<f64>,        // kg
     // Pod info
     pub crew_capacity: Option<u32>,
+    // Decoupler info
+    pub is_decoupler: bool,
+    pub crossfeed_enabled: bool,
+    // Gimbal info
+    pub gimbal_angle: f64,  // Current gimbal deflection (radians)
 }
 
 /// Ship render data
@@ -102,6 +109,15 @@ pub struct ShipRenderData {
     // Staging
     pub current_stage: Option<usize>,  // Stages activated so far
     pub total_stages: Option<usize>,   // Total number of stages
+    pub stages: Option<Vec<Vec<StagedPartInfo>>>,  // Full stage data for UI
+    pub stage_delta_vs: Option<Vec<f64>>,  // Per-stage delta-v (m/s, vacuum)
+}
+
+/// Info about a part in a stage, for the staging UI
+#[derive(Clone)]
+pub struct StagedPartInfo {
+    pub part_index: usize,
+    pub name: String,
 }
 
 /// Ship orbit data for rendering

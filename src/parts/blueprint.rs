@@ -74,6 +74,8 @@ pub struct BlueprintPart {
     pub fuel_type: FuelType,
     #[serde(default)]
     pub tank_filled: bool,
+    #[serde(default)]
+    pub crossfeed_enabled: bool,
 }
 
 /// How a part is attached to its parent
@@ -98,6 +100,8 @@ pub struct PlacedPart {
     // Tank-specific state
     pub fuel_type: FuelType,  // What fuel type is loaded (Empty = no fuel)
     pub tank_filled: bool,    // Whether the tank is filled with the selected fuel
+    // Decoupler-specific state
+    pub crossfeed_enabled: bool, // Whether fuel can flow through this decoupler
 }
 
 impl PlacedPart {
@@ -117,6 +121,7 @@ impl PlacedPart {
             stage: 0,
             fuel_type: FuelType::Empty,
             tank_filled: false,
+            crossfeed_enabled: false,
         }
     }
 
@@ -207,6 +212,7 @@ pub fn parts_to_blueprint(
             stage: part.stage,
             fuel_type: part.fuel_type,
             tank_filled: part.tank_filled,
+            crossfeed_enabled: part.crossfeed_enabled,
         });
     }
 
@@ -247,6 +253,7 @@ pub fn blueprint_to_parts(
         part.stage = bp_part.stage;
         part.fuel_type = bp_part.fuel_type;
         part.tank_filled = bp_part.tank_filled;
+        part.crossfeed_enabled = bp_part.crossfeed_enabled;
         parts.insert(id, part);
     }
 

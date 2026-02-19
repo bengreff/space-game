@@ -29,6 +29,9 @@ const ENGINE_GAS_GEN_COLOR: [f32; 4] = [0.16, 0.16, 0.18, 1.0];     // Gas gener
 const POD_COLOR: [f32; 4] = [0.15, 0.15, 0.18, 1.0];               // Dark grey pod
 const POD_WINDOW_COLOR: [f32; 4] = [0.9, 0.9, 0.95, 1.0];          // White/light grey window
 
+// Decoupler colors
+const DECOUPLER_RING_COLOR: [f32; 4] = [0.25, 0.25, 0.28, 1.0];    // Dark metallic grey ring
+
 /// Generate vertices for the editor grid (as thin quads for triangle rendering)
 /// Note: Vertices are output in CAMERA-RELATIVE coordinates (shader expects this)
 pub fn generate_grid_vertices(
@@ -203,6 +206,30 @@ pub fn generate_part_vertices(
             continue;
         }
 
+        // For decouplers, use dedicated decoupler rendering
+        if def.decoupler.is_some() {
+            generate_decoupler_details(&mut vertices, def, x, y, 1.0);
+
+            // Draw overlay for selection, hover, or invalid drag
+            if is_selected || is_hovered || drag_invalid {
+                let highlight_color = if drag_invalid {
+                    [0.9, 0.2, 0.2, 0.4]
+                } else if is_selected {
+                    [0.5, 0.7, 1.0, 0.3]
+                } else {
+                    [0.55, 0.55, 0.6, 0.2]
+                };
+                let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
+                vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x + half_w, y - hitbox_half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x - half_w, y + hitbox_half_h], color: highlight_color });
+            }
+            continue;
+        }
+
         // Draw non-engine parts based on shape
         match def.shape {
             PartShape::Rectangle => {
@@ -267,6 +294,21 @@ pub fn generate_part_vertices(
                 }
             }
         }
+    }
+
+    // Second pass: draw adapter trapezoids for decouplers
+    for (_, part) in &editor.parts {
+        let Some(def) = part_defs.get(&part.definition_id) else {
+            continue;
+        };
+        if def.decoupler.is_none() {
+            continue;
+        }
+        let draw_x = part.position[0] as f32 - cam_x;
+        let draw_y = part.position[1] as f32 - cam_y;
+        let world_x = part.position[0] as f32;
+        let world_y = part.position[1] as f32;
+        generate_decoupler_adapter(&mut vertices, def, draw_x, draw_y, world_x, world_y, &editor.parts, part_defs, 1.0);
     }
 
     vertices
@@ -340,6 +382,34 @@ pub fn generate_ghost_vertices(
         vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay_color });
         vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: overlay_color });
         vertices.push(Vertex { position: [x - half_top_w, y + half_h], color: overlay_color });
+
+        return vertices;
+    }
+
+    // For decouplers, use dedicated decoupler rendering with ghost overlay
+    if def.decoupler.is_some() {
+        generate_decoupler_details(&mut vertices, def, x, y, ghost_alpha);
+
+        // Check for adapter against existing placed parts
+        // Use world position for adapter check (not camera-relative)
+        let ghost_world_x = position[0] as f32;
+        let ghost_world_y = position[1] as f32;
+        // Generate adapter at camera-relative coords but check against world positions
+        generate_decoupler_adapter(&mut vertices, def, x, y, ghost_world_x, ghost_world_y, &editor.parts, part_defs, ghost_alpha);
+
+        // Draw validity overlay over full hitbox
+        let overlay_color = if editor.ghost_valid {
+            [0.3, 0.9, 0.3, 0.25]
+        } else {
+            [0.9, 0.3, 0.3, 0.25]
+        };
+        let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
+        vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x + half_w, y - hitbox_half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x - half_w, y + hitbox_half_h], color: overlay_color });
 
         return vertices;
     }
@@ -701,6 +771,272 @@ pub fn generate_pod_details(
     draw_circle(vertices, x, window_y, window_radius, window_color);
 }
 
+/// Generate decoupler ring details (dark horizontal band on bottom half of hitbox)
+pub fn generate_decoupler_details(
+    vertices: &mut Vec<Vertex>,
+    def: &PartDefinition,
+    x: f32,
+    y: f32,
+    alpha: f32,
+) {
+    let half_w = (def.width() / 2.0) as f32;
+    let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
+    let visual_h = (def.height()) as f32;
+
+    let ring_color = [DECOUPLER_RING_COLOR[0], DECOUPLER_RING_COLOR[1], DECOUPLER_RING_COLOR[2], DECOUPLER_RING_COLOR[3] * alpha];
+
+    // Ring is drawn on the bottom half of the hitbox
+    let ring_bottom = y - hitbox_half_h;
+    let ring_top = ring_bottom + visual_h;
+
+    // Two triangles for the ring rectangle
+    vertices.push(Vertex { position: [x - half_w, ring_bottom], color: ring_color });
+    vertices.push(Vertex { position: [x + half_w, ring_bottom], color: ring_color });
+    vertices.push(Vertex { position: [x + half_w, ring_top], color: ring_color });
+
+    vertices.push(Vertex { position: [x - half_w, ring_bottom], color: ring_color });
+    vertices.push(Vertex { position: [x + half_w, ring_top], color: ring_color });
+    vertices.push(Vertex { position: [x - half_w, ring_top], color: ring_color });
+}
+
+/// Generate adapter trapezoid connecting the closest aligned fuel tank above to a decoupler ring.
+/// Draws from two of the tank's bottom vertices to two of the decoupler's top vertices.
+/// draw_x/draw_y are camera-relative coords for rendering; world_x/world_y are world coords for adjacency checks.
+fn generate_decoupler_adapter(
+    vertices: &mut Vec<Vertex>,
+    decoupler_def: &PartDefinition,
+    draw_x: f32,
+    draw_y: f32,
+    world_x: f32,
+    world_y: f32,
+    parts: &std::collections::HashMap<crate::parts::PlacedPartId, crate::parts::PlacedPart>,
+    part_defs: &PartDefinitions,
+    alpha: f32,
+) {
+    let decoupler_hitbox_half_h = (decoupler_def.hitbox_height() / 2.0) as f32;
+    let decoupler_visual_h = decoupler_def.height() as f32;
+    let decoupler_half_w = (decoupler_def.width() / 2.0) as f32;
+    let decoupler_ring_top_world = world_y - decoupler_hitbox_half_h + decoupler_visual_h;
+
+    let tolerance = 0.01;
+
+    // Find the closest aligned fuel tank above the decoupler ring
+    let mut best_dist = f32::MAX;
+    let mut best_tank_bottom_world: f32 = 0.0;
+    let mut best_tank_half_w: f32 = 0.0;
+
+    for (_, other_part) in parts {
+        let Some(other_def) = part_defs.get(&other_part.definition_id) else {
+            continue;
+        };
+
+        if other_def.tank.is_none() {
+            continue;
+        }
+
+        let other_x = other_part.position[0] as f32;
+        let other_y = other_part.position[1] as f32;
+
+        // Must be aligned (same center x)
+        if (other_x - world_x).abs() > tolerance {
+            continue;
+        }
+
+        // Tank must be above the decoupler ring top
+        let tank_bottom = other_y - (other_def.hitbox_height() / 2.0) as f32;
+        if tank_bottom < decoupler_ring_top_world - tolerance {
+            continue;
+        }
+
+        // Pick closest
+        let dist = tank_bottom - decoupler_ring_top_world;
+        if dist < best_dist {
+            best_dist = dist;
+            best_tank_bottom_world = tank_bottom;
+            best_tank_half_w = (other_def.width() / 2.0) as f32;
+        }
+    }
+
+    if best_dist == f32::MAX {
+        return;
+    }
+
+    // Convert tank bottom from world to camera-relative
+    let cam_offset_y = world_y - draw_y;
+    let adapter_bottom_draw = draw_y - decoupler_hitbox_half_h + decoupler_visual_h;
+    let adapter_top_draw = best_tank_bottom_world - cam_offset_y;
+
+    let adapter_color = [PART_COLOR[0], PART_COLOR[1], PART_COLOR[2], PART_COLOR[3] * alpha];
+
+    // Bottom edge = decoupler ring top (decoupler width), top edge = tank bottom (tank width)
+    vertices.push(Vertex { position: [draw_x - decoupler_half_w, adapter_bottom_draw], color: adapter_color });
+    vertices.push(Vertex { position: [draw_x + decoupler_half_w, adapter_bottom_draw], color: adapter_color });
+    vertices.push(Vertex { position: [draw_x + best_tank_half_w, adapter_top_draw], color: adapter_color });
+
+    vertices.push(Vertex { position: [draw_x - decoupler_half_w, adapter_bottom_draw], color: adapter_color });
+    vertices.push(Vertex { position: [draw_x + best_tank_half_w, adapter_top_draw], color: adapter_color });
+    vertices.push(Vertex { position: [draw_x - best_tank_half_w, adapter_top_draw], color: adapter_color });
+
+    // Draw detail lines on the adapter surface.
+    // Model as a frustum viewed from the side: lines are evenly spaced in angle,
+    // so near edges they follow the trapezoid slope and near center they're vertical.
+    // 3 lines per grid square of the decoupler's width.
+    let num_lines = (decoupler_def.grid_width * 3.0).round() as u32;
+    if num_lines == 0 {
+        return;
+    }
+    let line_color = [0.18, 0.18, 0.20, alpha];
+    let line_half_thickness = 0.008_f32;
+
+    for i in 0..num_lines {
+        // Evenly space in angle across the visible half-cylinder (-π/2 to π/2)
+        let theta = -std::f32::consts::FRAC_PI_2
+            + std::f32::consts::PI * (i as f32 + 1.0) / (num_lines as f32 + 1.0);
+        let s = theta.sin();
+
+        // Bottom x (at decoupler ring top) and top x (at tank bottom)
+        let bot_x = draw_x + decoupler_half_w * s;
+        let top_x = draw_x + best_tank_half_w * s;
+
+        // Direction vector of the line
+        let dx = top_x - bot_x;
+        let dy = adapter_top_draw - adapter_bottom_draw;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 0.0001 {
+            continue;
+        }
+        // Perpendicular for thickness
+        let nx = -dy / len * line_half_thickness;
+        let ny = dx / len * line_half_thickness;
+
+        // Quad for the line
+        let bl = [bot_x - nx, adapter_bottom_draw - ny];
+        let br = [bot_x + nx, adapter_bottom_draw + ny];
+        let tr = [top_x + nx, adapter_top_draw + ny];
+        let tl = [top_x - nx, adapter_top_draw - ny];
+
+        vertices.push(Vertex { position: bl, color: line_color });
+        vertices.push(Vertex { position: br, color: line_color });
+        vertices.push(Vertex { position: tr, color: line_color });
+
+        vertices.push(Vertex { position: bl, color: line_color });
+        vertices.push(Vertex { position: tr, color: line_color });
+        vertices.push(Vertex { position: tl, color: line_color });
+    }
+}
+
+/// Generate adapter trapezoid for flight rendering.
+/// Works with ShipPartRenderData (local coordinates relative to vessel COM).
+pub fn generate_flight_decoupler_adapter(
+    vertices: &mut Vec<Vertex>,
+    decoupler_def: &PartDefinition,
+    dec_x: f32,
+    dec_y: f32,
+    parts: &[crate::render::ShipPartRenderData],
+    part_defs: &PartDefinitions,
+    alpha: f32,
+) {
+    let decoupler_hitbox_half_h = (decoupler_def.hitbox_height() / 2.0) as f32;
+    let decoupler_visual_h = decoupler_def.height() as f32;
+    let decoupler_half_w = (decoupler_def.width() / 2.0) as f32;
+    let decoupler_ring_top = dec_y - decoupler_hitbox_half_h + decoupler_visual_h;
+
+    let tolerance = 0.01;
+
+    // Find the closest aligned fuel tank above the decoupler ring
+    let mut best_dist = f32::MAX;
+    let mut best_tank_bottom: f32 = 0.0;
+    let mut best_tank_half_w: f32 = 0.0;
+
+    for other in parts {
+        let Some(other_def) = part_defs.get(&other.definition_id) else {
+            continue;
+        };
+
+        if other_def.tank.is_none() {
+            continue;
+        }
+
+        let other_x = other.local_x as f32;
+        let other_y = other.local_y as f32;
+
+        // Must be aligned (same center x)
+        if (other_x - dec_x).abs() > tolerance {
+            continue;
+        }
+
+        // Tank must be above the decoupler ring top
+        let tank_bottom = other_y - (other_def.hitbox_height() / 2.0) as f32;
+        if tank_bottom < decoupler_ring_top - tolerance {
+            continue;
+        }
+
+        let dist = tank_bottom - decoupler_ring_top;
+        if dist < best_dist {
+            best_dist = dist;
+            best_tank_bottom = tank_bottom;
+            best_tank_half_w = (other_def.width() / 2.0) as f32;
+        }
+    }
+
+    if best_dist == f32::MAX {
+        return;
+    }
+
+    let adapter_bottom = decoupler_ring_top;
+    let adapter_top = best_tank_bottom;
+
+    let adapter_color = [PART_COLOR[0], PART_COLOR[1], PART_COLOR[2], PART_COLOR[3] * alpha];
+
+    // Trapezoid: bottom = decoupler width, top = tank width
+    vertices.push(Vertex { position: [dec_x - decoupler_half_w, adapter_bottom], color: adapter_color });
+    vertices.push(Vertex { position: [dec_x + decoupler_half_w, adapter_bottom], color: adapter_color });
+    vertices.push(Vertex { position: [dec_x + best_tank_half_w, adapter_top], color: adapter_color });
+
+    vertices.push(Vertex { position: [dec_x - decoupler_half_w, adapter_bottom], color: adapter_color });
+    vertices.push(Vertex { position: [dec_x + best_tank_half_w, adapter_top], color: adapter_color });
+    vertices.push(Vertex { position: [dec_x - best_tank_half_w, adapter_top], color: adapter_color });
+
+    // Detail lines (same frustum projection as editor)
+    let num_lines = (decoupler_def.grid_width * 3.0).round() as u32;
+    if num_lines == 0 {
+        return;
+    }
+    let line_color = [0.18, 0.18, 0.20, alpha];
+    let line_half_thickness = 0.008_f32;
+
+    for i in 0..num_lines {
+        let theta = -std::f32::consts::FRAC_PI_2
+            + std::f32::consts::PI * (i as f32 + 1.0) / (num_lines as f32 + 1.0);
+        let s = theta.sin();
+
+        let bot_x = dec_x + decoupler_half_w * s;
+        let top_x = dec_x + best_tank_half_w * s;
+
+        let dx = top_x - bot_x;
+        let dy = adapter_top - adapter_bottom;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 0.0001 {
+            continue;
+        }
+        let nx = -dy / len * line_half_thickness;
+        let ny = dx / len * line_half_thickness;
+
+        let bl = [bot_x - nx, adapter_bottom - ny];
+        let br = [bot_x + nx, adapter_bottom + ny];
+        let tr = [top_x + nx, adapter_top + ny];
+        let tl = [top_x - nx, adapter_top - ny];
+
+        vertices.push(Vertex { position: bl, color: line_color });
+        vertices.push(Vertex { position: br, color: line_color });
+        vertices.push(Vertex { position: tr, color: line_color });
+
+        vertices.push(Vertex { position: bl, color: line_color });
+        vertices.push(Vertex { position: tr, color: line_color });
+        vertices.push(Vertex { position: tl, color: line_color });
+    }
+}
+
 /// Draw a filled circle
 pub fn draw_circle(
     vertices: &mut Vec<Vertex>,
@@ -774,6 +1110,12 @@ pub fn generate_part_shape_vertices(
     // For pods, use dedicated pod rendering
     if def.category == PartCategory::Pods {
         generate_pod_details(vertices, def, x, y, alpha);
+        return;
+    }
+
+    // For decouplers, draw the ring (adapter needs parts list, handled separately)
+    if def.decoupler.is_some() {
+        generate_decoupler_details(vertices, def, x, y, alpha);
         return;
     }
 

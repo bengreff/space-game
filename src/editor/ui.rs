@@ -1,6 +1,13 @@
 use crate::parts::{FuelType, PartCategory, PartDefinitions, PartSize, PlacedPartId};
 use super::{EditorState, ShipStats};
 
+/// Drag payload for staging panel: either a part or a whole stage being reordered
+#[derive(Clone, Copy)]
+enum StagingDrag {
+    Part(PlacedPartId),
+    Stage(usize),
+}
+
 /// Format mass - shows tonnes if >= 1000 kg, otherwise kg
 fn format_mass(kg: f64) -> String {
     if kg >= 1000.0 {
@@ -27,6 +34,15 @@ pub struct BodyInfo {
     pub surface_gravity: f64,
 }
 
+/// Format delta-v for display
+fn format_delta_v(dv: f64) -> String {
+    if dv >= 1000.0 {
+        format!("{:.1} km/s", dv / 1000.0)
+    } else {
+        format!("{:.0} m/s", dv)
+    }
+}
+
 /// Render the editor UI using egui
 pub fn render_editor_ui(
     ctx: &egui::Context,
@@ -35,6 +51,7 @@ pub fn render_editor_ui(
     blueprint_names: &[&str],
     stats: &ShipStats,
     bodies: &[BodyInfo],
+    stage_delta_vs: &[f64],
 ) -> EditorAction {
     let mut action = EditorAction::None;
 
@@ -148,6 +165,13 @@ pub fn render_editor_ui(
                     editor.twr_settings.show_asl = !editor.twr_settings.show_asl;
                 }
 
+                // Delta-v
+                let total_dv: f64 = stage_delta_vs.iter().sum();
+                if total_dv > 0.0 {
+                    ui.separator();
+                    ui.label(format!("Δv: {}", format_delta_v(total_dv)));
+                }
+
                 ui.separator();
 
                 // Resources (smaller text)
@@ -229,67 +253,135 @@ pub fn render_editor_ui(
         .default_width(150.0)
         .show(ctx, |ui| {
             ui.heading("Staging");
+
+            // Total Δv
+            let total_dv: f64 = stage_delta_vs.iter().sum();
+            if total_dv > 0.0 {
+                ui.label(egui::RichText::new(format!("Total Δv: {}", format_delta_v(total_dv)))
+                    .size(12.0).strong());
+            }
+
             ui.separator();
 
-            if editor.stages.is_empty() {
-                ui.label("No engines placed");
-            } else {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    // Track actions to apply after iteration
-                    let mut insert_stage_above: Option<usize> = None;
-                    let mut move_to_stage: Option<usize> = None;
-                    let mut toggle_engine: Option<PlacedPartId> = None;
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                // Track deferred actions
+                let mut insert_stage_at: Option<usize> = None;
+                let mut move_stage_to: Option<(usize, usize)> = None; // (from, to_insert_pos)
+                let mut delete_stage_at: Option<usize> = None;
+                let mut drop_action: Option<(StagingDrag, usize)> = None;
 
-                    // Render stages in reverse order (highest stage number at top)
-                    for stage_idx in (0..editor.stages.len()).rev() {
-                        // "+" button to insert a new empty stage above this one
-                        if ui.small_button("+").on_hover_text("Insert stage above").clicked() {
-                            insert_stage_above = Some(stage_idx + 1);
+                // Helper: render a "+" gap that is also a drop zone for stage reordering.
+                // `insert_pos` is where a new/moved stage would be inserted.
+                let plus_gap = |ui: &mut egui::Ui, insert_pos: usize,
+                                     insert_out: &mut Option<usize>,
+                                     move_out: &mut Option<(usize, usize)>| {
+                    let frame = egui::Frame::none();
+                    let (inner, dropped) = ui.dnd_drop_zone::<StagingDrag, ()>(frame, |ui| {
+                        if ui.small_button("+").on_hover_text("Insert stage here").clicked() {
+                            *insert_out = Some(insert_pos);
                         }
+                    });
+                    // Highlight when a stage is hovering
+                    if inner.response.hovered() && egui::DragAndDrop::has_any_payload(ui.ctx()) {
+                        inner.response.highlight();
+                    }
+                    if let Some(payload) = dropped {
+                        if let StagingDrag::Stage(from_idx) = *payload {
+                            *move_out = Some((from_idx, insert_pos));
+                        }
+                    }
+                };
 
-                        // "Move here" button if an engine is selected for moving
-                        if editor.staging_selected_engine.is_some() {
-                            if ui.small_button("Move here").clicked() {
-                                move_to_stage = Some(stage_idx);
+                // Render stages in reverse order (highest stage number at top)
+                for stage_idx in (0..editor.stages.len()).rev() {
+                    // "+" gap above this stage
+                    plus_gap(ui, stage_idx + 1, &mut insert_stage_at, &mut move_stage_to);
+
+                    let frame = egui::Frame::group(ui.style());
+                    let (_, dropped_payload) = ui.dnd_drop_zone::<StagingDrag, ()>(frame, |ui| {
+                        ui.horizontal(|ui| {
+                            let stage_drag_id = egui::Id::new(("staging_stage", stage_idx));
+                            ui.dnd_drag_source(stage_drag_id, StagingDrag::Stage(stage_idx), |ui| {
+                                ui.label(format!("Stage {}", stage_idx + 1));
+                            });
+                            // Per-stage Δv
+                            let stage_dv = stage_delta_vs.get(stage_idx).copied().unwrap_or(0.0);
+                            if stage_dv > 0.0 {
+                                ui.label(egui::RichText::new(format_delta_v(stage_dv))
+                                    .size(10.0).color(egui::Color32::from_rgb(120, 200, 120)));
                             }
-                        }
-
-                        ui.group(|ui| {
-                            ui.label(format!("Stage {}", stage_idx + 1));
-                            for &engine_id in &editor.stages[stage_idx] {
-                                let name = editor.parts.get(&engine_id)
-                                    .and_then(|p| part_defs.get(&p.definition_id))
-                                    .map(|d| d.name.clone())
-                                    .unwrap_or_else(|| format!("Part {}", engine_id));
-                                let is_selected = editor.staging_selected_engine == Some(engine_id);
-                                if ui.selectable_label(is_selected, &name).clicked() {
-                                    toggle_engine = Some(engine_id);
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.small_button("\u{2715}").on_hover_text("Delete stage").clicked() {
+                                    delete_stage_at = Some(stage_idx);
                                 }
-                            }
+                            });
                         });
-                    }
 
-                    // Apply deferred actions
-                    if let Some(idx) = insert_stage_above {
-                        editor.stages.insert(idx, Vec::new());
-                    }
-                    if let Some(target_idx) = move_to_stage {
-                        if let Some(engine_id) = editor.staging_selected_engine {
-                            editor.move_engine_to_stage(engine_id, target_idx);
+                        if editor.stages[stage_idx].is_empty() {
+                            ui.weak("(empty)");
                         }
+
+                        for &part_id in &editor.stages[stage_idx] {
+                            let name = editor.parts.get(&part_id)
+                                .and_then(|p| part_defs.get(&p.definition_id))
+                                .map(|d| d.name.clone())
+                                .unwrap_or_else(|| format!("Part {}", part_id));
+
+                            let item_id = egui::Id::new(("staging_item", part_id));
+                            ui.dnd_drag_source(item_id, StagingDrag::Part(part_id), |ui| {
+                                ui.label(&name);
+                            });
+                        }
+                    });
+
+                    if let Some(payload) = dropped_payload {
+                        drop_action = Some((*payload, stage_idx));
                     }
-                    if let Some(engine_id) = toggle_engine {
-                        if editor.staging_selected_engine == Some(engine_id) {
-                            editor.staging_selected_engine = None;
+                }
+
+                // "+" gap below the bottom stage
+                plus_gap(ui, 0, &mut insert_stage_at, &mut move_stage_to);
+
+                // Apply deferred actions (only one action per frame)
+                if let Some((from_idx, to_pos)) = move_stage_to {
+                    if from_idx < editor.stages.len() {
+                        let stage = editor.stages.remove(from_idx);
+                        // Adjust insertion index after removal
+                        let insert_at = if from_idx < to_pos {
+                            (to_pos - 1).min(editor.stages.len())
                         } else {
-                            editor.staging_selected_engine = Some(engine_id);
+                            to_pos.min(editor.stages.len())
+                        };
+                        editor.stages.insert(insert_at, stage);
+                    }
+                } else if let Some(idx) = insert_stage_at {
+                    editor.stages.insert(idx, Vec::new());
+                } else if let Some(idx) = delete_stage_at {
+                    editor.stages.remove(idx);
+                } else if let Some((drag, target_idx)) = drop_action {
+                    match drag {
+                        StagingDrag::Part(part_id) => {
+                            for stage in &mut editor.stages {
+                                stage.retain(|&id| id != part_id);
+                            }
+                            if target_idx < editor.stages.len() {
+                                editor.stages[target_idx].push(part_id);
+                            }
+                        }
+                        StagingDrag::Stage(from_idx) => {
+                            if from_idx != target_idx && from_idx < editor.stages.len() {
+                                let stage = editor.stages.remove(from_idx);
+                                let insert_at = if from_idx < target_idx {
+                                    (target_idx - 1).min(editor.stages.len())
+                                } else {
+                                    target_idx.min(editor.stages.len())
+                                };
+                                editor.stages.insert(insert_at, stage);
+                            }
                         }
                     }
-                });
-
-                // Clean up empty stages
-                editor.stages.retain(|s| !s.is_empty());
-            }
+                }
+            });
         });
 
     // Right panel - Part info (only when a part is selected, renders left of staging)
@@ -464,14 +556,23 @@ pub fn render_editor_ui(
                                 if part.fuel_type != FuelType::Empty {
                                     ui.separator();
                                     let (ox_cap, fuel_cap) = tank.propellant_capacity(part.fuel_type);
-                                    let total_prop = ox_cap + fuel_cap;
 
                                     if part.tank_filled {
-                                        ui.label(format!("O2: {}", format_mass(ox_cap)));
+                                        // Oxidizer bar
+                                        let ox_frac = if ox_cap > 0.0 { 1.0_f32 } else { 0.0 };
+                                        let ox_bar = egui::ProgressBar::new(ox_frac)
+                                            .text(format!("O2: {}", format_mass(ox_cap)))
+                                            .fill(egui::Color32::from_rgb(80, 140, 200));
+                                        ui.add(ox_bar);
+
+                                        // Fuel bar
                                         if let Some(fuel_name) = part.fuel_type.fuel_resource_name() {
-                                            ui.label(format!("{}: {}", fuel_name.to_uppercase(), format_mass(fuel_cap)));
+                                            let fuel_frac = if fuel_cap > 0.0 { 1.0_f32 } else { 0.0 };
+                                            let fuel_bar = egui::ProgressBar::new(fuel_frac)
+                                                .text(format!("{}: {}", fuel_name.to_uppercase(), format_mass(fuel_cap)))
+                                                .fill(egui::Color32::from_rgb(200, 160, 60));
+                                            ui.add(fuel_bar);
                                         }
-                                        ui.label(format!("Total: {}", format_mass(total_prop)));
 
                                         if ui.button("Empty Tank").clicked() {
                                             if let Some(p) = editor.parts.get_mut(&part_id) {
@@ -479,8 +580,18 @@ pub fn render_editor_ui(
                                             }
                                         }
                                     } else {
-                                        ui.label("Tank is empty");
-                                        ui.label(format!("Capacity: {}", format_mass(total_prop)));
+                                        // Empty bars showing capacity
+                                        let ox_bar = egui::ProgressBar::new(0.0)
+                                            .text(format!("O2: 0/{}", format_mass(ox_cap)))
+                                            .fill(egui::Color32::from_rgb(80, 140, 200));
+                                        ui.add(ox_bar);
+
+                                        if let Some(fuel_name) = part.fuel_type.fuel_resource_name() {
+                                            let fuel_bar = egui::ProgressBar::new(0.0)
+                                                .text(format!("{}: 0/{}", fuel_name.to_uppercase(), format_mass(fuel_cap)))
+                                                .fill(egui::Color32::from_rgb(200, 160, 60));
+                                            ui.add(fuel_bar);
+                                        }
 
                                         if ui.button("Fill Tank").clicked() {
                                             if let Some(p) = editor.parts.get_mut(&part_id) {
@@ -510,6 +621,18 @@ pub fn render_editor_ui(
                                 ui.heading("Pod Stats");
                                 ui.label(format!("Crew Capacity: {}", pod.crew_capacity));
                                 ui.label(format!("Reaction Wheel: {:.1} kN·m", pod.torque));
+                            }
+
+                            // Decoupler info
+                            if def.decoupler.is_some() {
+                                ui.separator();
+                                ui.heading("Decoupler");
+                                let mut crossfeed = part.crossfeed_enabled;
+                                if ui.checkbox(&mut crossfeed, "Fuel Crossfeed").changed() {
+                                    if let Some(p) = editor.parts.get_mut(&part_id) {
+                                        p.crossfeed_enabled = crossfeed;
+                                    }
+                                }
                             }
 
                             ui.separator();
