@@ -23,6 +23,14 @@ Rectangle parts SHALL be rendered as two triangles forming a quad, using the par
 
 Triangle parts SHALL be rendered as a single triangle with the base at the bottom and the apex at top center.
 
+### Requirement: TriangleRight part rendering
+
+TriangleRight parts SHALL be rendered as a single right triangle with vertices at bottom-left, bottom-right, and top-right (vertical edge on the right side, hypotenuse on the left). Used for right-side booster nose cones.
+
+### Requirement: TriangleLeft part rendering
+
+TriangleLeft parts SHALL be rendered as a single right triangle with vertices at bottom-left, bottom-right, and top-left (vertical edge on the left side, hypotenuse on the right). Used for left-side booster nose cones.
+
 ### Requirement: Trapezoid part rendering
 
 Trapezoid parts SHALL be rendered as two triangles forming a quad with `width` at the bottom edge and `top_width` at the top edge.

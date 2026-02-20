@@ -43,9 +43,11 @@ impl PartSize {
 /// Shape of a part for rendering
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PartShape {
-    Rectangle,  // Simple rectangle (width x height)
-    Triangle,   // Triangle with base at bottom
-    Trapezoid,  // Trapezoid (top_width, bottom_width, height)
+    Rectangle,     // Simple rectangle (width x height)
+    Triangle,      // Triangle with base at bottom
+    Trapezoid,     // Trapezoid (top_width, bottom_width, height)
+    TriangleRight, // Right triangle: vertical edge on right, hypotenuse on left
+    TriangleLeft,  // Right triangle: vertical edge on left, hypotenuse on right
 }
 
 /// Part categories for organizing in the editor palette
@@ -132,10 +134,11 @@ pub struct EngineData {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum FuelType {
     #[default]
-    Empty,      // No fuel loaded
-    Rp1,        // LOX + RP-1 (kerosene)
-    Methane,    // LOX + Methane
-    Hydrogen,   // LOX + Hydrogen
+    Empty,          // No fuel loaded
+    Rp1,            // LOX + RP-1 (kerosene)
+    Methane,        // LOX + Methane
+    Hydrogen,       // LOX + Hydrogen
+    Monopropellant, // Monopropellant (no oxidizer)
 }
 
 impl FuelType {
@@ -145,11 +148,12 @@ impl FuelType {
             FuelType::Rp1 => "LOX/RP-1",
             FuelType::Methane => "LOX/CH4",
             FuelType::Hydrogen => "LOX/LH2",
+            FuelType::Monopropellant => "Monopropellant",
         }
     }
 
     pub fn all() -> &'static [FuelType] {
-        &[FuelType::Empty, FuelType::Rp1, FuelType::Methane, FuelType::Hydrogen]
+        &[FuelType::Empty, FuelType::Rp1, FuelType::Methane, FuelType::Hydrogen, FuelType::Monopropellant]
     }
 
     /// Get propellant masses per grid square (in kg)
@@ -160,6 +164,7 @@ impl FuelType {
             FuelType::Rp1 => (470.0, 185.0),
             FuelType::Methane => (270.0, 75.0),
             FuelType::Hydrogen => (155.0, 25.0),
+            FuelType::Monopropellant => (0.0, 200.0),
         }
     }
 
@@ -170,6 +175,7 @@ impl FuelType {
             FuelType::Rp1 => Some("rp1"),
             FuelType::Methane => Some("methane"),
             FuelType::Hydrogen => Some("hydrogen"),
+            FuelType::Monopropellant => Some("monopropellant"),
         }
     }
 }
@@ -204,7 +210,13 @@ pub struct DecouplerData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PodData {
     pub crew_capacity: u32,
-    pub torque: f64,          // Reaction wheel torque for rotation
+}
+
+/// RCS thruster data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RcsData {
+    pub thrust: f64,  // kN per axis
+    pub isp: f64,     // Specific impulse (seconds)
 }
 
 /// A part definition loaded from RON files
@@ -239,8 +251,25 @@ pub struct PartDefinition {
     #[serde(default)]
     pub decoupler: Option<DecouplerData>,
     #[serde(default)]
+    pub rcs: Option<RcsData>,
+    #[serde(default)]
     pub resources: HashMap<String, f64>,
+    // Thermal properties
+    #[serde(default = "default_heat_tolerance")]
+    pub max_heat_tolerance: f64,
+    #[serde(default = "default_specific_heat")]
+    pub specific_heat: f64,
+    #[serde(default = "default_emissivity")]
+    pub emissivity: f64,
+    #[serde(default)]
+    pub is_heat_shield: bool,
+    #[serde(default)]
+    pub mirror_def_id: Option<String>,
 }
+
+fn default_heat_tolerance() -> f64 { 2000.0 }
+fn default_specific_heat() -> f64 { 900.0 }
+fn default_emissivity() -> f64 { 0.8 }
 
 /// Welding hitbox extends 5% past the build/flight hitbox
 const WELD_HITBOX_PADDING: f64 = 0.05;

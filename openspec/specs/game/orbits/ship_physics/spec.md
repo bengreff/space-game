@@ -42,10 +42,10 @@ The throttle SHALL be a value in the range [0.0, 1.0], clamped after every updat
 ### Requirement: Rotation with acceleration model
 
 Ship rotation SHALL use an acceleration-based model:
-- Reaction wheel acceleration: `rw_accel = torque / moment_of_inertia` (from vessel data), falling back to `ROTATION_ACCEL = 30 deg/s^2` (0.5236 rad/s^2)
+- RCS acceleration: `rcs_accel = rcs_torque / moment_of_inertia` (from vessel data), falling back to `ROTATION_ACCEL = 30 deg/s^2` (0.5236 rad/s^2). RCS thrusters consume monopropellant when providing torque.
 - Gimbal acceleration: `gimbal_accel = gimbal_torque / moment_of_inertia` (always applied when non-zero, signed)
-- Rotate left: `rotational_velocity += rw_accel * dt`
-- Rotate right: `rotational_velocity -= rw_accel * dt`
+- Rotate left: `rotational_velocity += rcs_accel * dt`
+- Rotate right: `rotational_velocity -= rcs_accel * dt`
 - No input: apply rotation drag of `ROTATION_DRAG = 9 deg/s^2` (0.157 rad/s^2), reducing `rotational_velocity` toward zero
 - Rotation angle updated: `rotation += rotational_velocity * dt`
 
@@ -57,16 +57,30 @@ Ship rotation SHALL use an acceleration-based model:
 
 ### Requirement: Vessel physics data bridge
 
-The `VesselPhysicsData` struct SHALL bridge vessel data into physics: `total_mass` (tonnes), `max_thrust_vac` (kN), `max_thrust_asl` (kN), `vessel_height` (meters), `bottom_extent` (meters), `moment_of_inertia`, `torque` (kN*m from reaction wheels), `gimbal_torque` (kN*m, signed), and `vessel_half_width` (meters, for aerodynamic cross-section).
+The `VesselPhysicsData` struct SHALL bridge vessel data into physics: `total_mass` (tonnes), `max_thrust_vac` (kN), `max_thrust_asl` (kN), `vessel_height` (meters), `bottom_extent` (meters), `moment_of_inertia`, `rcs_torque` (kN*m from RCS thrusters), `gimbal_torque` (kN*m, signed), and `vessel_half_width` (meters, for aerodynamic cross-section).
 
 ## Thrust
 
 ### Requirement: Thrust acceleration calculation
 
-Thrust acceleration SHALL be computed as:
-- With vessel data: `thrust_accel = throttle * max_thrust_vac / total_mass`
+Thrust acceleration SHALL account for atmospheric pressure:
+- Atmospheric pressure fraction SHALL be computed from the SOI body's atmosphere: `pressure_frac = (pressure_at_altitude(alt) / 101325.0).clamp(0.0, 1.0)`. Below the surface, pressure_frac = 1.0. No atmosphere = 0.0.
+- Effective thrust SHALL interpolate: `thrust = max_thrust_vac * (1 - pressure_frac) + max_thrust_asl * pressure_frac`
+- With vessel data: `thrust_accel = throttle * thrust / total_mass`
 - Without vessel data (fallback): `thrust_accel = throttle * MAX_THRUST_ACCELERATION` where `MAX_THRUST_ACCELERATION = 20.0 m/s^2`
 - Thrust direction follows ship rotation: `[cos(rotation) * mag, sin(rotation) * mag]`
+
+#### Scenario: Sea-level thrust on Earth
+- **WHEN** a vessel is on the surface of an atmospheric body
+- **THEN** thrust SHALL equal `max_thrust_asl` (pressure_frac = 1.0)
+
+#### Scenario: Vacuum thrust
+- **WHEN** a vessel is above the atmosphere or around an airless body
+- **THEN** thrust SHALL equal `max_thrust_vac` (pressure_frac = 0.0)
+
+### Requirement: Landed thrust calculation
+
+When the ship is landed, atmospheric pressure SHALL be assumed to be full surface pressure (pressure_frac = 1.0 if the body has an atmosphere, 0.0 otherwise). The same thrust interpolation formula SHALL apply.
 
 ## Integration
 

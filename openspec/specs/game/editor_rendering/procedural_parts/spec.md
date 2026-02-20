@@ -43,7 +43,7 @@ Some engines SHALL render a rectangular gas generator box on one side (offset `h
 
 ### Requirement: Per-engine visual identity
 
-Each of the 16 engine IDs SHALL have a unique combination of: combustion chamber size/position, ring count, gimbal actuators, turbopump, and gas generator. IDs: `engine_hummingbird`, `engine_gecko`, `engine_firefly`, `engine_sparrow`, `engine_wolf`, `engine_falcon`, `engine_owl`, `engine_viper`, `engine_bear`, `engine_eagle`, `engine_panther`, `engine_crane`, `engine_mammoth`, `engine_whale`, `engine_bison`, `engine_titan`.
+Each of the 16 engine IDs SHALL have a unique combination of: combustion chamber size/position, ring count, gimbal actuators, turbopump, and gas generator. IDs: `engine_hummingbird`, `engine_gecko`, `engine_firefly`, `engine_wolf`, `engine_falcon`, `engine_wren`, `engine_owl`, `engine_viper`, `engine_bear`, `engine_eagle`, `engine_panther`, `engine_crane`, `engine_mammoth`, `engine_whale`, `engine_bison`, `engine_titan`.
 
 ### Requirement: Unknown engine fallback
 
@@ -71,14 +71,18 @@ Decouplers SHALL render as a horizontal band from hitbox bottom upward by visual
 
 ### Requirement: Decoupler adapter trapezoid
 
-A second pass SHALL draw adapter trapezoids connecting decouplers to the closest aligned fuel tank above (same center X within 0.01 tolerance). Bottom edge matches decoupler width, top edge matches tank width.
+A second pass SHALL draw adapter trapezoids connecting decouplers to the closest aligned fuel tank **or command pod** above (same center X within 0.01 tolerance). Bottom edge matches decoupler width, top edge matches tank/pod width.
 
 #### Scenario: Adapter with size transition
 - **GIVEN** medium decoupler (2.5m) with small tank (1.5m) above
 - **THEN** bottom edge 2.5m, top edge 1.5m (tapered)
 
-#### Scenario: No aligned tank above
-- **WHEN** no tank shares the decoupler's center X or is above the ring
+#### Scenario: Adapter to command pod
+- **GIVEN** decoupler with command pod directly above (same center X)
+- **THEN** adapter trapezoid drawn connecting decoupler ring to pod bottom
+
+#### Scenario: No aligned tank or pod above
+- **WHEN** no tank or pod shares the decoupler's center X or is above the ring
 - **THEN** no adapter drawn
 
 ### Requirement: Adapter frustum detail lines

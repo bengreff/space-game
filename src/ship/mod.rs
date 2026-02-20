@@ -35,7 +35,7 @@ pub struct VesselPhysicsData {
     pub vessel_height: f64,    // meters (half-height for collision)
     pub bottom_extent: f64,    // meters (COM to bottom, for surface placement)
     pub moment_of_inertia: f64,
-    pub torque: f64,           // kN·m from reaction wheels
+    pub rcs_torque: f64,       // kN·m from RCS thrusters
     pub gimbal_torque: f64,    // kN·m from gimbaled engines (signed: + = CCW)
     pub vessel_half_width: f64, // meters (half-width for cross-section)
 }
@@ -391,7 +391,7 @@ impl Ship {
     }
 
     /// Update ship physics for one frame
-    pub fn update(&mut self, dt: f64, time_warp: f64, input: &ShipInput, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>, autopilot_active: bool) {
+    pub fn update(&mut self, dt: f64, time_warp: f64, input: &ShipInput, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>, autopilot_active: bool, has_flight_vessel: bool) {
         let in_landing_zone = self.below_landing_altitude(solar_system);
         let actually_thrusting = self.throttle > 0.0
             && vessel.map(|v| v.max_thrust_vac > 0.0).unwrap_or(false);
@@ -422,7 +422,7 @@ impl Ship {
                     } else {
                         dt
                     };
-                    self.update_flying(effective_dt, input, solar_system, vessel, autopilot_active);
+                    self.update_flying(effective_dt, input, solar_system, vessel, autopilot_active, has_flight_vessel);
                 }
             }
             ShipState::Landed { body_index, surface_angle } => {
@@ -511,7 +511,7 @@ impl Ship {
     }
 
     /// Update while flying (physics simulation with sub-stepping)
-    fn update_flying(&mut self, dt: f64, input: &ShipInput, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>, autopilot_active: bool) {
+    fn update_flying(&mut self, dt: f64, input: &ShipInput, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>, autopilot_active: bool, has_flight_vessel: bool) {
         // Gimbal torque always applies (set by manual input or autopilot)
         let gimbal_accel = vessel
             .map(|v| if v.moment_of_inertia > 0.0 { v.gimbal_torque / v.moment_of_inertia } else { 0.0 })
@@ -521,7 +521,7 @@ impl Ship {
         // Manual rotation: reaction wheels + drag (skip when autopilot controls rotation)
         if !autopilot_active {
             let rw_accel = vessel
-                .map(|v| if v.moment_of_inertia > 0.0 { v.torque / v.moment_of_inertia } else { ROTATION_ACCEL })
+                .map(|v| if v.moment_of_inertia > 0.0 { v.rcs_torque / v.moment_of_inertia } else { ROTATION_ACCEL })
                 .unwrap_or(ROTATION_ACCEL);
 
             if input.rotate_left {
@@ -554,39 +554,28 @@ impl Ship {
         }
 
         // Update temperature from aerodynamic heating (once per frame)
-        self.update_temperature(dt, solar_system, vessel);
+        // Per-part system handles this when a flight vessel exists
+        self.update_temperature(dt, solar_system, vessel, has_flight_vessel);
 
         self.check_and_handle_collisions(solar_system, vessel);
     }
 
-    /// Update vessel temperature from aerodynamic heating and radiative cooling
-    fn update_temperature(&mut self, dt: f64, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>) {
+    /// Compute aerodynamic environment (density, airspeed, airspeed direction in world coords).
+    /// Returns None if not in atmosphere or density too low.
+    pub fn compute_aero_environment(&self, solar_system: &SolarSystem) -> Option<(f64, f64, [f64; 2])> {
         let soi_body = &solar_system.bodies[self.soi_body];
-        let atmo = match &soi_body.atmosphere {
-            Some(a) => a,
-            None => {
-                // No atmosphere: cool toward ambient
-                self.heat_flux = 0.0;
-                if self.temperature > AMBIENT_TEMPERATURE {
-                    self.temperature += (AMBIENT_TEMPERATURE - self.temperature) * (1.0 - (-0.01 * dt).exp());
-                    self.temperature = self.temperature.max(AMBIENT_TEMPERATURE);
-                }
-                return;
-            }
-        };
+        let atmo = soi_body.atmosphere.as_ref()?;
 
         let dist = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
         let altitude = dist - soi_body.radius;
         if altitude < 0.0 || altitude > atmo.visible_height() {
-            self.heat_flux = 0.0;
-            if self.temperature > AMBIENT_TEMPERATURE {
-                self.temperature += (AMBIENT_TEMPERATURE - self.temperature) * (1.0 - (-0.01 * dt).exp());
-                self.temperature = self.temperature.max(AMBIENT_TEMPERATURE);
-            }
-            return;
+            return None;
         }
 
         let density = atmo.density_at_altitude(altitude);
+        if density < 1e-15 {
+            return None;
+        }
 
         // Surface-relative airspeed
         let surface_vel = soi_body.surface_velocity_at(dist);
@@ -598,11 +587,42 @@ impl Ship {
         let airspeed_y = self.rel_velocity[1] - surface_vel * tangent_y;
         let airspeed = (airspeed_x.powi(2) + airspeed_y.powi(2)).sqrt();
 
+        if airspeed < 1.0 {
+            return None;
+        }
+
+        let dir = [airspeed_x / airspeed, airspeed_y / airspeed];
+        Some((density, airspeed, dir))
+    }
+
+    /// Update vessel temperature from aerodynamic heating and radiative cooling.
+    /// Only used when no FlightVessel is present (per-part system handles that case).
+    fn update_temperature(&mut self, dt: f64, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>, has_flight_vessel: bool) {
+        // When a flight vessel exists, per-part heating handles everything
+        if has_flight_vessel {
+            return;
+        }
+
+        let aero = self.compute_aero_environment(solar_system);
+
+        let (density, airspeed, airspeed_dir) = match aero {
+            Some(a) => a,
+            None => {
+                // No atmosphere or too thin: cool toward ambient
+                self.heat_flux = 0.0;
+                if self.temperature > AMBIENT_TEMPERATURE {
+                    self.temperature += (AMBIENT_TEMPERATURE - self.temperature) * (1.0 - (-0.01 * dt).exp());
+                    self.temperature = self.temperature.max(AMBIENT_TEMPERATURE);
+                }
+                return;
+            }
+        };
+
         let (half_width, half_height) = vessel
             .map(|v| (v.vessel_half_width, v.vessel_height))
             .unwrap_or((SHIP_SIZE / 4.0, SHIP_SIZE / 2.0));
 
-        let velocity_angle = airspeed_y.atan2(airspeed_x);
+        let velocity_angle = airspeed_dir[1].atan2(airspeed_dir[0]);
         let aoa = (self.rotation - velocity_angle).sin().abs();
         let frontal_area = half_width * 2.0 * (1.0 - aoa) + half_height * 2.0 * aoa;
 
@@ -610,7 +630,6 @@ impl Ship {
         let q_in = HEAT_COEFFICIENT * density.sqrt() * airspeed.powi(3) * frontal_area;
 
         // Radiative cooling: q_out = emissivity * sigma * T^4 * surface_area
-        // Surface area approximation: perimeter * 1m depth
         let perimeter = 2.0 * (half_width * 2.0 + half_height * 2.0);
         let q_out = VESSEL_EMISSIVITY * STEFAN_BOLTZMANN * self.temperature.powi(4) * perimeter;
 
@@ -639,9 +658,24 @@ impl Ship {
             }
         };
 
+        // Compute atmospheric pressure fraction (0.0 = vacuum, 1.0 = sea level)
+        let atmo_pressure = soi_body.atmosphere.as_ref().map_or(0.0, |atmo| {
+            let dist = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
+            let alt = dist - soi_body.radius;
+            if alt >= 0.0 {
+                (atmo.pressure_at_altitude(alt) / 101_325.0).clamp(0.0, 1.0)
+            } else {
+                1.0
+            }
+        });
+
         // Use vessel-derived thrust acceleration if available, else fallback
+        // Interpolate between vacuum and sea-level thrust based on atmospheric pressure
         let max_thrust_accel = vessel
-            .map(|v| if v.total_mass > 0.0 { v.max_thrust_vac / v.total_mass } else { 0.0 })
+            .map(|v| if v.total_mass > 0.0 {
+                let thrust = v.max_thrust_vac * (1.0 - atmo_pressure) + v.max_thrust_asl * atmo_pressure;
+                thrust / v.total_mass
+            } else { 0.0 })
             .unwrap_or(MAX_THRUST_ACCELERATION);
 
         let thrust_accel = if self.throttle > 0.0 {
@@ -750,8 +784,13 @@ impl Ship {
         let body_radius = body.radius;
         let surface_gravity = G * body.mass / (body_radius * body_radius);
 
+        // Landed = on surface, use full surface pressure for thrust interpolation
+        let atmo_pressure = if body.atmosphere.is_some() { 1.0 } else { 0.0 };
         let max_thrust_accel = vessel
-            .map(|v| if v.total_mass > 0.0 { v.max_thrust_vac / v.total_mass } else { 0.0 })
+            .map(|v| if v.total_mass > 0.0 {
+                let thrust = v.max_thrust_vac * (1.0 - atmo_pressure) + v.max_thrust_asl * atmo_pressure;
+                thrust / v.total_mass
+            } else { 0.0 })
             .unwrap_or(MAX_THRUST_ACCELERATION);
         let thrust_accel = self.throttle * max_thrust_accel;
 
@@ -1176,7 +1215,7 @@ impl Ship {
 
         let vel = self.rotational_velocity;
         let accel = vessel
-            .map(|v| if v.moment_of_inertia > 0.0 { v.torque / v.moment_of_inertia } else { ROTATION_ACCEL })
+            .map(|v| if v.moment_of_inertia > 0.0 { v.rcs_torque / v.moment_of_inertia } else { ROTATION_ACCEL })
             .unwrap_or(ROTATION_ACCEL);
         let threshold = 0.002;
 
@@ -1212,7 +1251,7 @@ impl Ship {
         let vel = self.rotational_velocity;
         // Use reaction wheel torque for direct control
         let rw_accel = vessel
-            .map(|v| if v.moment_of_inertia > 0.0 { v.torque / v.moment_of_inertia } else { ROTATION_ACCEL })
+            .map(|v| if v.moment_of_inertia > 0.0 { v.rcs_torque / v.moment_of_inertia } else { ROTATION_ACCEL })
             .unwrap_or(ROTATION_ACCEL);
         // Include gimbal torque in total available acceleration for braking calculations
         let gimbal_accel = vessel

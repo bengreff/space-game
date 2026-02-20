@@ -321,13 +321,14 @@ fn render_flight_frame(
             vessel_height: v.bounding_half_height(),
             bottom_extent: v.bottom_extent(),
             moment_of_inertia: v.moment_of_inertia,
-            torque: v.torque,
+            rcs_torque: v.compute_rcs_torque(&game.part_definitions),
             gimbal_torque: v.compute_gimbal_torque(),
             vessel_half_width: v.bounding_half_width(),
         });
 
         // Update ship physics (gimbal torque always applied in update_flying)
-        game.flight.ship.update(dt * time_warp, time_warp, &game.flight.ship_input, &game.solar_system, vessel_physics.as_ref(), autopilot_active);
+        let has_flight_vessel = game.flight.vessel.is_some();
+        game.flight.ship.update(dt * time_warp, time_warp, &game.flight.ship_input, &game.solar_system, vessel_physics.as_ref(), autopilot_active, has_flight_vessel);
         if let Some(target_angle) = autopilot_target_angle {
             game.flight.ship.autopilot_rotate(target_angle, dt * time_warp, vessel_physics.as_ref());
         }
@@ -355,12 +356,62 @@ fn render_flight_frame(
             // Always update engine states and consume fuel (updates active flags even at 0 throttle)
             let effective_dt = dt * time_warp;
             vessel.consume_fuel(effective_dt, atmo_pressure, &game.part_definitions);
+
+            // Consume RCS fuel when rotating (manual or autopilot)
+            let rcs_direction = if autopilot_active {
+                if let Some(target_angle) = autopilot_target_angle {
+                    game.flight.ship.autopilot_desired_direction(target_angle, vessel_physics.as_ref())
+                } else {
+                    0.0
+                }
+            } else if game.flight.ship_input.rotate_left {
+                1.0
+            } else if game.flight.ship_input.rotate_right {
+                -1.0
+            } else {
+                0.0
+            };
+            vessel.consume_rcs_fuel(effective_dt, rcs_direction, &game.part_definitions);
+
             vessel.recalculate_mass(&game.part_definitions);
 
             // Sync vessel state from ship
             vessel.rel_position = game.flight.ship.rel_position;
             vessel.rel_velocity = game.flight.ship.rel_velocity;
             vessel.rotation = game.flight.ship.rotation;
+
+            // Per-part heat update
+            if !game.flight.ship.on_rails {
+                if let Some((density, airspeed, airspeed_dir_world)) = game.flight.ship.compute_aero_environment(&game.solar_system) {
+                    // Convert airspeed direction from world to vessel-local coordinates
+                    let rot = game.flight.ship.rotation;
+                    let cos_r = rot.cos();
+                    let sin_r = rot.sin();
+                    let airspeed_dir_local = [
+                        airspeed_dir_world[0] * cos_r + airspeed_dir_world[1] * sin_r,
+                        -airspeed_dir_world[0] * sin_r + airspeed_dir_world[1] * cos_r,
+                    ];
+                    vessel.update_part_temperatures(effective_dt, density, airspeed, airspeed_dir_local, &game.part_definitions);
+                } else {
+                    // No atmosphere — radiative cooling only
+                    vessel.update_part_temperatures(effective_dt, 0.0, 0.0, [1.0, 0.0], &game.part_definitions);
+                }
+            } else {
+                // On-rails: cool all parts toward ambient with exponential decay
+                for part in &mut vessel.parts {
+                    if part.destroyed || part.decoupled { continue; }
+                    if part.temperature > 300.0 {
+                        part.temperature += (300.0 - part.temperature) * (1.0 - (-0.01 * effective_dt).exp());
+                        part.temperature = part.temperature.max(300.0);
+                    }
+                }
+            }
+            // Sync hottest part temperature back to ship for HUD
+            let hottest = vessel.parts.iter()
+                .filter(|p| !p.destroyed && !p.decoupled)
+                .map(|p| p.temperature)
+                .fold(300.0_f64, f64::max);
+            game.flight.ship.temperature = hottest;
 
             // Per-part terrain collision check
             if matches!(game.flight.ship.state, ShipState::Flying) {
@@ -402,9 +453,20 @@ fn render_flight_frame(
             }
         }
 
-        // Apply burns to maneuver node delta-v
+        // Apply burns to maneuver node delta-v (atmosphere-adjusted thrust)
         let current_accel = vessel_physics.as_ref()
-            .map(|v| if v.total_mass > 0.0 { v.max_thrust_vac / v.total_mass } else { 0.0 })
+            .map(|v| if v.total_mass > 0.0 {
+                let soi = &game.solar_system.bodies[game.flight.ship.soi_body];
+                let p = if let Some(ref atmo) = soi.atmosphere {
+                    let dist = (game.flight.ship.rel_position[0].powi(2) + game.flight.ship.rel_position[1].powi(2)).sqrt();
+                    let alt = dist - soi.radius;
+                    if alt >= 0.0 && alt < atmo.visible_height() {
+                        (atmo.pressure_at_altitude(alt) / 101_325.0).clamp(0.0, 1.0)
+                    } else { 0.0 }
+                } else { 0.0 };
+                let thrust = v.max_thrust_vac * (1.0 - p) + v.max_thrust_asl * p;
+                thrust / v.total_mass
+            } else { 0.0 })
             .unwrap_or(MAX_THRUST_ACCELERATION);
         if game.flight.ship.throttle > 0.0 && render_state.get_selected_maneuver_node().is_some() {
             let delta_v_this_frame = game.flight.ship.throttle * current_accel * dt * time_warp;
@@ -437,7 +499,7 @@ fn render_flight_frame(
             vessel_height: v.bounding_half_height(),
             bottom_extent: v.bottom_extent(),
             moment_of_inertia: v.moment_of_inertia,
-            torque: v.torque,
+            rcs_torque: v.compute_rcs_torque(&game.part_definitions),
             gimbal_torque: v.compute_gimbal_torque(),
             vessel_half_width: v.bounding_half_width(),
         })
@@ -445,9 +507,28 @@ fn render_flight_frame(
 
     // --- Rendering (always runs) ---
 
-    // Compute current acceleration for HUD
+    // Compute atmospheric pressure fraction for HUD thrust display
+    let hud_atmo_pressure = {
+        let soi = &game.solar_system.bodies[game.flight.ship.soi_body];
+        if let Some(ref atmo) = soi.atmosphere {
+            let dist = (game.flight.ship.rel_position[0].powi(2) + game.flight.ship.rel_position[1].powi(2)).sqrt();
+            let alt = dist - soi.radius;
+            if alt >= 0.0 && alt < atmo.visible_height() {
+                (atmo.pressure_at_altitude(alt) / 101_325.0).clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        }
+    };
+
+    // Compute current acceleration for HUD (atmosphere-adjusted)
     let current_accel = vessel_physics.as_ref()
-        .map(|v| if v.total_mass > 0.0 { v.max_thrust_vac / v.total_mass } else { 0.0 })
+        .map(|v| if v.total_mass > 0.0 {
+            let thrust = v.max_thrust_vac * (1.0 - hud_atmo_pressure) + v.max_thrust_asl * hud_atmo_pressure;
+            thrust / v.total_mass
+        } else { 0.0 })
         .unwrap_or(MAX_THRUST_ACCELERATION);
 
     // Collect body data for rendering
@@ -636,6 +717,7 @@ fn render_flight_frame(
         .unwrap_or(0.0);
 
     // Build part render data and vessel stats from flight vessel
+
     let (part_render_data, vessel_mass, vessel_fuel_frac, vessel_thrust, vessel_delta_v, vessel_stage_delta_vs, vessel_size) =
         if let Some(ref vessel) = game.flight.vessel {
             let parts: Vec<ShipPartRenderData> = vessel.parts.iter()
@@ -657,7 +739,7 @@ fn render_flight_frame(
                     // Tank info: separate oxidizer and fuel
                     let has_tank = def.map(|d| d.tank.is_some()).unwrap_or(false);
                     let (fuel_type_name, fuel_current, fuel_max, ox_current, ox_max) = if has_tank {
-                        let fuel_names = ["rp1", "methane", "hydrogen"];
+                        let fuel_names = ["rp1", "methane", "hydrogen", "monopropellant"];
                         let f_current: f64 = fuel_names.iter()
                             .filter_map(|n| p.resources.get(*n))
                             .sum();
@@ -673,6 +755,8 @@ fn render_flight_frame(
                             Some("LOX/CH4".to_string())
                         } else if p.max_resources.contains_key("hydrogen") {
                             Some("LOX/LH2".to_string())
+                        } else if p.max_resources.contains_key("monopropellant") {
+                            Some("Monopropellant".to_string())
                         } else if o_max > 0.0 {
                             Some("LOX".to_string())
                         } else {
@@ -711,6 +795,8 @@ fn render_flight_frame(
                         is_decoupler: def.map(|d| d.decoupler.is_some()).unwrap_or(false),
                         crossfeed_enabled: p.crossfeed_enabled,
                         gimbal_angle: p.gimbal_angle,
+                        rcs_thrust: if p.rcs_thrust > 0.0 { Some(p.rcs_thrust) } else { None },
+                        heat_fraction: ((p.temperature - 300.0) / (p.max_heat_tolerance - 300.0)).clamp(0.0, 1.0) as f32,
                     }
                 })
                 .collect();
@@ -726,14 +812,32 @@ fn render_flight_frame(
             let stage_dvs = vessel.calculate_stage_delta_v(&game.part_definitions);
             let dv: f64 = stage_dvs.iter().sum();
 
-            (Some(parts), Some(vessel.total_mass), Some(fuel_frac), Some(vessel.active_thrust_vac()), Some(dv), stage_dvs, size)
+            (Some(parts), Some(vessel.total_mass), Some(fuel_frac), Some(vessel.active_thrust_at_pressure(hud_atmo_pressure)), Some(dv), stage_dvs, size)
         } else {
             (None, None, None, None, None, Vec::new(), SHIP_SIZE)
         };
 
-    let heat_fraction = ((game.flight.ship.temperature - AMBIENT_TEMPERATURE)
-        / (VESSEL_DESTRUCTION_TEMP - AMBIENT_TEMPERATURE))
-        .clamp(0.0, 1.0) as f32;
+    // Use hottest part temperature when vessel exists, otherwise ship temperature
+    let (effective_temp, effective_heat_fraction) = if let Some(ref vessel) = game.flight.vessel {
+        let hottest = vessel.parts.iter()
+            .filter(|p| !p.destroyed && !p.decoupled)
+            .map(|p| p.temperature)
+            .fold(300.0_f64, f64::max);
+        let max_tol = vessel.parts.iter()
+            .filter(|p| !p.destroyed && !p.decoupled)
+            .filter(|p| p.temperature == hottest)
+            .map(|p| p.max_heat_tolerance)
+            .next()
+            .unwrap_or(VESSEL_DESTRUCTION_TEMP);
+        let frac = ((hottest - 300.0) / (max_tol - 300.0)).clamp(0.0, 1.0) as f32;
+        (hottest, frac)
+    } else {
+        let frac = ((game.flight.ship.temperature - AMBIENT_TEMPERATURE)
+            / (VESSEL_DESTRUCTION_TEMP - AMBIENT_TEMPERATURE))
+            .clamp(0.0, 1.0) as f32;
+        (game.flight.ship.temperature, frac)
+    };
+    let heat_fraction = effective_heat_fraction;
 
     // Compute felt g-force (what crew experiences)
     const G0: f64 = 9.80665;
@@ -747,7 +851,8 @@ fn render_flight_frame(
             let rot = game.flight.ship.rotation;
             let thrust_mag = vessel_physics.as_ref()
                 .map(|v| if v.total_mass > 0.0 {
-                    game.flight.ship.throttle * v.max_thrust_vac / v.total_mass
+                    let thrust = v.max_thrust_vac * (1.0 - hud_atmo_pressure) + v.max_thrust_asl * hud_atmo_pressure;
+                    game.flight.ship.throttle * thrust / v.total_mass
                 } else { 0.0 })
                 .unwrap_or(0.0);
             let thrust = [rot.cos() * thrust_mag, rot.sin() * thrust_mag];
@@ -787,10 +892,16 @@ fn render_flight_frame(
         g_force,
         current_stage: game.flight.vessel.as_ref().map(|v| v.current_stage),
         total_stages: game.flight.vessel.as_ref().map(|v| v.stages.len()),
-        temperature: game.flight.ship.temperature,
+        temperature: effective_temp,
         heat_fraction,
         heat_flux: game.flight.ship.heat_flux,
         below_landing_altitude: game.flight.ship.below_landing_altitude(&game.solar_system),
+        velocity_direction: {
+            let vx = game.flight.ship.rel_velocity[0];
+            let vy = game.flight.ship.rel_velocity[1];
+            let speed = (vx * vx + vy * vy).sqrt();
+            if speed > 0.1 { [vx / speed, vy / speed] } else { [0.0, 0.0] }
+        },
         stage_delta_vs: if vessel_stage_delta_vs.is_empty() { None } else { Some(vessel_stage_delta_vs) },
         stages: game.flight.vessel.as_ref().map(|v| {
             v.stages.iter().map(|stage| {
@@ -998,12 +1109,43 @@ fn render_flight_frame(
         }
     }
 
-    // Thermal destruction check
-    if game.flight.ship.temperature >= VESSEL_DESTRUCTION_TEMP {
+    // Per-part thermal destruction and vessel splitting
+    let debris_list = if let Some(ref mut vessel) = game.flight.vessel {
+        let destroyed_parts = vessel.destroy_overheated_parts();
+        if !destroyed_parts.is_empty() {
+            // Clean up staging lists — remove destroyed part indices
+            for stage in &mut vessel.stages {
+                stage.retain(|idx| !destroyed_parts.contains(idx));
+            }
+
+            // Check for vessel split — collect debris before creating ships
+            let debris = vessel.check_and_split(&game.part_definitions);
+
+            // Recenter on new COM
+            let com_offset = vessel.recenter_on_com(&game.part_definitions);
+            let rot = game.flight.ship.rotation;
+            game.flight.ship.rel_position[0] += com_offset[0] * rot.cos() - com_offset[1] * rot.sin();
+            game.flight.ship.rel_position[1] += com_offset[0] * rot.sin() + com_offset[1] * rot.cos();
+
+            debris
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Create debris vessels outside the vessel borrow
+    for (debris_vessel, com_offset) in debris_list {
+        game.flight.create_debris_vessel(debris_vessel, com_offset, &game.solar_system);
+    }
+
+    // Remove vessel if all parts destroyed
+    if game.flight.vessel.as_ref().map(|v| !v.parts.iter().any(|p| !p.destroyed && !p.decoupled)).unwrap_or(false) {
         game.flight.vessel = None;
         game.flight.ship.temperature = AMBIENT_TEMPERATURE;
         game.flight.ship.heat_flux = 0.0;
-        log::info!("Vessel destroyed by aerodynamic heating!");
+        log::info!("Vessel completely destroyed by aerodynamic heating!");
     }
 }
 
@@ -1124,6 +1266,12 @@ fn render_editor_frame(
             match game.load_blueprint(&name) {
                 Ok(()) => log::info!("Blueprint loaded"),
                 Err(e) => log::error!("Failed to load: {}", e),
+            }
+        }
+        EditorAction::DeleteBlueprint(name) => {
+            match game.blueprints.delete(&name) {
+                Ok(()) => log::info!("Blueprint deleted: {}", name),
+                Err(e) => log::error!("Failed to delete blueprint: {}", e),
             }
         }
         EditorAction::NewVessel => {
@@ -1266,6 +1414,8 @@ fn build_vessel_part_render_data(
                 is_decoupler: def.map(|d| d.decoupler.is_some()).unwrap_or(false),
                 crossfeed_enabled: p.crossfeed_enabled,
                 gimbal_angle: 0.0,
+                rcs_thrust: if p.rcs_thrust > 0.0 { Some(p.rcs_thrust) } else { None },
+                heat_fraction: ((p.temperature - 300.0) / (p.max_heat_tolerance - 300.0)).clamp(0.0, 1.0) as f32,
             }
         })
         .collect()

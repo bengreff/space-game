@@ -80,6 +80,10 @@ pub struct ShipPartRenderData {
     pub crossfeed_enabled: bool,
     // Gimbal info
     pub gimbal_angle: f64,  // Current gimbal deflection (radians)
+    // RCS info
+    pub rcs_thrust: Option<f64>,  // kN (Some if this is an RCS part)
+    // Thermal state
+    pub heat_fraction: f32,  // 0.0-1.0 per-part heat for visual tinting
 }
 
 /// Ship render data
@@ -118,6 +122,8 @@ pub struct ShipRenderData {
     pub heat_flux: f64,         // W/m² for HUD display
     // Landing zone state
     pub below_landing_altitude: bool,
+    // Velocity direction for prograde arrow
+    pub velocity_direction: [f64; 2],  // Normalized velocity unit vector (or [0,0] if nearly stationary)
 }
 
 /// Info about a part in a stage, for the staging UI

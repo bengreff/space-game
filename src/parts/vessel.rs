@@ -22,7 +22,6 @@ pub struct FlightVessel {
     pub max_thrust_vac: f64,
     pub max_thrust_asl: f64,
     pub moment_of_inertia: f64,
-    pub torque: f64,  // From reaction wheels
 
     // Flight state
     pub throttle: f64,
@@ -58,10 +57,19 @@ pub struct FlightPart {
     pub gimbal_angle: f64,      // Current gimbal deflection (radians)
     pub gimbal_range_rad: f64,  // Maximum gimbal deflection (radians, from engine data)
 
+    // RCS state (if this is an RCS thruster)
+    pub rcs_thrust: f64,         // kN (0 if not an RCS part)
+    pub rcs_isp: f64,            // seconds
+    pub rcs_mass_flow_rate: f64, // kg/s at full thrust
+
     // State
     pub destroyed: bool,
     pub decoupled: bool,
     pub crossfeed_enabled: bool, // Whether fuel can flow through this decoupler
+
+    // Thermal state
+    pub temperature: f64,         // Kelvin
+    pub max_heat_tolerance: f64,  // Kelvin (from PartDefinition)
 }
 
 impl FlightVessel {
@@ -81,7 +89,6 @@ impl FlightVessel {
         let mut center_of_mass = [0.0, 0.0];
         let mut max_thrust_vac = 0.0;
         let mut max_thrust_asl = 0.0;
-        let mut torque = 0.0;
 
         // First pass: create parts and calculate total mass
         for bp_part in &blueprint.parts {
@@ -96,22 +103,26 @@ impl FlightVessel {
                 max_thrust_asl += engine.thrust_asl;
             }
 
-            // Sum torque from pods
-            if let Some(ref pod) = def.pod {
-                torque += pod.torque;
-            }
-
             // Create flight part with fuel loaded from blueprint state
             let mut resources = def.resources.clone();
             let mut max_resources = def.resources.clone();
 
             if let Some(ref tank) = def.tank {
-                if bp_part.tank_filled && bp_part.fuel_type != FuelType::Empty {
+                let fill = if bp_part.fill_fraction > 0.0 {
+                    bp_part.fill_fraction
+                } else if bp_part.tank_filled {
+                    1.0
+                } else {
+                    0.0
+                };
+                if fill > 0.0 && bp_part.fuel_type != FuelType::Empty {
                     let (ox_kg, fuel_kg) = tank.propellant_capacity(bp_part.fuel_type);
                     if let Some(fuel_name) = bp_part.fuel_type.fuel_resource_name() {
-                        resources.insert("oxygen".to_string(), ox_kg);
-                        resources.insert(fuel_name.to_string(), fuel_kg);
-                        max_resources.insert("oxygen".to_string(), ox_kg);
+                        if ox_kg > 0.0 {
+                            resources.insert("oxygen".to_string(), ox_kg * fill);
+                            max_resources.insert("oxygen".to_string(), ox_kg);
+                        }
+                        resources.insert(fuel_name.to_string(), fuel_kg * fill);
                         max_resources.insert(fuel_name.to_string(), fuel_kg);
                     }
                 }
@@ -145,9 +156,14 @@ impl FlightVessel {
                 mass_flow_rate: 0.0,
                 gimbal_angle: 0.0,
                 gimbal_range_rad: 0.0,
+                rcs_thrust: 0.0,
+                rcs_isp: 0.0,
+                rcs_mass_flow_rate: 0.0,
                 destroyed: false,
                 decoupled: false,
                 crossfeed_enabled: bp_part.crossfeed_enabled,
+                temperature: 300.0,
+                max_heat_tolerance: def.max_heat_tolerance,
             };
 
             // Set engine data if this is an engine
@@ -164,6 +180,18 @@ impl FlightVessel {
                 let g0 = 9.80665;
                 flight_part.mass_flow_rate = if engine.isp_vac > 0.0 {
                     (engine.thrust_vac * 1000.0) / (g0 * engine.isp_vac)
+                } else {
+                    0.0
+                };
+            }
+
+            // Set RCS data if this is an RCS thruster
+            if let Some(ref rcs) = def.rcs {
+                flight_part.rcs_thrust = rcs.thrust;
+                flight_part.rcs_isp = rcs.isp;
+                let g0 = 9.80665;
+                flight_part.rcs_mass_flow_rate = if rcs.isp > 0.0 {
+                    (rcs.thrust * 1000.0) / (g0 * rcs.isp)
                 } else {
                     0.0
                 };
@@ -221,7 +249,6 @@ impl FlightVessel {
             max_thrust_vac,
             max_thrust_asl,
             moment_of_inertia,
-            torque,
             throttle: 0.0,
             on_rails: false,
             stages,
@@ -324,6 +351,38 @@ impl FlightVessel {
         com
     }
 
+    /// Check if an engine is covered by a non-decoupled decoupler directly below it.
+    /// A covered engine has a decoupler whose top edge is near/touching the engine's bottom
+    /// edge and whose horizontal extent overlaps the engine's.
+    pub fn is_engine_covered(&self, engine_idx: usize, part_defs: &PartDefinitions) -> bool {
+        let engine = &self.parts[engine_idx];
+        let engine_bottom = engine.local_position[1] - engine.hitbox_half_extents[1];
+        let engine_left = engine.local_position[0] - engine.hitbox_half_extents[0];
+        let engine_right = engine.local_position[0] + engine.hitbox_half_extents[0];
+
+        for (i, part) in self.parts.iter().enumerate() {
+            if i == engine_idx || part.destroyed || part.decoupled {
+                continue;
+            }
+            let Some(def) = part_defs.get(&part.definition_id) else { continue };
+            if def.decoupler.is_none() {
+                continue;
+            }
+            let decoupler_top = part.local_position[1] + part.hitbox_half_extents[1];
+            let decoupler_left = part.local_position[0] - part.hitbox_half_extents[0];
+            let decoupler_right = part.local_position[0] + part.hitbox_half_extents[0];
+
+            // Vertical adjacency: decoupler top near engine bottom
+            if (decoupler_top - engine_bottom).abs() < 0.3
+                && engine_left < decoupler_right
+                && engine_right > decoupler_left
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Update engine_active flags based on fuel availability within each fuel zone.
     /// Engines without their required propellant type are deactivated.
     pub fn update_engine_states(&mut self, part_defs: &PartDefinitions) {
@@ -340,6 +399,12 @@ impl FlightVessel {
 
             // User-disabled engines are always inactive
             if !self.parts[i].engine_enabled {
+                self.parts[i].engine_active = false;
+                continue;
+            }
+
+            // Engines covered by a decoupler below cannot fire
+            if self.is_engine_covered(i, part_defs) {
                 self.parts[i].engine_active = false;
                 continue;
             }
@@ -374,6 +439,15 @@ impl FlightVessel {
         self.parts.iter()
             .filter(|p| p.engine_active && !p.destroyed && !p.decoupled)
             .map(|p| p.engine_thrust_vac)
+            .sum()
+    }
+
+    /// Max thrust at a given atmospheric pressure (0.0 = vacuum, 1.0 = sea level)
+    /// Does NOT apply throttle — returns max capability.
+    pub fn active_thrust_at_pressure(&self, pressure: f64) -> f64 {
+        self.parts.iter()
+            .filter(|p| p.engine_active && !p.destroyed && !p.decoupled)
+            .map(|p| p.engine_thrust_vac * (1.0 - pressure) + p.engine_thrust_asl * pressure)
             .sum()
     }
 
@@ -438,6 +512,109 @@ impl FlightVessel {
             torque += thrust * (px * (theta.cos() - 1.0) - py * theta.sin());
         }
         torque
+    }
+
+    /// Compute total available RCS torque (kN·m) from all non-decoupled RCS thrusters
+    /// that have monopropellant available in their fuel zone.
+    /// Torque = sum of (thrust * lever_arm) where lever_arm = distance from COM (min 0.25m).
+    pub fn compute_rcs_torque(&self, part_defs: &PartDefinitions) -> f64 {
+        let zones = self.compute_fuel_zones(part_defs);
+        let mut torque = 0.0;
+
+        for (i, part) in self.parts.iter().enumerate() {
+            if part.destroyed || part.decoupled || part.rcs_thrust <= 0.0 {
+                continue;
+            }
+
+            // Check if monopropellant is available in this part's fuel zone
+            let zone = zones[i];
+            if zone == usize::MAX {
+                continue;
+            }
+            let monoprop_available: f64 = self.parts.iter()
+                .enumerate()
+                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == zone)
+                .filter_map(|(_, p)| p.resources.get("monopropellant"))
+                .sum();
+            if monoprop_available < 0.001 {
+                continue;
+            }
+
+            // Lever arm = distance from COM (min 0.25m to always provide some torque)
+            let lever_arm = (part.local_position[0].powi(2) + part.local_position[1].powi(2))
+                .sqrt()
+                .max(0.25);
+            torque += part.rcs_thrust * lever_arm;
+        }
+
+        torque
+    }
+
+    /// Consume monopropellant from RCS thrusters during rotation.
+    /// `direction` is +1.0 (CCW), -1.0 (CW), or 0.0 (no rotation).
+    /// Returns actual torque available (kN·m).
+    pub fn consume_rcs_fuel(&mut self, dt: f64, direction: f64, part_defs: &PartDefinitions) -> f64 {
+        if direction.abs() < 0.001 {
+            return 0.0;
+        }
+
+        let zones = self.compute_fuel_zones(part_defs);
+        let mut total_torque = 0.0;
+
+        // Collect RCS fuel demands per zone
+        let mut zone_demands: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
+
+        for (i, part) in self.parts.iter().enumerate() {
+            if part.destroyed || part.decoupled || part.rcs_thrust <= 0.0 {
+                continue;
+            }
+            let zone = zones[i];
+            if zone == usize::MAX {
+                continue;
+            }
+            let monoprop_available: f64 = self.parts.iter()
+                .enumerate()
+                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == zone)
+                .filter_map(|(_, p)| p.resources.get("monopropellant"))
+                .sum();
+            if monoprop_available < 0.001 {
+                continue;
+            }
+
+            let lever_arm = (part.local_position[0].powi(2) + part.local_position[1].powi(2))
+                .sqrt()
+                .max(0.25);
+            total_torque += part.rcs_thrust * lever_arm;
+
+            // Fuel consumption: mass_flow_rate * dt
+            let consumption = part.rcs_mass_flow_rate * dt;
+            *zone_demands.entry(zone).or_insert(0.0) += consumption;
+        }
+
+        // Drain monopropellant from tanks in each zone
+        for (&zone, &drain_amount) in &zone_demands {
+            let available: f64 = self.parts.iter()
+                .enumerate()
+                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == zone)
+                .filter_map(|(_, p)| p.resources.get("monopropellant"))
+                .sum();
+            if drain_amount > 0.0 && available > 0.0 {
+                let drain_frac = (drain_amount / available).min(1.0);
+                for (j, part) in self.parts.iter_mut().enumerate() {
+                    if part.destroyed || part.decoupled || zones[j] != zone {
+                        continue;
+                    }
+                    if let Some(mp) = part.resources.get_mut("monopropellant") {
+                        *mp -= *mp * drain_frac;
+                        if *mp < 0.001 {
+                            *mp = 0.0;
+                        }
+                    }
+                }
+            }
+        }
+
+        total_torque
     }
 
     /// Get thrust at a given atmospheric pressure (0.0 = vacuum, 1.0 = sea level)
@@ -609,7 +786,7 @@ impl FlightVessel {
     }
 
     /// Resource names that count as propellant
-    const PROPELLANT_RESOURCES: &'static [&'static str] = &["oxygen", "rp1", "methane", "hydrogen"];
+    const PROPELLANT_RESOURCES: &'static [&'static str] = &["oxygen", "rp1", "methane", "hydrogen", "monopropellant"];
 
     /// Get total fuel available (kg)
     pub fn get_total_fuel(&self) -> f64 {
@@ -973,6 +1150,368 @@ impl FlightVessel {
         zones
     }
 
+    /// Check if an engine is covered by a decoupler using simulated decoupled state.
+    /// Used by calculate_stage_delta_v to determine which engines can fire after staging.
+    fn is_engine_covered_simulated(
+        &self,
+        engine_idx: usize,
+        part_defs: &PartDefinitions,
+        sim_decoupled: &[bool],
+    ) -> bool {
+        let engine = &self.parts[engine_idx];
+        let engine_bottom = engine.local_position[1] - engine.hitbox_half_extents[1];
+        let engine_left = engine.local_position[0] - engine.hitbox_half_extents[0];
+        let engine_right = engine.local_position[0] + engine.hitbox_half_extents[0];
+
+        for (i, part) in self.parts.iter().enumerate() {
+            if i == engine_idx || sim_decoupled[i] {
+                continue;
+            }
+            let Some(def) = part_defs.get(&part.definition_id) else { continue };
+            if def.decoupler.is_none() {
+                continue;
+            }
+            let decoupler_top = part.local_position[1] + part.hitbox_half_extents[1];
+            let decoupler_left = part.local_position[0] - part.hitbox_half_extents[0];
+            let decoupler_right = part.local_position[0] + part.hitbox_half_extents[0];
+
+            if (decoupler_top - engine_bottom).abs() < 0.3
+                && engine_left < decoupler_right
+                && engine_right > decoupler_left
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Stefan-Boltzmann constant (W/m^2/K^4)
+    const STEFAN_BOLTZMANN: f64 = 5.670374419e-8;
+
+    /// Heat transfer coefficient for convective heating (Sutton-Graves simplified)
+    const HEAT_COEFFICIENT: f64 = 5.0e-4;
+
+    /// Update per-part temperatures from aerodynamic heating and radiative cooling.
+    /// `airspeed_dir_local` is the unit vector of airspeed in vessel-local coordinates
+    /// (i.e., already rotated by -vessel_rotation).
+    pub fn update_part_temperatures(
+        &mut self,
+        dt: f64,
+        density: f64,
+        airspeed: f64,
+        airspeed_dir_local: [f64; 2],
+        part_defs: &PartDefinitions,
+    ) {
+        if airspeed < 1.0 || density < 1e-15 {
+            // No significant heating — just radiative cooling
+            for part in &mut self.parts {
+                if part.destroyed || part.decoupled { continue; }
+                let def = match part_defs.get(&part.definition_id) {
+                    Some(d) => d,
+                    None => continue,
+                };
+                if part.temperature > 300.0 {
+                    let surface_area = 2.0 * (def.width() + def.height());
+                    let q_out = def.emissivity * Self::STEFAN_BOLTZMANN * part.temperature.powi(4) * surface_area;
+                    let mass_kg = (def.mass + part.resources.values().sum::<f64>() * 0.001) * 1000.0;
+                    if mass_kg > 0.0 {
+                        let d_temp = q_out / (mass_kg * def.specific_heat) * dt;
+                        part.temperature = (part.temperature - d_temp).max(300.0);
+                    }
+                }
+            }
+            return;
+        }
+
+        // --- 1D interval occlusion along the airspeed axis ---
+        // Project each part onto the velocity axis to determine ordering,
+        // then compute how much of each part's perpendicular cross-section is exposed.
+
+        // Velocity direction in local frame
+        let vx = airspeed_dir_local[0];
+        let vy = airspeed_dir_local[1];
+        // Perpendicular axis
+        let px = -vy;
+        let py = vx;
+
+        // For each non-destroyed/decoupled part, compute:
+        // - projection_along: position projected onto velocity axis (front = most negative)
+        // - perp_interval: [min, max] of the part projected onto perpendicular axis
+        // - cross_section_width: width of the part perpendicular to velocity
+        struct PartProjection {
+            idx: usize,
+            proj_along: f64,  // how far along velocity axis (more negative = more forward)
+            perp_min: f64,
+            perp_max: f64,
+            surface_area: f64,
+        }
+
+        let mut projections: Vec<PartProjection> = Vec::new();
+
+        for (i, part) in self.parts.iter().enumerate() {
+            if part.destroyed || part.decoupled { continue; }
+            let def = match part_defs.get(&part.definition_id) {
+                Some(d) => d,
+                None => continue,
+            };
+
+            let half_w = def.width() / 2.0;
+            let half_h = def.height() / 2.0;
+            let cx = part.local_position[0];
+            let cy = part.local_position[1];
+
+            // Project center onto velocity axis
+            let proj_along = cx * vx + cy * vy;
+
+            // Part corners projected onto both axes to find extent
+            let corners = [
+                (cx - half_w, cy - half_h),
+                (cx + half_w, cy - half_h),
+                (cx + half_w, cy + half_h),
+                (cx - half_w, cy + half_h),
+            ];
+
+            let mut perp_min = f64::MAX;
+            let mut perp_max = f64::MIN;
+            for &(cx2, cy2) in &corners {
+                let pp = cx2 * px + cy2 * py;
+                perp_min = perp_min.min(pp);
+                perp_max = perp_max.max(pp);
+            }
+
+            let surface_area = 2.0 * (def.width() + def.height());
+
+            projections.push(PartProjection {
+                idx: i,
+                proj_along,
+                perp_min,
+                perp_max,
+                surface_area,
+            });
+        }
+
+        // Sort by projection along velocity axis (most forward = most negative first)
+        projections.sort_by(|a, b| a.proj_along.partial_cmp(&b.proj_along).unwrap());
+
+        // Track occluded perpendicular intervals (sorted, non-overlapping)
+        let mut occluded: Vec<(f64, f64)> = Vec::new();
+
+        for proj in &projections {
+            // Calculate exposed fraction of this part's perpendicular interval
+            let total_width = proj.perp_max - proj.perp_min;
+            if total_width <= 0.0 { continue; }
+
+            let exposed_width = exposed_interval_width(proj.perp_min, proj.perp_max, &occluded);
+            let part = &self.parts[proj.idx];
+            let def = match part_defs.get(&part.definition_id) {
+                Some(d) => d,
+                None => continue,
+            };
+
+            // Exposed area for heating
+            let exposed_area = exposed_width * 0.5; // depth approximation (GRID_SQUARE_SIZE)
+
+            // Heat input: q_in = HEAT_COEFFICIENT * sqrt(density) * airspeed^3 * exposed_area
+            let q_in = Self::HEAT_COEFFICIENT * density.sqrt() * airspeed.powi(3) * exposed_area;
+
+            // Radiative cooling: q_out = emissivity * sigma * T^4 * surface_area
+            let q_out = def.emissivity * Self::STEFAN_BOLTZMANN * part.temperature.powi(4) * proj.surface_area;
+
+            let mass_kg = (def.mass + part.resources.values().sum::<f64>() * 0.001) * 1000.0;
+            if mass_kg > 0.0 {
+                let d_temp = (q_in - q_out) / (mass_kg * def.specific_heat) * dt;
+                self.parts[proj.idx].temperature = (self.parts[proj.idx].temperature + d_temp).max(300.0);
+            }
+
+            // Add this part to occluded intervals
+            insert_interval(&mut occluded, proj.perp_min, proj.perp_max);
+        }
+    }
+
+    /// Check for parts exceeding their heat tolerance and destroy them.
+    /// Returns indices of destroyed parts (for staging cleanup).
+    pub fn destroy_overheated_parts(&mut self) -> Vec<usize> {
+        let mut destroyed = Vec::new();
+        for (i, part) in self.parts.iter_mut().enumerate() {
+            if part.destroyed || part.decoupled { continue; }
+            if part.temperature >= part.max_heat_tolerance {
+                part.destroyed = true;
+                destroyed.push(i);
+                log::info!("Part {} destroyed by overheating at {}K (tolerance: {}K)",
+                    part.definition_id, part.temperature as i32, part.max_heat_tolerance as i32);
+            }
+        }
+        destroyed
+    }
+
+    /// After parts are destroyed, check if the vessel has split into disconnected components.
+    /// Uses BFS from root_part_index through weld connections. Any non-destroyed,
+    /// non-decoupled parts unreachable from root form debris vessels.
+    /// Returns a list of (debris_vessel, com_offset_local) for each disconnected component.
+    pub fn check_and_split(&mut self, part_defs: &PartDefinitions) -> Vec<(FlightVessel, [f64; 2])> {
+        use std::collections::VecDeque;
+
+        let n = self.parts.len();
+        let connections = self.find_weld_connections(part_defs);
+
+        // BFS from root to find all reachable parts
+        let mut reachable = vec![false; n];
+
+        // If root part is destroyed, find the first non-destroyed non-decoupled part as new root
+        if self.root_part_index < n && (self.parts[self.root_part_index].destroyed || self.parts[self.root_part_index].decoupled) {
+            // Try to find a pod first, then any part
+            let new_root = self.parts.iter().enumerate()
+                .filter(|(_, p)| !p.destroyed && !p.decoupled)
+                .find(|(_, p)| {
+                    part_defs.get(&p.definition_id).map(|d| d.pod.is_some()).unwrap_or(false)
+                })
+                .map(|(i, _)| i)
+                .or_else(|| {
+                    self.parts.iter().enumerate()
+                        .find(|(_, p)| !p.destroyed && !p.decoupled)
+                        .map(|(i, _)| i)
+                });
+            match new_root {
+                Some(r) => self.root_part_index = r,
+                None => return Vec::new(), // All parts destroyed
+            }
+        }
+
+        let root = self.root_part_index;
+        if root >= n || self.parts[root].destroyed || self.parts[root].decoupled {
+            return Vec::new();
+        }
+
+        let mut queue = VecDeque::new();
+        reachable[root] = true;
+        queue.push_back(root);
+        while let Some(idx) = queue.pop_front() {
+            for &neighbor in &connections[idx] {
+                if !reachable[neighbor] && !self.parts[neighbor].destroyed && !self.parts[neighbor].decoupled {
+                    reachable[neighbor] = true;
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+
+        // Find disconnected components (non-reachable, non-destroyed, non-decoupled parts)
+        let unreachable_indices: Vec<usize> = (0..n)
+            .filter(|&i| !reachable[i] && !self.parts[i].destroyed && !self.parts[i].decoupled)
+            .collect();
+
+        if unreachable_indices.is_empty() {
+            return Vec::new();
+        }
+
+        // Group unreachable parts into connected components
+        let mut visited = vec![false; n];
+        let mut components: Vec<Vec<usize>> = Vec::new();
+
+        for &start in &unreachable_indices {
+            if visited[start] { continue; }
+            let mut component = Vec::new();
+            let mut q = VecDeque::new();
+            visited[start] = true;
+            q.push_back(start);
+            while let Some(idx) = q.pop_front() {
+                component.push(idx);
+                for &neighbor in &connections[idx] {
+                    if !visited[neighbor] && !self.parts[neighbor].destroyed && !self.parts[neighbor].decoupled {
+                        if unreachable_indices.contains(&neighbor) {
+                            visited[neighbor] = true;
+                            q.push_back(neighbor);
+                        }
+                    }
+                }
+            }
+            components.push(component);
+        }
+
+        // Create debris vessels for each component
+        let mut result = Vec::new();
+        for component in &components {
+            // Calculate COM of this component
+            let mut debris_mass = 0.0;
+            let mut debris_com = [0.0f64, 0.0];
+            for &i in component {
+                let part = &self.parts[i];
+                let base_mass = part_defs.get(&part.definition_id)
+                    .map(|d| d.mass).unwrap_or(0.0);
+                let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
+                let pm = base_mass + resource_mass;
+                debris_mass += pm;
+                debris_com[0] += part.local_position[0] * pm;
+                debris_com[1] += part.local_position[1] * pm;
+            }
+            if debris_mass <= 0.0 { continue; }
+            debris_com[0] /= debris_mass;
+            debris_com[1] /= debris_mass;
+
+            // Clone parts, shift to local COM, clear state
+            let mut debris_parts: Vec<FlightPart> = component.iter().map(|&i| {
+                let mut part = self.parts[i].clone();
+                part.local_position[0] -= debris_com[0];
+                part.local_position[1] -= debris_com[1];
+                part
+            }).collect();
+
+            // Disable engines on debris
+            for part in &mut debris_parts {
+                part.engine_active = false;
+                part.engine_enabled = false;
+            }
+
+            // Calculate MOI
+            let mut moi = 0.0;
+            for part in &debris_parts {
+                let base_mass = part_defs.get(&part.definition_id)
+                    .map(|d| d.mass).unwrap_or(0.0);
+                let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
+                let pm = base_mass + resource_mass;
+                let r_sq = part.local_position[0].powi(2) + part.local_position[1].powi(2);
+                moi += pm * r_sq;
+                let (w, h) = part_defs.get(&part.definition_id)
+                    .map(|d| (d.width(), d.height()))
+                    .unwrap_or((1.0, 1.0));
+                moi += pm * (w * w + h * h) / 12.0;
+            }
+            moi = moi.max(0.1);
+
+            let dry_mass = debris_parts.iter()
+                .map(|p| part_defs.get(&p.definition_id).map(|d| d.mass).unwrap_or(0.0))
+                .sum();
+
+            let debris_vessel = FlightVessel {
+                rel_position: [0.0, 0.0],
+                rel_velocity: [0.0, 0.0],
+                rotation: self.rotation,
+                rotational_velocity: 0.0,
+                soi_body: self.soi_body,
+                parts: debris_parts,
+                root_part_index: 0,
+                total_mass: debris_mass,
+                dry_mass,
+                center_of_mass: [0.0, 0.0],
+                max_thrust_vac: 0.0,
+                max_thrust_asl: 0.0,
+                moment_of_inertia: moi,
+                throttle: 0.0,
+                on_rails: false,
+                stages: Vec::new(),
+                current_stage: 0,
+            };
+
+            result.push((debris_vessel, debris_com));
+
+            // Mark source parts as destroyed in the parent vessel
+            for &i in component {
+                self.parts[i].destroyed = true;
+            }
+        }
+
+        result
+    }
+
     /// Calculate per-stage delta-v (vacuum) using the Tsiolkovsky rocket equation.
     /// Simulates staging sequentially: decouplers fire, engines activate.
     /// Fuel zones (divided by non-crossfeed decouplers) determine which fuel
@@ -1025,9 +1564,10 @@ impl FlightVessel {
             // 3. Compute fuel zones with simulated decoupled state
             let zones = self.compute_fuel_zones_simulated(part_defs, &decoupled);
 
-            // 4. Find zones containing active (non-decoupled) engines
+            // 4. Find zones containing active (non-decoupled, non-covered) engines
             let engine_zones: std::collections::HashSet<usize> = (0..self.parts.len())
-                .filter(|&i| !decoupled[i] && engines_enabled[i] && zones[i] != usize::MAX)
+                .filter(|&i| !decoupled[i] && engines_enabled[i] && zones[i] != usize::MAX
+                    && !self.is_engine_covered_simulated(i, part_defs, &decoupled))
                 .map(|i| zones[i])
                 .collect();
 
@@ -1046,11 +1586,12 @@ impl FlightVessel {
                 }
             }
 
-            // 6. Calculate thrust-weighted average Isp
+            // 6. Calculate thrust-weighted average Isp (skip covered engines)
             let mut total_thrust = 0.0;
             let mut weighted_isp = 0.0;
             for i in 0..self.parts.len() {
                 if decoupled[i] || !engines_enabled[i] { continue; }
+                if self.is_engine_covered_simulated(i, part_defs, &decoupled) { continue; }
                 total_thrust += self.parts[i].engine_thrust_vac;
                 weighted_isp += self.parts[i].engine_thrust_vac * self.parts[i].engine_isp_vac;
             }
@@ -1161,7 +1702,6 @@ impl FlightVessel {
             max_thrust_vac: 0.0,
             max_thrust_asl: 0.0,
             moment_of_inertia: moi,
-            torque: 0.0,
             throttle: 0.0,
             on_rails: false,
             stages: Vec::new(),   // Debris can't stage
@@ -1223,6 +1763,42 @@ impl FlightVessel {
     }
 }
 
+/// Calculate the exposed (non-occluded) width of an interval [min, max]
+/// given a set of sorted, non-overlapping occluded intervals.
+fn exposed_interval_width(min: f64, max: f64, occluded: &[(f64, f64)]) -> f64 {
+    let mut exposed = max - min;
+    for &(occ_min, occ_max) in occluded {
+        // Skip intervals entirely outside our range
+        if occ_max <= min || occ_min >= max { continue; }
+        // Clamp to our interval
+        let overlap_min = occ_min.max(min);
+        let overlap_max = occ_max.min(max);
+        exposed -= overlap_max - overlap_min;
+    }
+    exposed.max(0.0)
+}
+
+/// Insert an interval into a sorted, non-overlapping interval list, merging overlaps.
+fn insert_interval(intervals: &mut Vec<(f64, f64)>, min: f64, max: f64) {
+    let mut new_min = min;
+    let mut new_max = max;
+    let mut i = 0;
+    while i < intervals.len() {
+        if intervals[i].1 < new_min {
+            i += 1;
+            continue;
+        }
+        if intervals[i].0 > new_max {
+            break;
+        }
+        // Overlapping or adjacent — merge
+        new_min = new_min.min(intervals[i].0);
+        new_max = new_max.max(intervals[i].1);
+        intervals.remove(i);
+    }
+    intervals.insert(i, (new_min, new_max));
+}
+
 /// Create a default single-part vessel for testing
 pub fn create_default_vessel(
     spawn_position: [f64; 2],
@@ -1253,9 +1829,14 @@ pub fn create_default_vessel(
             mass_flow_rate: 0.0,
             gimbal_angle: 0.0,
             gimbal_range_rad: 0.0,
+            rcs_thrust: 0.0,
+            rcs_isp: 0.0,
+            rcs_mass_flow_rate: 0.0,
             destroyed: false,
             decoupled: false,
             crossfeed_enabled: false,
+            temperature: 300.0,
+            max_heat_tolerance: 2000.0,
         }],
         root_part_index: 0,
         total_mass: 2.0,
@@ -1264,7 +1845,6 @@ pub fn create_default_vessel(
         max_thrust_vac: 200.0,
         max_thrust_asl: 150.0,
         moment_of_inertia: 1.0,
-        torque: 5.0,
         throttle: 0.0,
         on_rails: false,
         stages: Vec::new(),

@@ -1,0 +1,43 @@
+// RCS Thruster Part Definitions
+
+(
+    parts: [
+        // Small RCS Block - lightweight monoprop thruster
+        (
+            id: "rcs_small",
+            name: "RV-1 RCS Block",
+            description: "A lightweight RCS thruster block for attitude control. Consumes monopropellant.",
+            category: Utility,
+            mass: 0.01,
+            cost: 100,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 1.0,
+            rcs: Some((
+                thrust: 0.5,
+                isp: 240.0,
+            )),
+            resources: {},
+        ),
+
+        // Medium RCS Block - higher thrust
+        (
+            id: "rcs_medium",
+            name: "RV-3 RCS Block",
+            description: "A higher-thrust RCS thruster block for larger vessels. Consumes monopropellant.",
+            category: Utility,
+            mass: 0.025,
+            cost: 250,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 1.0,
+            rcs: Some((
+                thrust: 2.0,
+                isp: 250.0,
+            )),
+            resources: {},
+        ),
+    ],
+)

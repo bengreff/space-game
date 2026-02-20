@@ -24,6 +24,7 @@ pub enum EditorAction {
     Launch,
     SaveBlueprint(String),
     LoadBlueprint(String),
+    DeleteBlueprint(String),
     NewVessel,
     ExitToFlight,
 }
@@ -190,6 +191,9 @@ pub fn render_editor_ui(
                 if let Some(lh2) = stats.resources.get("hydrogen") {
                     ui.label(format!("LH2: {}", format_mass(lh2.current)));
                 }
+                if let Some(mp) = stats.resources.get("monopropellant") {
+                    ui.label(format!("MP: {}", format_mass(mp.current)));
+                }
             });
         });
 
@@ -269,6 +273,7 @@ pub fn render_editor_ui(
                 let mut move_stage_to: Option<(usize, usize)> = None; // (from, to_insert_pos)
                 let mut delete_stage_at: Option<usize> = None;
                 let mut drop_action: Option<(StagingDrag, usize)> = None;
+                let mut staging_select: Option<PlacedPartId> = None;
 
                 // Helper: render a "+" gap that is also a drop zone for stage reordering.
                 // `insert_pos` is where a new/moved stage would be inserted.
@@ -348,10 +353,23 @@ pub fn render_editor_ui(
                                 name
                             };
 
+                            let is_selected = editor.selected_placed_part == Some(part_id)
+                                || mirror_in_same_stage.is_some()
+                                    && editor.selected_placed_part == mirror_in_same_stage;
+
                             let item_id = egui::Id::new(("staging_item", part_id));
-                            ui.dnd_drag_source(item_id, StagingDrag::Part(part_id), |ui| {
-                                ui.label(&display_name);
+                            let resp = ui.dnd_drag_source(item_id, StagingDrag::Part(part_id), |ui| {
+                                let text = egui::RichText::new(&display_name);
+                                let text = if is_selected {
+                                    text.color(egui::Color32::from_rgb(128, 179, 255))
+                                } else {
+                                    text
+                                };
+                                ui.label(text);
                             });
+                            if resp.response.clicked() || resp.response.drag_started() {
+                                staging_select = Some(part_id);
+                            }
                         }
                     });
 
@@ -406,6 +424,16 @@ pub fn render_editor_ui(
                             }
                         }
                     }
+                }
+
+                // Apply staging → grid selection
+                if let Some(part_id) = staging_select {
+                    editor.selected_placed_part = Some(part_id);
+                    editor.selected_part_def = None;
+                    editor.ghost_position = None;
+                    editor.ghost_valid = false;
+                    editor.mirror_ghost_position = None;
+                    editor.mirror_ghost_def_id = None;
                 }
             });
         });
@@ -494,7 +522,15 @@ pub fn render_editor_ui(
                             ui.separator();
                             ui.heading("Pod Stats");
                             ui.label(format!("Crew Capacity: {}", pod.crew_capacity));
-                            ui.label(format!("Reaction Wheel: {:.1} kN·m", pod.torque));
+                        }
+
+                        // RCS info
+                        if let Some(ref rcs) = def.rcs {
+                            ui.separator();
+                            ui.heading("RCS Stats");
+                            ui.label(format!("Thrust: {:.1} kN", rcs.thrust));
+                            ui.label(format!("Isp: {:.0} s", rcs.isp));
+                            ui.label("Fuel: Monopropellant");
                         }
                     }
                 }
@@ -569,86 +605,136 @@ pub fn render_editor_ui(
                                     for fuel_type in FuelType::all() {
                                         let selected = part.fuel_type == *fuel_type;
                                         if ui.selectable_label(selected, fuel_type.display_name()).clicked() {
+                                            let new_fill = if *fuel_type != FuelType::Empty { 1.0 } else { 0.0 };
                                             if let Some(p) = editor.parts.get_mut(&part_id) {
                                                 p.fuel_type = *fuel_type;
-                                                p.tank_filled = *fuel_type != FuelType::Empty;
+                                                p.fill_fraction = new_fill;
                                             }
                                             // Apply to mirror partner
                                             if let Some(mid) = mirror_id {
                                                 if let Some(mp) = editor.parts.get_mut(&mid) {
                                                     mp.fuel_type = *fuel_type;
-                                                    mp.tank_filled = *fuel_type != FuelType::Empty;
+                                                    mp.fill_fraction = new_fill;
                                                 }
                                             }
                                         }
                                     }
                                 });
 
-                                // Fill/Empty button (only if fuel type selected)
+                                // Draggable fuel bars (only if fuel type selected)
                                 if part.fuel_type != FuelType::Empty {
                                     ui.separator();
                                     let (ox_cap, fuel_cap) = tank.propellant_capacity(part.fuel_type);
+                                    let frac = part.fill_fraction as f32;
+                                    let mut new_frac: Option<f64> = None;
 
-                                    if part.tank_filled {
-                                        // Oxidizer bar
-                                        let ox_frac = if ox_cap > 0.0 { 1.0_f32 } else { 0.0 };
-                                        let ox_bar = egui::ProgressBar::new(ox_frac)
-                                            .text(format!("O2: {}", format_mass(ox_cap)))
-                                            .fill(egui::Color32::from_rgb(80, 140, 200));
-                                        ui.add(ox_bar);
-
-                                        // Fuel bar
-                                        if let Some(fuel_name) = part.fuel_type.fuel_resource_name() {
-                                            let fuel_frac = if fuel_cap > 0.0 { 1.0_f32 } else { 0.0 };
-                                            let fuel_bar = egui::ProgressBar::new(fuel_frac)
-                                                .text(format!("{}: {}", fuel_name.to_uppercase(), format_mass(fuel_cap)))
-                                                .fill(egui::Color32::from_rgb(200, 160, 60));
-                                            ui.add(fuel_bar);
+                                    // Oxidizer bar (only for fuels that have oxidizer)
+                                    if ox_cap > 0.0 {
+                                        let ox_current = format_mass(ox_cap * part.fill_fraction);
+                                        let ox_total = format_mass(ox_cap);
+                                        let (rect, response) = ui.allocate_exact_size(
+                                            egui::vec2(ui.available_width(), 20.0),
+                                            egui::Sense::click_and_drag(),
+                                        );
+                                        if ui.is_rect_visible(rect) {
+                                            let painter = ui.painter();
+                                            painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(40, 50, 60));
+                                            let fill_rect = egui::Rect::from_min_max(
+                                                rect.min,
+                                                egui::pos2(rect.min.x + rect.width() * frac, rect.max.y),
+                                            );
+                                            painter.rect_filled(fill_rect, 2.0, egui::Color32::from_rgb(80, 140, 200));
+                                            painter.text(
+                                                rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                format!("O2: {}/{}", ox_current, ox_total),
+                                                egui::FontId::proportional(12.0),
+                                                egui::Color32::WHITE,
+                                            );
                                         }
-
-                                        if ui.button("Empty Tank").clicked() {
-                                            if let Some(p) = editor.parts.get_mut(&part_id) {
-                                                p.tank_filled = false;
-                                            }
-                                            if let Some(mid) = mirror_id {
-                                                if let Some(mp) = editor.parts.get_mut(&mid) {
-                                                    mp.tank_filled = false;
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        // Empty bars showing capacity
-                                        let ox_bar = egui::ProgressBar::new(0.0)
-                                            .text(format!("O2: 0/{}", format_mass(ox_cap)))
-                                            .fill(egui::Color32::from_rgb(80, 140, 200));
-                                        ui.add(ox_bar);
-
-                                        if let Some(fuel_name) = part.fuel_type.fuel_resource_name() {
-                                            let fuel_bar = egui::ProgressBar::new(0.0)
-                                                .text(format!("{}: 0/{}", fuel_name.to_uppercase(), format_mass(fuel_cap)))
-                                                .fill(egui::Color32::from_rgb(200, 160, 60));
-                                            ui.add(fuel_bar);
-                                        }
-
-                                        if ui.button("Fill Tank").clicked() {
-                                            if let Some(p) = editor.parts.get_mut(&part_id) {
-                                                p.tank_filled = true;
-                                            }
-                                            if let Some(mid) = mirror_id {
-                                                if let Some(mp) = editor.parts.get_mut(&mid) {
-                                                    mp.tank_filled = true;
-                                                }
+                                        if response.clicked() || response.dragged() {
+                                            if let Some(pos) = response.interact_pointer_pos() {
+                                                let f = ((pos.x - rect.min.x) / rect.width()).clamp(0.0, 1.0) as f64;
+                                                new_frac = Some(f);
                                             }
                                         }
                                     }
+
+                                    // Fuel bar
+                                    if let Some(fuel_name) = part.fuel_type.fuel_resource_name() {
+                                        let fuel_current = format_mass(fuel_cap * part.fill_fraction);
+                                        let fuel_total = format_mass(fuel_cap);
+                                        let (rect, response) = ui.allocate_exact_size(
+                                            egui::vec2(ui.available_width(), 20.0),
+                                            egui::Sense::click_and_drag(),
+                                        );
+                                        if ui.is_rect_visible(rect) {
+                                            let painter = ui.painter();
+                                            painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(40, 50, 60));
+                                            let fill_rect = egui::Rect::from_min_max(
+                                                rect.min,
+                                                egui::pos2(rect.min.x + rect.width() * frac, rect.max.y),
+                                            );
+                                            painter.rect_filled(fill_rect, 2.0, egui::Color32::from_rgb(200, 160, 60));
+                                            painter.text(
+                                                rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                format!("{}: {}/{}", fuel_name.to_uppercase(), fuel_current, fuel_total),
+                                                egui::FontId::proportional(12.0),
+                                                egui::Color32::WHITE,
+                                            );
+                                        }
+                                        if response.clicked() || response.dragged() {
+                                            if let Some(pos) = response.interact_pointer_pos() {
+                                                let f = ((pos.x - rect.min.x) / rect.width()).clamp(0.0, 1.0) as f64;
+                                                new_frac = Some(f);
+                                            }
+                                        }
+                                    }
+
+                                    // Apply dragged fill fraction
+                                    if let Some(f) = new_frac {
+                                        if let Some(p) = editor.parts.get_mut(&part_id) {
+                                            p.fill_fraction = f;
+                                        }
+                                        if let Some(mid) = mirror_id {
+                                            if let Some(mp) = editor.parts.get_mut(&mid) {
+                                                mp.fill_fraction = f;
+                                            }
+                                        }
+                                    }
+
+                                    // Fill/Empty convenience buttons
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Fill").clicked() {
+                                            if let Some(p) = editor.parts.get_mut(&part_id) {
+                                                p.fill_fraction = 1.0;
+                                            }
+                                            if let Some(mid) = mirror_id {
+                                                if let Some(mp) = editor.parts.get_mut(&mid) {
+                                                    mp.fill_fraction = 1.0;
+                                                }
+                                            }
+                                        }
+                                        if ui.button("Empty").clicked() {
+                                            if let Some(p) = editor.parts.get_mut(&part_id) {
+                                                p.fill_fraction = 0.0;
+                                            }
+                                            if let Some(mid) = mirror_id {
+                                                if let Some(mp) = editor.parts.get_mut(&mid) {
+                                                    mp.fill_fraction = 0.0;
+                                                }
+                                            }
+                                        }
+                                    });
                                 }
 
                                 // Show total mass
                                 ui.separator();
                                 let dry_mass = def.mass;
-                                let prop_mass = if part.tank_filled && part.fuel_type != FuelType::Empty {
+                                let prop_mass = if part.fill_fraction > 0.0 && part.fuel_type != FuelType::Empty {
                                     let (ox, fuel) = tank.propellant_capacity(part.fuel_type);
-                                    (ox + fuel) / 1000.0  // Convert kg to tonnes
+                                    (ox + fuel) * part.fill_fraction / 1000.0  // Convert kg to tonnes
                                 } else {
                                     0.0
                                 };
@@ -662,7 +748,15 @@ pub fn render_editor_ui(
                                 ui.separator();
                                 ui.heading("Pod Stats");
                                 ui.label(format!("Crew Capacity: {}", pod.crew_capacity));
-                                ui.label(format!("Reaction Wheel: {:.1} kN·m", pod.torque));
+                            }
+
+                            // RCS info
+                            if let Some(ref rcs) = def.rcs {
+                                ui.separator();
+                                ui.heading("RCS Stats");
+                                ui.label(format!("Thrust: {:.1} kN", rcs.thrust));
+                                ui.label(format!("Isp: {:.0} s", rcs.isp));
+                                ui.label("Fuel: Monopropellant");
                             }
 
                             // Decoupler info
@@ -741,10 +835,15 @@ pub fn render_editor_ui(
                 } else {
                     egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
                         for name in blueprint_names {
-                            if ui.button(*name).clicked() {
-                                action = EditorAction::LoadBlueprint(name.to_string());
-                                editor.show_load_dialog = false;
-                            }
+                            ui.horizontal(|ui| {
+                                if ui.button(*name).clicked() {
+                                    action = EditorAction::LoadBlueprint(name.to_string());
+                                    editor.show_load_dialog = false;
+                                }
+                                if ui.small_button("🗑").on_hover_text("Delete").clicked() {
+                                    action = EditorAction::DeleteBlueprint(name.to_string());
+                                }
+                            });
                         }
                     });
                 }

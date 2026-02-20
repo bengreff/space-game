@@ -75,6 +75,8 @@ pub struct BlueprintPart {
     #[serde(default)]
     pub tank_filled: bool,
     #[serde(default)]
+    pub fill_fraction: f64,
+    #[serde(default)]
     pub crossfeed_enabled: bool,
     #[serde(default)]
     pub mirror_partner_index: Option<usize>,
@@ -101,7 +103,7 @@ pub struct PlacedPart {
     pub stage: u32,
     // Tank-specific state
     pub fuel_type: FuelType,  // What fuel type is loaded (Empty = no fuel)
-    pub tank_filled: bool,    // Whether the tank is filled with the selected fuel
+    pub fill_fraction: f64,   // How full the tank is (0.0 = empty, 1.0 = full)
     // Decoupler-specific state
     pub crossfeed_enabled: bool, // Whether fuel can flow through this decoupler
     // Mirror symmetry link
@@ -124,7 +126,7 @@ impl PlacedPart {
             attachment_type: AttachmentType::Root,
             stage: 0,
             fuel_type: FuelType::Empty,
-            tank_filled: false,
+            fill_fraction: 0.0,
             crossfeed_enabled: false,
             mirror_partner: None,
         }
@@ -202,7 +204,8 @@ pub fn parts_to_blueprint(
             attachment_type: part.attachment_type,
             stage: part.stage,
             fuel_type: part.fuel_type,
-            tank_filled: part.tank_filled,
+            tank_filled: part.fill_fraction > 0.0,
+            fill_fraction: part.fill_fraction,
             crossfeed_enabled: part.crossfeed_enabled,
             mirror_partner_index,
         });
@@ -244,7 +247,13 @@ pub fn blueprint_to_parts(
         part.attachment_type = bp_part.attachment_type;
         part.stage = bp_part.stage;
         part.fuel_type = bp_part.fuel_type;
-        part.tank_filled = bp_part.tank_filled;
+        part.fill_fraction = if bp_part.fill_fraction > 0.0 {
+            bp_part.fill_fraction
+        } else if bp_part.tank_filled {
+            1.0 // old blueprints: filled = 100%
+        } else {
+            0.0
+        };
         part.crossfeed_enabled = bp_part.crossfeed_enabled;
         parts.insert(id, part);
     }

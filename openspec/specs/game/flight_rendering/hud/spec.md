@@ -63,7 +63,11 @@ The SAS system SHALL display buttons for: "PRO" (Prograde), "RET" (Retrograde), 
 
 ### Requirement: Vessel stats display
 
-The bottom panel SHALL show: mass ("M: {mass:.2}t"), thrust ("T: {thrust:.0}kN"), TWR ("TWR: {value:.2}" green if >= 1.0, red if < 1.0), delta-v ("Dv: {formatted}"), and G-force ("G: {value:.1}" color-coded: white < 3g, yellow < 6g, red >= 6g).
+The bottom panel SHALL show: mass ("M: {mass:.2}t"), thrust ("T: {thrust:.0}kN"), TWR ("TWR: {value:.2}" green if >= 1.0, red if < 1.0), delta-v ("Dv: {formatted}"), and G-force ("G: {value:.1}" color-coded: white < 3g, yellow < 6g, red >= 6g). G-force SHALL use atmospheric-adjusted thrust (interpolated between vacuum and sea-level values based on atmospheric pressure fraction), not vacuum thrust.
+
+### Requirement: Atmospheric thrust and TWR adjustment
+
+Thrust and TWR displayed in the bottom panel SHALL be adjusted for atmospheric pressure. The thrust SHALL be linearly interpolated between vacuum and sea-level values based on the atmospheric pressure fraction at the ship's current altitude: `thrust = thrust_vac * (1 - pressure) + thrust_asl * pressure`, where pressure is `atmosphere.pressure_at_altitude(alt) / 101325` clamped to [0, 1]. TWR SHALL use this atmospheric thrust value. Delta-v estimates SHALL always use vacuum ISP.
 
 ### Requirement: Velocity and altitude display
 

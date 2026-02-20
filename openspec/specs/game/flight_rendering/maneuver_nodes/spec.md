@@ -96,7 +96,7 @@ Velocity at node position SHALL be computed via vis-viva equation. Prograde unit
 
 ### Requirement: Maneuver burn application
 
-During a burn with autopilot in ManeuverNode mode, `apply_burn_to_maneuver` SHALL project the ship's thrust onto the maneuver's coordinate system and reduce `remaining_delta_v`.
+During a burn with autopilot in ManeuverNode mode, `apply_burn_to_maneuver` SHALL project the ship's thrust onto the maneuver's coordinate system and reduce `remaining_delta_v`. The acceleration used for burn tracking SHALL be atmosphere-adjusted (interpolated between vacuum and sea-level thrust based on atmospheric pressure fraction), matching the actual physics thrust.
 
 #### Scenario: Burn projection
 - prograde_contribution = `dot(burn_dir, prograde_unit) * delta_v_magnitude`

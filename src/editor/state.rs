@@ -75,6 +75,7 @@ pub struct EditorState {
     pub ghost_position: Option<[f64; 2]>,
     pub ghost_valid: bool,
     pub mirror_ghost_position: Option<[f64; 2]>,
+    pub mirror_ghost_def_id: Option<String>,
 
     // Camera (zoom is pixels per meter)
     pub camera_offset: [f64; 2],
@@ -129,6 +130,7 @@ impl EditorState {
             ghost_position: None,
             ghost_valid: false,
             mirror_ghost_position: None,
+            mirror_ghost_def_id: None,
             camera_offset: [GRID_SIZE / 2.0, GRID_SIZE / 2.0],  // Center on middle of a square
             camera_zoom: 1.0,  // Start zoomed out to see workspace
             keys_held: CameraKeys::default(),
@@ -179,6 +181,7 @@ impl EditorState {
         self.ghost_position = None;
         self.ghost_valid = false;
         self.mirror_ghost_position = None;
+        self.mirror_ghost_def_id = None;
         self.stages.clear();
         self.staging_selected_engine = None;
         self.vessel_name = "Untitled Vessel".to_string();
@@ -282,6 +285,7 @@ impl EditorState {
             self.ghost_position = None;
             self.ghost_valid = false;
             self.mirror_ghost_position = None;
+            self.mirror_ghost_def_id = None;
             return;
         };
 
@@ -289,6 +293,7 @@ impl EditorState {
             self.ghost_position = None;
             self.ghost_valid = false;
             self.mirror_ghost_position = None;
+            self.mirror_ghost_def_id = None;
             return;
         };
 
@@ -328,12 +333,18 @@ impl EditorState {
 
         // Compute mirror ghost if in Mirror mode with a center line
         self.mirror_ghost_position = None;
+        self.mirror_ghost_def_id = None;
         if self.symmetry_mode == SymmetryMode::Mirror {
             if let Some(center_x) = self.center_line_x() {
                 let mirror_x = center_x * 2.0 - snapped_x;
                 // Only mirror if ghost is not on the center line
                 if (snapped_x - center_x).abs() > GRID_SIZE * 0.1 {
                     self.mirror_ghost_position = Some([mirror_x, snapped_y]);
+
+                    // Resolve mirror def id for asymmetric parts
+                    self.mirror_ghost_def_id = def.mirror_def_id.as_ref()
+                        .filter(|mid| part_defs.get(mid).is_some())
+                        .cloned();
 
                     // Check mirror ghost overlap too
                     if !overlaps {
@@ -471,9 +482,12 @@ impl EditorState {
             let mirror_id = self.next_part_id;
             self.next_part_id += 1;
 
+            // Use mirror def if available (e.g. right nose cone -> left nose cone)
+            let mirror_def_id = self.mirror_ghost_def_id.clone().unwrap_or_else(|| def_id.clone());
+
             // Link the two parts
             part.mirror_partner = Some(mirror_id);
-            let mut mirror_part = PlacedPart::new(mirror_id, def_id.clone(), mirror_pos);
+            let mut mirror_part = PlacedPart::new(mirror_id, mirror_def_id, mirror_pos);
             mirror_part.mirror_partner = Some(id);
 
             self.parts.insert(id, part);
@@ -576,6 +590,7 @@ impl EditorState {
         self.ghost_position = None;
         self.ghost_valid = false;
         self.mirror_ghost_position = None;
+        self.mirror_ghost_def_id = None;
     }
 
     /// Select a placed part
@@ -878,11 +893,58 @@ impl EditorState {
         self.parts.len()
     }
 
+    /// Check if an engine is covered by a decoupler directly below it.
+    /// A covered engine has a decoupler whose top edge is near/touching the engine's bottom
+    /// edge and whose horizontal extent overlaps the engine's.
+    fn is_editor_engine_covered(
+        &self,
+        engine_id: PlacedPartId,
+        part_defs: &PartDefinitions,
+    ) -> bool {
+        self.is_editor_engine_covered_with_decoupled(engine_id, part_defs, &HashSet::new())
+    }
+
+    /// Check engine coverage considering a set of already-decoupled parts.
+    /// Decouplers in the decoupled set no longer block engines.
+    fn is_editor_engine_covered_with_decoupled(
+        &self,
+        engine_id: PlacedPartId,
+        part_defs: &PartDefinitions,
+        decoupled: &HashSet<PlacedPartId>,
+    ) -> bool {
+        let Some(engine_part) = self.parts.get(&engine_id) else { return false };
+        let Some(engine_def) = part_defs.get(&engine_part.definition_id) else { return false };
+        let engine_bottom = engine_part.position[1] - engine_def.hitbox_height() / 2.0;
+        let engine_left = engine_part.position[0] - engine_def.hitbox_width() / 2.0;
+        let engine_right = engine_part.position[0] + engine_def.hitbox_width() / 2.0;
+
+        for (&other_id, other_part) in &self.parts {
+            if other_id == engine_id || decoupled.contains(&other_id) {
+                continue;
+            }
+            let Some(other_def) = part_defs.get(&other_part.definition_id) else { continue };
+            if other_def.decoupler.is_none() {
+                continue;
+            }
+            let decoupler_top = other_part.position[1] + other_def.hitbox_height() / 2.0;
+            let decoupler_left = other_part.position[0] - other_def.hitbox_width() / 2.0;
+            let decoupler_right = other_part.position[0] + other_def.hitbox_width() / 2.0;
+
+            if (decoupler_top - engine_bottom).abs() < 0.3
+                && engine_left < decoupler_right
+                && engine_right > decoupler_left
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Calculate ship statistics from placed parts
     pub fn calculate_stats(&self, part_defs: &PartDefinitions) -> ShipStats {
         let mut stats = ShipStats::default();
 
-        for part in self.parts.values() {
+        for (&part_id, part) in &self.parts {
             let Some(def) = part_defs.get(&part.definition_id) else {
                 continue;
             };
@@ -890,26 +952,30 @@ impl EditorState {
             // Add dry mass
             stats.dry_mass += def.mass;
 
-            // Add engine thrust
+            // Add engine thrust (skip engines covered by a decoupler below)
             if let Some(ref engine) = def.engine {
-                stats.thrust_vac += engine.thrust_vac;
-                stats.thrust_asl += engine.thrust_asl;
+                if !self.is_editor_engine_covered(part_id, part_defs) {
+                    stats.thrust_vac += engine.thrust_vac;
+                    stats.thrust_asl += engine.thrust_asl;
+                }
             }
 
-            // Add tank resources if filled
+            // Add tank resources based on fill_fraction
             if let Some(ref tank) = def.tank {
-                if part.tank_filled && part.fuel_type != FuelType::Empty {
+                if part.fill_fraction > 0.0 && part.fuel_type != FuelType::Empty {
                     let (ox_kg, fuel_kg) = tank.propellant_capacity(part.fuel_type);
 
                     // Add oxygen
-                    let ox_entry = stats.resources.entry("oxygen".to_string()).or_default();
-                    ox_entry.current += ox_kg;
-                    ox_entry.max += ox_kg;
+                    if ox_kg > 0.0 {
+                        let ox_entry = stats.resources.entry("oxygen".to_string()).or_default();
+                        ox_entry.current += ox_kg * part.fill_fraction;
+                        ox_entry.max += ox_kg;
+                    }
 
                     // Add fuel
                     if let Some(fuel_name) = part.fuel_type.fuel_resource_name() {
                         let fuel_entry = stats.resources.entry(fuel_name.to_string()).or_default();
-                        fuel_entry.current += fuel_kg;
+                        fuel_entry.current += fuel_kg * part.fill_fraction;
                         fuel_entry.max += fuel_kg;
                     }
                 }
@@ -990,9 +1056,9 @@ impl EditorState {
         for (&part_id, part) in &self.parts {
             let Some(def) = part_defs.get(&part.definition_id) else { continue };
             if let Some(ref tank) = def.tank {
-                if part.tank_filled && part.fuel_type != FuelType::Empty {
+                if part.fill_fraction > 0.0 && part.fuel_type != FuelType::Empty {
                     let (ox_kg, fuel_kg) = tank.propellant_capacity(part.fuel_type);
-                    fuel_remaining.insert(part_id, (ox_kg + fuel_kg) / 1000.0);
+                    fuel_remaining.insert(part_id, (ox_kg + fuel_kg) * part.fill_fraction / 1000.0);
                 }
             }
         }
@@ -1030,9 +1096,10 @@ impl EditorState {
             // 3. Compute fuel zones — non-crossfeed decouplers divide the rocket
             let zone_of = self.compute_editor_fuel_zones(part_defs, &decoupled);
 
-            // 4. Find zones containing active (non-decoupled) engines
+            // 4. Find zones containing active (non-decoupled, non-covered) engines
             let engine_zones: HashSet<usize> = engines_enabled.iter()
                 .filter(|id| !decoupled.contains(id))
+                .filter(|id| !self.is_editor_engine_covered_with_decoupled(**id, part_defs, &decoupled))
                 .filter_map(|id| zone_of.get(id).copied())
                 .collect();
 
@@ -1053,11 +1120,12 @@ impl EditorState {
                 }
             }
 
-            // 6. Calculate thrust-weighted average Isp of active engines
+            // 6. Calculate thrust-weighted average Isp (skip covered engines)
             let mut total_thrust = 0.0;
             let mut weighted_isp = 0.0;
             for &engine_id in &engines_enabled {
                 if decoupled.contains(&engine_id) { continue; }
+                if self.is_editor_engine_covered_with_decoupled(engine_id, part_defs, &decoupled) { continue; }
                 let Some(part) = self.parts.get(&engine_id) else { continue };
                 let Some(def) = part_defs.get(&part.definition_id) else { continue };
                 if let Some(ref engine) = def.engine {

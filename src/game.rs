@@ -429,6 +429,7 @@ impl Game {
                 &self.solar_system,
                 None,
                 false,
+                self.flight.vessel.is_some(),
             );
 
             if let Some(ref mut vessel) = self.flight.vessel {

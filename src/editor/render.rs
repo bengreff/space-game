@@ -32,6 +32,10 @@ const POD_WINDOW_COLOR: [f32; 4] = [0.9, 0.9, 0.95, 1.0];          // White/ligh
 // Decoupler colors
 const DECOUPLER_RING_COLOR: [f32; 4] = [0.25, 0.25, 0.28, 1.0];    // Dark metallic grey ring
 
+// Heat shield colors
+const HEAT_SHIELD_FACE_COLOR: [f32; 4] = [0.05, 0.05, 0.05, 1.0];  // Near-black ablative face
+const HEAT_SHIELD_BACK_COLOR: [f32; 4] = [0.12, 0.12, 0.12, 1.0];  // Dark backing structure
+
 /// Generate vertices for the editor grid (as thin quads for triangle rendering)
 /// Note: Vertices are output in CAMERA-RELATIVE coordinates (shader expects this)
 pub fn generate_grid_vertices(
@@ -209,6 +213,29 @@ pub fn generate_part_vertices(
             continue;
         }
 
+        // For heat shields, use dedicated heat shield rendering
+        if def.is_heat_shield {
+            generate_heat_shield_details(&mut vertices, def, x, y, 1.0);
+
+            if is_selected || is_hovered || drag_invalid {
+                let highlight_color = if drag_invalid {
+                    [0.9, 0.2, 0.2, 0.4]
+                } else if is_selected {
+                    [0.5, 0.7, 1.0, 0.3]
+                } else {
+                    [0.55, 0.55, 0.6, 0.2]
+                };
+                let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
+                vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x + half_w, y - hitbox_half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x - half_w, y + hitbox_half_h], color: highlight_color });
+            }
+            continue;
+        }
+
         // For decouplers, use dedicated decoupler rendering
         if def.decoupler.is_some() {
             generate_decoupler_details(&mut vertices, def, x, y, 1.0);
@@ -229,6 +256,28 @@ pub fn generate_part_vertices(
                 vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: highlight_color });
                 vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: highlight_color });
                 vertices.push(Vertex { position: [x - half_w, y + hitbox_half_h], color: highlight_color });
+            }
+            continue;
+        }
+
+        // For RCS thrusters, use dedicated RCS rendering
+        if def.rcs.is_some() {
+            generate_rcs_details(&mut vertices, def, x, y, 1.0);
+
+            if is_selected || is_hovered || drag_invalid {
+                let highlight_color = if drag_invalid {
+                    [0.9, 0.2, 0.2, 0.4]
+                } else if is_selected {
+                    [0.5, 0.7, 1.0, 0.3]
+                } else {
+                    [0.55, 0.55, 0.6, 0.2]
+                };
+                vertices.push(Vertex { position: [x - half_w, y - half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x + half_w, y - half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x + half_w, y + half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x - half_w, y - half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x + half_w, y + half_h], color: highlight_color });
+                vertices.push(Vertex { position: [x - half_w, y + half_h], color: highlight_color });
             }
             continue;
         }
@@ -268,6 +317,32 @@ pub fn generate_part_vertices(
                     vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay });
                     vertices.push(Vertex { position: [x + half_w, y - half_h], color: overlay });
                     vertices.push(Vertex { position: [x, y + half_h], color: overlay });
+                }
+            }
+            PartShape::TriangleRight => {
+                // Right triangle: vertical edge on right, hypotenuse on left
+                vertices.push(Vertex { position: [x - half_w, y - half_h], color });
+                vertices.push(Vertex { position: [x + half_w, y - half_h], color });
+                vertices.push(Vertex { position: [x + half_w, y + half_h], color });
+
+                if drag_invalid {
+                    let overlay = [0.9, 0.2, 0.2, 0.4];
+                    vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay });
+                    vertices.push(Vertex { position: [x + half_w, y - half_h], color: overlay });
+                    vertices.push(Vertex { position: [x + half_w, y + half_h], color: overlay });
+                }
+            }
+            PartShape::TriangleLeft => {
+                // Right triangle: vertical edge on left, hypotenuse on right
+                vertices.push(Vertex { position: [x - half_w, y - half_h], color });
+                vertices.push(Vertex { position: [x + half_w, y - half_h], color });
+                vertices.push(Vertex { position: [x - half_w, y + half_h], color });
+
+                if drag_invalid {
+                    let overlay = [0.9, 0.2, 0.2, 0.4];
+                    vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay });
+                    vertices.push(Vertex { position: [x + half_w, y - half_h], color: overlay });
+                    vertices.push(Vertex { position: [x - half_w, y + half_h], color: overlay });
                 }
             }
             PartShape::Trapezoid => {
@@ -371,6 +446,24 @@ fn generate_single_ghost_vertices(
         return;
     }
 
+    if def.is_heat_shield {
+        generate_heat_shield_details(vertices, def, x, y, ghost_alpha);
+
+        let overlay_color = if ghost_valid {
+            [0.3, 0.9, 0.3, 0.25]
+        } else {
+            [0.9, 0.3, 0.3, 0.25]
+        };
+        let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
+        vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x + half_w, y - hitbox_half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x - half_w, y + hitbox_half_h], color: overlay_color });
+        return;
+    }
+
     if def.decoupler.is_some() {
         generate_decoupler_details(vertices, def, x, y, ghost_alpha);
 
@@ -390,6 +483,23 @@ fn generate_single_ghost_vertices(
         vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: overlay_color });
         vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: overlay_color });
         vertices.push(Vertex { position: [x - half_w, y + hitbox_half_h], color: overlay_color });
+        return;
+    }
+
+    if def.rcs.is_some() {
+        generate_rcs_details(vertices, def, x, y, ghost_alpha);
+
+        let overlay_color = if ghost_valid {
+            [0.3, 0.9, 0.3, 0.25]
+        } else {
+            [0.9, 0.3, 0.3, 0.25]
+        };
+        vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x + half_w, y - half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x + half_w, y + half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x + half_w, y + half_h], color: overlay_color });
+        vertices.push(Vertex { position: [x - half_w, y + half_h], color: overlay_color });
         return;
     }
 
@@ -413,6 +523,16 @@ fn generate_single_ghost_vertices(
             vertices.push(Vertex { position: [x - half_w, y - half_h], color });
             vertices.push(Vertex { position: [x + half_w, y - half_h], color });
             vertices.push(Vertex { position: [x, y + half_h], color });
+        }
+        PartShape::TriangleRight => {
+            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_w, y + half_h], color });
+        }
+        PartShape::TriangleLeft => {
+            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x - half_w, y + half_h], color });
         }
         PartShape::Trapezoid => {
             let half_top_w = (def.top_width() / 2.0) as f32;
@@ -451,9 +571,12 @@ pub fn generate_ghost_vertices(
     // Render primary ghost
     generate_single_ghost_vertices(&mut vertices, def, position, editor.ghost_valid, editor, part_defs);
 
-    // Render mirror ghost if applicable
+    // Render mirror ghost if applicable, using mirror def if available
     if let Some(mirror_pos) = editor.mirror_ghost_position {
-        generate_single_ghost_vertices(&mut vertices, def, mirror_pos, editor.ghost_valid, editor, part_defs);
+        let mirror_def = editor.mirror_ghost_def_id.as_ref()
+            .and_then(|mid| part_defs.get(mid))
+            .unwrap_or(def);
+        generate_single_ghost_vertices(&mut vertices, mirror_def, mirror_pos, editor.ghost_valid, editor, part_defs);
     }
 
     vertices
@@ -549,13 +672,6 @@ fn generate_engine_specific_details(
             draw_combustion_chamber(vertices, x, y + half_h * 0.75, half_top_w * 0.6, half_h * 0.25, chamber_color);
             draw_nozzle_rings(vertices, x, y, half_w, half_top_w, half_h, 2, ring_color);
         }
-        "engine_sparrow" => {
-            // High gimbal landing engine
-            draw_combustion_chamber(vertices, x, y + half_h * 0.6, half_top_w * 0.7, half_h * 0.4, chamber_color);
-            draw_nozzle_rings(vertices, x, y, half_w, half_top_w, half_h, 4, ring_color);
-            draw_gimbal_actuators(vertices, x, y + half_h * 0.3, half_top_w * 0.9, half_h * 0.15, ring_color);
-        }
-
         // SMALL ENGINES
         "engine_wolf" => {
             // Merlin-style reusable kerolox - many cooling rings
@@ -568,6 +684,11 @@ fn generate_engine_specific_details(
             draw_combustion_chamber(vertices, x, y + half_h * 0.65, half_top_w * 0.85, half_h * 0.35, chamber_color);
             draw_nozzle_rings(vertices, x, y, half_w, half_top_w, half_h, 6, ring_color);
             draw_gimbal_actuators(vertices, x, y + half_h * 0.2, half_top_w * 0.7, half_h * 0.1, ring_color);
+        }
+        "engine_wren" => {
+            // Compact hydrolox upper stage - small chamber, 2 rings
+            draw_combustion_chamber(vertices, x, y + half_h * 0.8, half_top_w * 0.6, half_h * 0.2, chamber_color);
+            draw_nozzle_rings(vertices, x, y, half_w, half_top_w, half_h, 2, ring_color);
         }
         "engine_owl" => {
             // Vacuum hydrolox - large bell, few rings
@@ -806,6 +927,122 @@ pub fn generate_decoupler_details(
     vertices.push(Vertex { position: [x - half_w, ring_top], color: ring_color });
 }
 
+/// Generate heat shield details (black ablative face with convex dome, dark backing band)
+/// Drawn on the upper half of the hitbox
+pub fn generate_heat_shield_details(
+    vertices: &mut Vec<Vertex>,
+    def: &PartDefinition,
+    x: f32,
+    y: f32,
+    alpha: f32,
+) {
+    let half_w = (def.width() / 2.0) as f32;
+    let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
+    let visual_h = def.height() as f32;
+
+    let face_color = [HEAT_SHIELD_FACE_COLOR[0], HEAT_SHIELD_FACE_COLOR[1], HEAT_SHIELD_FACE_COLOR[2], HEAT_SHIELD_FACE_COLOR[3] * alpha];
+    let back_color = [HEAT_SHIELD_BACK_COLOR[0], HEAT_SHIELD_BACK_COLOR[1], HEAT_SHIELD_BACK_COLOR[2], HEAT_SHIELD_BACK_COLOR[3] * alpha];
+
+    // Heat shield is drawn on the upper half of the hitbox
+    let shield_top = y + hitbox_half_h;
+    let shield_bottom = shield_top - visual_h;
+
+    // Backing structure (top 40%) — flat rectangle
+    let back_bottom = shield_top - visual_h * 0.4;
+    vertices.push(Vertex { position: [x - half_w, back_bottom], color: back_color });
+    vertices.push(Vertex { position: [x + half_w, back_bottom], color: back_color });
+    vertices.push(Vertex { position: [x + half_w, shield_top], color: back_color });
+    vertices.push(Vertex { position: [x - half_w, back_bottom], color: back_color });
+    vertices.push(Vertex { position: [x + half_w, shield_top], color: back_color });
+    vertices.push(Vertex { position: [x - half_w, shield_top], color: back_color });
+
+    // Ablative face (bottom 60%) — convex dome with curved bottom edge
+    let face_top = back_bottom;
+    let face_flat_bottom = shield_bottom;
+    let sag = visual_h * 0.3; // How far the dome bulges downward
+    let segments = 8;
+
+    for i in 0..segments {
+        // Theta spans from -PI/2 to PI/2 across the width
+        let theta0 = -std::f32::consts::FRAC_PI_2
+            + std::f32::consts::PI * (i as f32) / (segments as f32);
+        let theta1 = -std::f32::consts::FRAC_PI_2
+            + std::f32::consts::PI * ((i + 1) as f32) / (segments as f32);
+
+        // X positions along the width
+        let x0 = x + half_w * theta0.sin();
+        let x1 = x + half_w * theta1.sin();
+
+        // Bottom edge Y dips by sag * cos(theta) — deepest at center
+        let y0_bot = face_flat_bottom - sag * theta0.cos();
+        let y1_bot = face_flat_bottom - sag * theta1.cos();
+
+        // Two triangles: top-left to bottom edge segment
+        // Triangle 1: top-left, top-right, bottom-right
+        vertices.push(Vertex { position: [x0, face_top], color: face_color });
+        vertices.push(Vertex { position: [x1, face_top], color: face_color });
+        vertices.push(Vertex { position: [x1, y1_bot], color: face_color });
+
+        // Triangle 2: top-left, bottom-right, bottom-left
+        vertices.push(Vertex { position: [x0, face_top], color: face_color });
+        vertices.push(Vertex { position: [x1, y1_bot], color: face_color });
+        vertices.push(Vertex { position: [x0, y0_bot], color: face_color });
+    }
+}
+
+// RCS colors
+const RCS_BODY_COLOR: [f32; 4] = [0.20, 0.20, 0.22, 1.0];     // Dark grey body
+const RCS_NOZZLE_COLOR: [f32; 4] = [0.12, 0.12, 0.14, 1.0];   // Darker nozzle tips
+
+/// Generate RCS thruster details (dark grey body with 4 triangular nozzles)
+pub fn generate_rcs_details(
+    vertices: &mut Vec<Vertex>,
+    def: &PartDefinition,
+    x: f32,
+    y: f32,
+    alpha: f32,
+) {
+    let half_w = (def.width() / 2.0) as f32;
+    let half_h = (def.height() / 2.0) as f32;
+
+    let body_color = [RCS_BODY_COLOR[0], RCS_BODY_COLOR[1], RCS_BODY_COLOR[2], RCS_BODY_COLOR[3] * alpha];
+    let nozzle_color = [RCS_NOZZLE_COLOR[0], RCS_NOZZLE_COLOR[1], RCS_NOZZLE_COLOR[2], RCS_NOZZLE_COLOR[3] * alpha];
+
+    // Central body (60% of size)
+    let body_hw = half_w * 0.6;
+    let body_hh = half_h * 0.6;
+    vertices.push(Vertex { position: [x - body_hw, y - body_hh], color: body_color });
+    vertices.push(Vertex { position: [x + body_hw, y - body_hh], color: body_color });
+    vertices.push(Vertex { position: [x + body_hw, y + body_hh], color: body_color });
+    vertices.push(Vertex { position: [x - body_hw, y - body_hh], color: body_color });
+    vertices.push(Vertex { position: [x + body_hw, y + body_hh], color: body_color });
+    vertices.push(Vertex { position: [x - body_hw, y + body_hh], color: body_color });
+
+    // 4 nozzle triangles pointing outward
+    let nozzle_len = half_w * 0.4;
+    let nozzle_hw = half_h * 0.2;
+
+    // Right nozzle
+    vertices.push(Vertex { position: [x + body_hw, y - nozzle_hw], color: nozzle_color });
+    vertices.push(Vertex { position: [x + body_hw, y + nozzle_hw], color: nozzle_color });
+    vertices.push(Vertex { position: [x + body_hw + nozzle_len, y], color: nozzle_color });
+
+    // Left nozzle
+    vertices.push(Vertex { position: [x - body_hw, y - nozzle_hw], color: nozzle_color });
+    vertices.push(Vertex { position: [x - body_hw, y + nozzle_hw], color: nozzle_color });
+    vertices.push(Vertex { position: [x - body_hw - nozzle_len, y], color: nozzle_color });
+
+    // Top nozzle
+    vertices.push(Vertex { position: [x - nozzle_hw, y + body_hh], color: nozzle_color });
+    vertices.push(Vertex { position: [x + nozzle_hw, y + body_hh], color: nozzle_color });
+    vertices.push(Vertex { position: [x, y + body_hh + nozzle_len], color: nozzle_color });
+
+    // Bottom nozzle
+    vertices.push(Vertex { position: [x - nozzle_hw, y - body_hh], color: nozzle_color });
+    vertices.push(Vertex { position: [x + nozzle_hw, y - body_hh], color: nozzle_color });
+    vertices.push(Vertex { position: [x, y - body_hh - nozzle_len], color: nozzle_color });
+}
+
 /// Generate adapter trapezoid connecting the closest aligned fuel tank above to a decoupler ring.
 /// Draws from two of the tank's bottom vertices to two of the decoupler's top vertices.
 /// draw_x/draw_y are camera-relative coords for rendering; world_x/world_y are world coords for adjacency checks.
@@ -837,7 +1074,7 @@ fn generate_decoupler_adapter(
             continue;
         };
 
-        if other_def.tank.is_none() {
+        if other_def.tank.is_none() && other_def.pod.is_none() {
             continue;
         }
 
@@ -960,7 +1197,7 @@ pub fn generate_flight_decoupler_adapter(
             continue;
         };
 
-        if other_def.tank.is_none() {
+        if other_def.tank.is_none() && other_def.pod.is_none() {
             continue;
         }
 
@@ -1120,9 +1357,21 @@ pub fn generate_part_shape_vertices(
         return;
     }
 
+    // For heat shields, use dedicated rendering
+    if def.is_heat_shield {
+        generate_heat_shield_details(vertices, def, x, y, alpha);
+        return;
+    }
+
     // For decouplers, draw the ring (adapter needs parts list, handled separately)
     if def.decoupler.is_some() {
         generate_decoupler_details(vertices, def, x, y, alpha);
+        return;
+    }
+
+    // For RCS thrusters
+    if def.rcs.is_some() {
+        generate_rcs_details(vertices, def, x, y, alpha);
         return;
     }
 
@@ -1143,6 +1392,16 @@ pub fn generate_part_shape_vertices(
             vertices.push(Vertex { position: [x - half_w, y - half_h], color });
             vertices.push(Vertex { position: [x + half_w, y - half_h], color });
             vertices.push(Vertex { position: [x, y + half_h], color });
+        }
+        PartShape::TriangleRight => {
+            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_w, y + half_h], color });
+        }
+        PartShape::TriangleLeft => {
+            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
+            vertices.push(Vertex { position: [x - half_w, y + half_h], color });
         }
         PartShape::Trapezoid => {
             let half_top_w = (def.top_width() / 2.0) as f32;

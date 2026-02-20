@@ -121,6 +121,27 @@ egui text labels "Ap" and "Pe" SHALL be rendered at each marker's screen positio
 - Within 20 pixels of marker: show altitude at `(x, y + 14)`, font size 10
 - Format: `>= 1e9` -> "X.XX Gm", `>= 1e6` -> "X.X Mm", `>= 1e3` -> "X.X km", else "X m"
 
+## Prograde Direction Arrow
+
+### Requirement: Prograde arrow in ship view
+
+When zoomed into the ship (`!needs_indicator`, i.e. ship_pixels >= 5.0) and velocity > 0.1 m/s, a green chevron arrow SHALL be drawn pointing in the prograde (velocity) direction.
+
+#### Scenario: Arrow geometry
+- Color: `[0.3, 1.0, 0.3, 0.7]` (green, semi-transparent)
+- Position: offset from ship center by `size * 1.5` in the prograde direction
+- Size: `size * 0.4` arm length, `size * 0.04` arm thickness
+- Two quad arms forming a chevron (">") pointing in velocity direction
+- Arms spread at ~0.5 radians (~29 degrees) from the prograde axis
+
+#### Scenario: Arrow direction
+- Direction is based on `velocity_direction` (normalized velocity unit vector), independent of ship rotation
+- Arrow is drawn in world space and scales naturally with zoom
+
+#### Scenario: Arrow not shown
+- **WHEN** `needs_indicator` is true (map view) **THEN** no prograde arrow is drawn
+- **WHEN** velocity < 0.1 m/s **THEN** `velocity_direction` is `[0, 0]` and no arrow is drawn
+
 ## Flight Part Selection
 
 ### Requirement: Flight part click detection

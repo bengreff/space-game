@@ -42,6 +42,10 @@ The ghost SHALL be marked invalid unless its welding hitbox (build hitbox * 1.05
 
 When symmetry mode is Mirror and a palette part is selected, the editor SHALL display two ghost previews: the primary ghost at the cursor position (grid-snapped) and a mirrored ghost reflected across the center line. The mirrored ghost X position SHALL be `center_line_x * 2 - primary_x`. The mirrored ghost Y position SHALL equal the primary ghost Y position.
 
+### Requirement: Mirror-aware ghost shape
+
+When the selected part definition has a `mirror_def_id` field set, the mirrored ghost SHALL render using the mirror definition's shape instead of the primary definition's shape. If `mirror_def_id` references a nonexistent definition, the primary definition SHALL be used as fallback. Symmetric parts (those without `mirror_def_id`) SHALL use the same definition for both ghosts.
+
 #### Scenario: Mirror ghost positions
 
 - **WHEN** symmetry mode is Mirror, center line is at X = 2.0, and the cursor snaps to `[3.5, 1.0]`
@@ -84,6 +88,20 @@ When an engine or decoupler is placed, it SHALL be automatically added to stage 
 
 When symmetry mode is Mirror and placement is valid, left-clicking SHALL place two parts simultaneously: the primary part at the ghost position and the mirrored part at the mirrored position. Both parts SHALL be assigned unique `PlacedPartId` values and linked via `mirror_partner` fields pointing to each other.
 
+### Requirement: Mirror-aware part definition
+
+When placing a mirrored pair, the mirrored part SHALL use the `mirror_def_id` definition if the primary part's definition specifies one and it exists in the registry. Otherwise, the mirrored part SHALL use the same definition as the primary part. This enables asymmetric parts (e.g., right side nose cone) to automatically use their counterpart (left side nose cone) for the mirror copy.
+
+#### Scenario: Asymmetric mirror placement
+
+- **WHEN** the user places a right side nose cone (`nosecone_side_right_small`, `mirror_def_id: "nosecone_side_left_small"`) in Mirror mode
+- **THEN** the primary part SHALL use `nosecone_side_right_small` and the mirrored part SHALL use `nosecone_side_left_small`
+
+#### Scenario: Symmetric mirror placement
+
+- **WHEN** the user places a fuel tank (no `mirror_def_id`) in Mirror mode
+- **THEN** both parts SHALL use the same definition ID
+
 #### Scenario: Mirror placement creates linked pair
 
 - **WHEN** the user clicks to place a part in Mirror mode at `[3.5, 1.0]` with center line at X = 2.0
@@ -118,6 +136,25 @@ Left-clicking on a placed part SHALL select it and clear any palette selection. 
 
 Moving the cursor over a placed part SHALL highlight it. Hit testing SHALL use hitbox dimensions (not visual dimensions) for AABB point-in-rect testing.
 
+### Requirement: Bidirectional staging-grid selection linking
+
+Selecting a placed part on the build grid SHALL highlight its corresponding entry in the staging panel with a blue color (`Color32::from_rgb(128, 179, 255)`). If the selected part has a `mirror_partner` in the same stage, the combined "x2" entry SHALL also highlight. Clicking or drag-starting a part entry in the staging panel SHALL select that part on the build grid, clearing any palette selection and ghost preview.
+
+#### Scenario: Grid selection highlights staging entry
+
+- **WHEN** the user selects a placed engine on the build grid that is in stage 1
+- **THEN** the engine's label in the staging panel SHALL render with highlight color
+
+#### Scenario: Staging click selects grid part
+
+- **WHEN** the user clicks a part label in the staging panel
+- **THEN** that part SHALL become the selected placed part on the grid and the part info panel SHALL appear
+
+#### Scenario: Mirror pair highlight via staging
+
+- **WHEN** the user selects one engine of a mirror pair on the grid
+- **THEN** the combined "x2" entry in the staging panel SHALL highlight
+
 ## Part Info Panel
 
 ### Requirement: Info panel visibility
@@ -138,11 +175,23 @@ For tanks selected in the palette, the info panel SHALL display: dry mass, grid 
 
 ### Requirement: Tank info for placed parts
 
-For placed tanks, the info panel SHALL additionally display: fuel type selector buttons, fill/empty toggle, progress bars for oxidizer and fuel amounts, and dry/propellant/total mass breakdown. Selecting a non-Empty fuel type SHALL automatically set `tank_filled` to true. Selecting Empty SHALL set `tank_filled` to false.
+For placed tanks, the info panel SHALL additionally display: fuel type selector buttons, draggable fuel bars showing current and max amounts, Fill/Empty convenience buttons, and dry/propellant/total mass breakdown. Selecting a non-Empty fuel type SHALL automatically set `fill_fraction` to 1.0. Selecting Empty SHALL set `fill_fraction` to 0.0.
+
+### Requirement: Draggable tank fill bars
+
+Each fuel bar SHALL be a custom-drawn interactive rectangle that responds to click and drag. Clicking or dragging on a bar SHALL set `fill_fraction` (0.0–1.0) based on the mouse X position relative to the bar. Both the oxidizer and fuel bars control the same `fill_fraction` (they scale together). The oxidizer bar SHALL only be displayed when the fuel type produces oxidizer (i.e., `ox_cap > 0.0`). Monopropellant tanks SHALL show only the fuel bar.
+
+### Requirement: Fill fraction data model
+
+`PlacedPart` SHALL use `fill_fraction: f64` (0.0–1.0) instead of `tank_filled: bool`. `BlueprintPart` SHALL include both `fill_fraction: f64` and `tank_filled: bool` (serde-defaulting) for backward compatibility with saved blueprints. When loading, `fill_fraction` takes priority; if zero, `tank_filled: true` maps to `fill_fraction: 1.0`.
 
 ### Requirement: Pod info
 
-For pods, the info panel SHALL display: crew capacity and reaction wheel torque.
+For pods, the info panel SHALL display: crew capacity.
+
+### Requirement: RCS info
+
+For RCS thrusters, the info panel SHALL display: thrust (kN), specific impulse (seconds), and fuel type (Monopropellant).
 
 ### Requirement: Decoupler info for placed parts
 
@@ -150,7 +199,7 @@ For placed decouplers, the info panel SHALL display a "Fuel Crossfeed" checkbox 
 
 ### Requirement: Linked part info panel
 
-When a part with a `mirror_partner` is selected, changes made in the part info panel SHALL apply to both parts. This includes fuel type selection, fill/empty toggle, and crossfeed toggle.
+When a part with a `mirror_partner` is selected, changes made in the part info panel SHALL apply to both parts. This includes fuel type selection, fill fraction (via drag, Fill, or Empty), and crossfeed toggle.
 
 #### Scenario: Fuel type change applies to both
 
@@ -241,6 +290,10 @@ If the deleted part was the root, the root SHALL be reassigned to any remaining 
 ### Requirement: Mirror partner field
 
 `PlacedPart` SHALL have a `mirror_partner: Option<PlacedPartId>` field. When two parts are mirror-placed, each SHALL reference the other. Parts placed without mirroring or on the center line SHALL have `mirror_partner = None`.
+
+### Requirement: Mirror definition field
+
+`PartDefinition` SHALL have a `mirror_def_id: Option<String>` field (serde-defaulting to `None`). When set, mirror placement and ghost rendering SHALL use the referenced definition for the mirrored copy. The field SHALL form bidirectional pairs: if part A references part B, part B SHALL reference part A.
 
 #### Scenario: Bidirectional link
 

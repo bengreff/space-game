@@ -19,7 +19,6 @@
             hitbox_height: Some(3),
             pod: Some((
                 crew_capacity: 2,
-                torque: 5.0,
             )),
             resources: {},
         ),
@@ -41,7 +40,6 @@
             hitbox_height: Some(4),
             pod: Some((
                 crew_capacity: 4,
-                torque: 10.0,
             )),
             resources: {},
         ),

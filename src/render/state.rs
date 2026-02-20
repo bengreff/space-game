@@ -56,6 +56,7 @@ pub struct RenderState {
     pub ship_heat_fraction: f32,          // 0.0-1.0, for visual effects
     pub ship_heat_flux: f64,              // W/m², for HUD display
     pub ship_below_landing_altitude: bool, // Whether warp > 10x should be blocked
+    pub ship_velocity_direction: [f64; 2], // Normalized velocity unit vector for prograde arrow
     // Part click state
     pub selected_flight_part: Option<usize>,  // index into flight_parts_cache
     pub flight_parts_cache: Vec<super::types::ShipPartRenderData>,
@@ -323,6 +324,7 @@ impl RenderState {
             ship_heat_fraction: 0.0,
             ship_heat_flux: 0.0,
             ship_below_landing_altitude: false,
+            ship_velocity_direction: [0.0, 0.0],
             selected_flight_part: None,
             flight_parts_cache: Vec::new(),
             ship_render_x: 0.0,
@@ -1380,8 +1382,9 @@ impl RenderState {
                                 if let (Some(current), Some(max)) = (part.fuel_current, part.fuel_max) {
                                     if max > 0.0 {
                                         let frac = (current / max) as f32;
+                                        let fuel_label = fuel_name.split('/').last().unwrap_or("Fuel");
                                         let bar = egui::ProgressBar::new(frac)
-                                            .text(format!("Fuel: {:.0}/{:.0} kg", current, max))
+                                            .text(format!("{}: {:.0}/{:.0} kg", fuel_label, current, max))
                                             .fill(egui::Color32::from_rgb(200, 160, 60));
                                         ui.add(bar);
                                     }
@@ -1805,6 +1808,7 @@ impl RenderState {
             self.ship_heat_fraction = s.heat_fraction;
             self.ship_heat_flux = s.heat_flux;
             self.ship_below_landing_altitude = s.below_landing_altitude;
+            self.ship_velocity_direction = s.velocity_direction;
             self.ship_render_x = s.x;
             self.ship_render_y = s.y;
             self.ship_render_rotation = s.rotation;
@@ -2739,9 +2743,9 @@ impl RenderState {
                                 // Rotate around origin by vessel rotation
                                 let rx = vx * cos_r - vy * sin_r;
                                 let ry = vx * sin_r + vy * cos_r;
-                                // Apply heat tinting to part color
-                                let color = if ship_data.heat_fraction > 0.01 {
-                                    let h = ship_data.heat_fraction;
+                                // Apply per-part heat tinting
+                                let color = if part_data.heat_fraction > 0.01 {
+                                    let h = part_data.heat_fraction;
                                     let r = vert.color[0] + (1.0 - vert.color[0]) * h;
                                     let g = if h < 0.5 {
                                         vert.color[1] + (0.6 - vert.color[1]) * h * 2.0
@@ -2851,6 +2855,81 @@ impl RenderState {
                     all_indices.push(base_index);
                     all_indices.push(base_index + 1);
                     all_indices.push(base_index + 2);
+                }
+            }
+
+            // Draw prograde direction arrow in ship view (when zoomed in enough to see parts)
+            if !needs_indicator {
+                let vdir = ship_data.velocity_direction;
+                let has_velocity = vdir[0] != 0.0 || vdir[1] != 0.0;
+                if has_velocity {
+                    let prograde_color = [0.3_f32, 1.0, 0.3, 0.7];
+                    let arrow_offset = size * 1.5;
+                    let arrow_size = size * 0.4;
+                    let vdx = vdir[0] as f32;
+                    let vdy = vdir[1] as f32;
+
+                    // Scale velocity direction to rendering coordinates
+                    let scale_f = scale as f32;
+                    let vdx_s = vdx * scale_f;
+                    let vdy_s = vdy * scale_f;
+                    let vmag = (vdx_s * vdx_s + vdy_s * vdy_s).sqrt();
+                    let (vdx_n, vdy_n) = if vmag > 0.0 { (vdx_s / vmag, vdy_s / vmag) } else { (0.0, 1.0) };
+
+                    // Arrow tip position
+                    let tip_x = rel_x + vdx_n * arrow_offset;
+                    let tip_y = rel_y + vdy_n * arrow_offset;
+
+                    // Perpendicular direction
+                    let perp_x = -vdy_n;
+                    let perp_y = vdx_n;
+
+                    // Chevron arms: two quads forming ">" shape
+                    let arm_len = arrow_size;
+                    let arm_half_thickness = arrow_size * 0.1;
+                    let arm_angle = 0.5_f32; // ~30 degrees spread
+
+                    // Left arm direction (tip backward-left)
+                    let left_dx = -vdx_n * arm_angle.cos() + perp_x * arm_angle.sin();
+                    let left_dy = -vdy_n * arm_angle.cos() + perp_y * arm_angle.sin();
+                    // Right arm direction (tip backward-right)
+                    let right_dx = -vdx_n * arm_angle.cos() - perp_x * arm_angle.sin();
+                    let right_dy = -vdy_n * arm_angle.cos() - perp_y * arm_angle.sin();
+
+                    // Draw left arm as quad
+                    let base_index = all_vertices.len() as u32;
+                    let tail_x = tip_x + left_dx * arm_len;
+                    let tail_y = tip_y + left_dy * arm_len;
+                    // Perpendicular to the arm direction
+                    let arm_perp_x = -left_dy;
+                    let arm_perp_y = left_dx;
+                    all_vertices.push(Vertex { position: [tip_x - arm_perp_x * arm_half_thickness, tip_y - arm_perp_y * arm_half_thickness], color: prograde_color });
+                    all_vertices.push(Vertex { position: [tip_x + arm_perp_x * arm_half_thickness, tip_y + arm_perp_y * arm_half_thickness], color: prograde_color });
+                    all_vertices.push(Vertex { position: [tail_x + arm_perp_x * arm_half_thickness, tail_y + arm_perp_y * arm_half_thickness], color: prograde_color });
+                    all_vertices.push(Vertex { position: [tail_x - arm_perp_x * arm_half_thickness, tail_y - arm_perp_y * arm_half_thickness], color: prograde_color });
+                    all_indices.push(base_index);
+                    all_indices.push(base_index + 1);
+                    all_indices.push(base_index + 2);
+                    all_indices.push(base_index);
+                    all_indices.push(base_index + 2);
+                    all_indices.push(base_index + 3);
+
+                    // Draw right arm as quad
+                    let base_index = all_vertices.len() as u32;
+                    let tail_x = tip_x + right_dx * arm_len;
+                    let tail_y = tip_y + right_dy * arm_len;
+                    let arm_perp_x = -right_dy;
+                    let arm_perp_y = right_dx;
+                    all_vertices.push(Vertex { position: [tip_x - arm_perp_x * arm_half_thickness, tip_y - arm_perp_y * arm_half_thickness], color: prograde_color });
+                    all_vertices.push(Vertex { position: [tip_x + arm_perp_x * arm_half_thickness, tip_y + arm_perp_y * arm_half_thickness], color: prograde_color });
+                    all_vertices.push(Vertex { position: [tail_x + arm_perp_x * arm_half_thickness, tail_y + arm_perp_y * arm_half_thickness], color: prograde_color });
+                    all_vertices.push(Vertex { position: [tail_x - arm_perp_x * arm_half_thickness, tail_y - arm_perp_y * arm_half_thickness], color: prograde_color });
+                    all_indices.push(base_index);
+                    all_indices.push(base_index + 1);
+                    all_indices.push(base_index + 2);
+                    all_indices.push(base_index);
+                    all_indices.push(base_index + 2);
+                    all_indices.push(base_index + 3);
                 }
             }
 
@@ -4118,6 +4197,7 @@ impl RenderState {
     pub fn set_editor_camera(&mut self, offset: [f64; 2], zoom: f32) {
         self.camera.position = offset;
         self.camera.zoom = zoom;
+        self.camera.rotation = 0.0;
         self.update_camera_buffer();
     }
 
