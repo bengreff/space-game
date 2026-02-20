@@ -47,6 +47,15 @@ pub struct OrbitRenderData {
     pub color: [f32; 4],
 }
 
+/// Per-nozzle activation state for RCS thrusters
+#[derive(Clone, Debug)]
+pub struct RcsNozzleState {
+    pub lateral: bool,           // Side nozzle (left for right-mount, right for left-mount)
+    pub lateral_mirrored: bool,  // Opposite side (right for right-mount); used by bilateral pod RCS
+    pub up: bool,                // Top nozzle
+    pub down: bool,              // Bottom nozzle
+}
+
 /// Render data for a single part in a vessel
 #[derive(Clone)]
 pub struct ShipPartRenderData {
@@ -75,6 +84,8 @@ pub struct ShipPartRenderData {
     pub ox_max: Option<f64>,        // kg
     // Pod info
     pub crew_capacity: Option<u32>,
+    pub monoprop_current: Option<f64>,  // kg (monopropellant in this pod)
+    pub monoprop_max: Option<f64>,      // kg
     // Decoupler info
     pub is_decoupler: bool,
     pub crossfeed_enabled: bool,
@@ -82,6 +93,7 @@ pub struct ShipPartRenderData {
     pub gimbal_angle: f64,  // Current gimbal deflection (radians)
     // RCS info
     pub rcs_thrust: Option<f64>,  // kN (Some if this is an RCS part)
+    pub rcs_nozzle_state: Option<RcsNozzleState>,  // Per-nozzle activation (None = no plumes)
     // Thermal state
     pub heat_fraction: f32,  // 0.0-1.0 per-part heat for visual tinting
 }
@@ -108,6 +120,7 @@ pub struct ShipRenderData {
     pub total_mass: Option<f64>,     // tonnes
     pub fuel_fraction: Option<f64>,  // 0.0-1.0
     pub thrust_kn: Option<f64>,
+    pub drag_kn: f64,                // kN, aerodynamic drag force
     pub delta_v: Option<f64>,        // m/s, Tsiolkovsky
     pub soi_surface_gravity: f64,    // m/s², for TWR calculation
     pub g_force: f64,                // Felt acceleration in g's (thrust + drag, not gravity)
@@ -122,6 +135,9 @@ pub struct ShipRenderData {
     pub heat_flux: f64,         // W/m² for HUD display
     // Landing zone state
     pub below_landing_altitude: bool,
+    // RCS state
+    pub rcs_direction: f64,  // -1.0/0.0/1.0 rotation direction for nozzle activation
+    pub rcs_translate: [f64; 2],  // [forward, right] translation for nozzle activation
     // Velocity direction for prograde arrow
     pub velocity_direction: [f64; 2],  // Normalized velocity unit vector (or [0,0] if nearly stationary)
 }
@@ -321,4 +337,5 @@ pub enum PauseAction {
     None,
     Resume,
     MainMenu,
+    RecoverVessel,
 }

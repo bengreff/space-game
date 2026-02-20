@@ -2,18 +2,19 @@
 
 (
     parts: [
-        // Small RCS Block - lightweight monoprop thruster
+        // Small RCS Block (Right-mount) - nozzles point left/up/down
         (
             id: "rcs_small",
             name: "RV-1 RCS Block",
-            description: "A lightweight RCS thruster block for attitude control. Consumes monopropellant.",
+            description: "A lightweight RCS thruster block for attitude control. Mounts on the right side of a vessel.",
             category: Utility,
             mass: 0.01,
             cost: 100,
             size: Tiny,
             shape: Rectangle,
-            grid_width: 1.0,
-            grid_height: 1.0,
+            grid_width: 0.5,
+            grid_height: 0.75,
+            mirror_def_id: Some("rcs_small_left"),
             rcs: Some((
                 thrust: 0.5,
                 isp: 240.0,
@@ -21,21 +22,64 @@
             resources: {},
         ),
 
-        // Medium RCS Block - higher thrust
+        // Small RCS Block (Left-mount) - nozzles point right/up/down
+        (
+            id: "rcs_small_left",
+            name: "RV-1 RCS Block (Mirror)",
+            description: "A lightweight RCS thruster block for attitude control. Mounts on the left side of a vessel.",
+            category: Utility,
+            mass: 0.01,
+            cost: 100,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 0.5,
+            grid_height: 0.75,
+            mirror_def_id: Some("rcs_small"),
+            rcs: Some((
+                thrust: 0.5,
+                isp: 240.0,
+                is_mirrored: true,
+            )),
+            resources: {},
+        ),
+
+        // Medium RCS Block (Right-mount) - nozzles point left/up/down
         (
             id: "rcs_medium",
             name: "RV-3 RCS Block",
-            description: "A higher-thrust RCS thruster block for larger vessels. Consumes monopropellant.",
+            description: "A higher-thrust RCS thruster block for larger vessels. Mounts on the right side.",
             category: Utility,
             mass: 0.025,
             cost: 250,
             size: Tiny,
             shape: Rectangle,
-            grid_width: 1.0,
+            grid_width: 0.5,
             grid_height: 1.0,
+            mirror_def_id: Some("rcs_medium_left"),
             rcs: Some((
                 thrust: 2.0,
                 isp: 250.0,
+            )),
+            resources: {},
+        ),
+
+        // Medium RCS Block (Left-mount) - nozzles point right/up/down
+        (
+            id: "rcs_medium_left",
+            name: "RV-3 RCS Block (Mirror)",
+            description: "A higher-thrust RCS thruster block for larger vessels. Mounts on the left side.",
+            category: Utility,
+            mass: 0.025,
+            cost: 250,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 0.5,
+            grid_height: 1.0,
+            mirror_def_id: Some("rcs_medium"),
+            rcs: Some((
+                thrust: 2.0,
+                isp: 250.0,
+                is_mirrored: true,
             )),
             resources: {},
         ),

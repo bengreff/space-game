@@ -38,6 +38,7 @@ pub struct VesselPhysicsData {
     pub rcs_torque: f64,       // kN·m from RCS thrusters
     pub gimbal_torque: f64,    // kN·m from gimbaled engines (signed: + = CCW)
     pub vessel_half_width: f64, // meters (half-width for cross-section)
+    pub rcs_translation_force: f64, // kN total from all RCS thrusters for translation
 }
 
 /// Rotation drag (natural deceleration) in radians/second² (9 degrees/s/s)
@@ -116,6 +117,10 @@ pub struct ShipInput {
     pub throttle_zero: bool,
     pub rotate_left: bool,
     pub rotate_right: bool,
+    pub translate_forward: bool,
+    pub translate_backward: bool,
+    pub translate_left: bool,
+    pub translate_right: bool,
 }
 
 /// Cached orbit with mean anomaly for on-rails propagation
@@ -184,6 +189,8 @@ pub struct Ship {
     pub temperature: f64,
     /// Current aerodynamic heat flux (W/m²) for HUD display
     pub heat_flux: f64,
+    /// RCS translation input: [forward, right] in vessel-local frame, -1..1 each
+    pub rcs_translate: [f64; 2],
 }
 
 impl Ship {
@@ -234,6 +241,7 @@ impl Ship {
             frame_counter: 0,
             temperature: AMBIENT_TEMPERATURE,
             heat_flux: 0.0,
+            rcs_translate: [0.0, 0.0],
         }
     }
 
@@ -685,13 +693,31 @@ impl Ship {
             [0.0, 0.0]
         };
 
+        // RCS translation acceleration (vessel-local forward/right mapped to world)
+        let rcs_accel = vessel
+            .filter(|v| v.rcs_translation_force > 0.0 && v.total_mass > 0.0)
+            .map(|v| {
+                let translate_mag = (self.rcs_translate[0].powi(2) + self.rcs_translate[1].powi(2)).sqrt();
+                if translate_mag < 0.001 {
+                    return [0.0, 0.0];
+                }
+                let accel_mag = v.rcs_translation_force / v.total_mass;
+                let fwd = [self.rotation.cos(), self.rotation.sin()];
+                let right = [self.rotation.sin(), -self.rotation.cos()];
+                [
+                    (fwd[0] * self.rcs_translate[0] + right[0] * self.rcs_translate[1]) * accel_mag,
+                    (fwd[1] * self.rcs_translate[0] + right[1] * self.rcs_translate[1]) * accel_mag,
+                ]
+            })
+            .unwrap_or([0.0, 0.0]);
+
         // Compute aerodynamic drag acceleration
         let drag_accel = self.compute_drag_accel(soi_body, vessel);
 
         let grav_accel_1 = calc_gravity_accel(self.rel_position);
         let accel_1 = [
-            grav_accel_1[0] + thrust_accel[0] + drag_accel[0],
-            grav_accel_1[1] + thrust_accel[1] + drag_accel[1],
+            grav_accel_1[0] + thrust_accel[0] + rcs_accel[0] + drag_accel[0],
+            grav_accel_1[1] + thrust_accel[1] + rcs_accel[1] + drag_accel[1],
         ];
 
         let prev_rel_pos = self.rel_position;
@@ -702,8 +728,8 @@ impl Ship {
 
         let grav_accel_2 = calc_gravity_accel(self.rel_position);
         let accel_2 = [
-            grav_accel_2[0] + thrust_accel[0] + drag_accel[0],
-            grav_accel_2[1] + thrust_accel[1] + drag_accel[1],
+            grav_accel_2[0] + thrust_accel[0] + rcs_accel[0] + drag_accel[0],
+            grav_accel_2[1] + thrust_accel[1] + rcs_accel[1] + drag_accel[1],
         ];
 
         self.rel_velocity[0] += 0.5 * (accel_1[0] + accel_2[0]) * dt;

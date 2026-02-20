@@ -33,9 +33,11 @@ fn main() {
     println!("Sunscatter starting...");
     println!("Controls:");
     println!("  Escape: Pause / Menu");
-    println!("  W/S: Throttle up/down");
+    println!("  Left Shift / Left Ctrl: Throttle up/down");
     println!("  Z/X: Full/cut throttle");
-    println!("  A/D: Rotate");
+    println!("  Q/E: Rotate left/right");
+    println!("  WASD: RCS translation (when RCS enabled)");
+    println!("  R: Toggle RCS");
     println!("  ` (backtick): Focus on ship");
     println!("  Left mouse drag: Pan camera");
     println!("  Scroll wheel: Zoom in/out");
@@ -314,6 +316,7 @@ fn render_flight_frame(
 
         // Build VesselPhysicsData from flight vessel if available
         // Uses active_thrust which excludes engines without fuel
+        let rcs_enabled = render_state.rcs_enabled;
         let vessel_physics = game.flight.vessel.as_ref().map(|v| VesselPhysicsData {
             total_mass: v.total_mass,
             max_thrust_vac: v.active_thrust_vac(),
@@ -321,10 +324,22 @@ fn render_flight_frame(
             vessel_height: v.bounding_half_height(),
             bottom_extent: v.bottom_extent(),
             moment_of_inertia: v.moment_of_inertia,
-            rcs_torque: v.compute_rcs_torque(&game.part_definitions),
+            rcs_torque: if rcs_enabled { v.compute_rcs_torque(&game.part_definitions) } else { 0.0 },
             gimbal_torque: v.compute_gimbal_torque(),
             vessel_half_width: v.bounding_half_width(),
+            rcs_translation_force: if rcs_enabled { v.compute_rcs_translation_force(&game.part_definitions) } else { 0.0 },
         });
+
+        // Compute RCS translation from input (only when RCS enabled)
+        game.flight.ship.rcs_translate = if rcs_enabled {
+            let fwd = if game.flight.ship_input.translate_forward { 1.0 } else { 0.0 }
+                    - if game.flight.ship_input.translate_backward { 1.0 } else { 0.0 };
+            let right = if game.flight.ship_input.translate_right { 1.0 } else { 0.0 }
+                      - if game.flight.ship_input.translate_left { 1.0 } else { 0.0 };
+            [fwd, right]
+        } else {
+            [0.0, 0.0]
+        };
 
         // Update ship physics (gimbal torque always applied in update_flying)
         let has_flight_vessel = game.flight.vessel.is_some();
@@ -357,21 +372,28 @@ fn render_flight_frame(
             let effective_dt = dt * time_warp;
             vessel.consume_fuel(effective_dt, atmo_pressure, &game.part_definitions);
 
-            // Consume RCS fuel when rotating (manual or autopilot)
-            let rcs_direction = if autopilot_active {
-                if let Some(target_angle) = autopilot_target_angle {
-                    game.flight.ship.autopilot_desired_direction(target_angle, vessel_physics.as_ref())
+            // Consume RCS fuel when rotating (manual or autopilot), only if RCS enabled
+            let rcs_direction = if rcs_enabled {
+                if autopilot_active {
+                    if let Some(target_angle) = autopilot_target_angle {
+                        game.flight.ship.autopilot_desired_direction(target_angle, vessel_physics.as_ref())
+                    } else {
+                        0.0
+                    }
+                } else if game.flight.ship_input.rotate_left {
+                    1.0
+                } else if game.flight.ship_input.rotate_right {
+                    -1.0
                 } else {
                     0.0
                 }
-            } else if game.flight.ship_input.rotate_left {
-                1.0
-            } else if game.flight.ship_input.rotate_right {
-                -1.0
             } else {
                 0.0
             };
             vessel.consume_rcs_fuel(effective_dt, rcs_direction, &game.part_definitions);
+
+            // Consume RCS fuel for translation
+            vessel.consume_rcs_translation_fuel(effective_dt, game.flight.ship.rcs_translate, &game.part_definitions);
 
             vessel.recalculate_mass(&game.part_definitions);
 
@@ -483,15 +505,60 @@ fn render_flight_frame(
             vessel.ship.update_on_rails(dt_sim, &game.solar_system);
         }
         // Delete vessels that entered atmosphere, hit surface, or whose orbit dips into atmosphere
+        // Keep vessels within 3km of the active vessel even in atmosphere
+        let active_pos = game.flight.ship.rel_position;
+        let active_soi = game.flight.ship.soi_body;
         game.flight.inactive_vessels.retain(|v| {
             let in_landing_zone = v.ship.in_atmosphere(&game.solar_system)
                 || v.ship.below_landing_altitude(&game.solar_system);
-            !(v.ship.periapsis_below_surface(&game.solar_system) && in_landing_zone)
+            if v.ship.periapsis_below_surface(&game.solar_system) && in_landing_zone {
+                // Check if within 3km of active vessel
+                if v.ship.soi_body == active_soi {
+                    let dx = v.ship.rel_position[0] - active_pos[0];
+                    let dy = v.ship.rel_position[1] - active_pos[1];
+                    let dist = (dx * dx + dy * dy).sqrt();
+                    if dist < 3000.0 {
+                        return true; // Keep — close to active vessel
+                    }
+                }
+                false // Delete — in atmosphere, far from active vessel
+            } else {
+                true // Keep — not in danger zone
+            }
         });
+
+        // Collision detection: active vs inactive vessels during physics warp (1x-10x)
+        if time_warp <= RAILS_WARP_THRESHOLD {
+            if let Some(ref vessel) = game.flight.vessel {
+                let active_half_h = vessel.bounding_half_height();
+                let active_half_w = vessel.bounding_half_width();
+                let active_extent = active_half_h.max(active_half_w);
+
+                for inactive in &game.flight.inactive_vessels {
+                    if inactive.ship.soi_body != active_soi { continue; }
+
+                    let dx = active_pos[0] - inactive.ship.rel_position[0];
+                    let dy = active_pos[1] - inactive.ship.rel_position[1];
+                    let dist = (dx * dx + dy * dy).sqrt();
+
+                    let inactive_extent = inactive.vessel.as_ref()
+                        .map(|v| v.bounding_half_height().max(v.bounding_half_width()))
+                        .unwrap_or(1.0);
+                    let collision_dist = active_extent + inactive_extent;
+
+                    if dist < collision_dist {
+                        // Collision — stop active vessel relative to inactive
+                        game.flight.ship.rel_velocity = inactive.ship.rel_velocity;
+                        break;
+                    }
+                }
+            }
+        }
 
         vessel_physics
     } else {
         // Paused: still need vessel_physics for HUD display
+        let rcs_enabled = render_state.rcs_enabled;
         game.flight.vessel.as_ref().map(|v| VesselPhysicsData {
             total_mass: v.total_mass,
             max_thrust_vac: v.active_thrust_vac(),
@@ -499,10 +566,53 @@ fn render_flight_frame(
             vessel_height: v.bounding_half_height(),
             bottom_extent: v.bottom_extent(),
             moment_of_inertia: v.moment_of_inertia,
-            rcs_torque: v.compute_rcs_torque(&game.part_definitions),
+            rcs_torque: if rcs_enabled { v.compute_rcs_torque(&game.part_definitions) } else { 0.0 },
             gimbal_torque: v.compute_gimbal_torque(),
             vessel_half_width: v.bounding_half_width(),
+            rcs_translation_force: if rcs_enabled { v.compute_rcs_translation_force(&game.part_definitions) } else { 0.0 },
         })
+    };
+
+    // Compute RCS rotation direction for plume rendering (0 if RCS disabled)
+    let rcs_direction_for_render = if render_state.rcs_enabled {
+        let autopilot_target = render_state.get_autopilot_target();
+        let autopilot_active = autopilot_target != AutopilotTarget::Off && !game.flight.ship.on_rails;
+        if autopilot_active {
+            let maneuver_node = render_state.get_selected_maneuver_node();
+            let autopilot_target_angle = game.flight.ship.autopilot_target_angle(autopilot_target, maneuver_node);
+            if let Some(target_angle) = autopilot_target_angle {
+                let vessel_physics = game.flight.vessel.as_ref().map(|v| VesselPhysicsData {
+                    total_mass: v.total_mass,
+                    max_thrust_vac: v.active_thrust_vac(),
+                    max_thrust_asl: v.active_thrust_asl(),
+                    vessel_height: v.bounding_half_height(),
+                    bottom_extent: v.bottom_extent(),
+                    moment_of_inertia: v.moment_of_inertia,
+                    rcs_torque: v.compute_rcs_torque(&game.part_definitions),
+                    gimbal_torque: v.compute_gimbal_torque(),
+                    vessel_half_width: v.bounding_half_width(),
+                    rcs_translation_force: v.compute_rcs_translation_force(&game.part_definitions),
+                });
+                game.flight.ship.autopilot_desired_direction(target_angle, vessel_physics.as_ref())
+            } else {
+                0.0
+            }
+        } else if game.flight.ship_input.rotate_left {
+            1.0
+        } else if game.flight.ship_input.rotate_right {
+            -1.0
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    // Compute RCS translation for plume rendering (only when RCS enabled)
+    let rcs_translate_for_render = if render_state.rcs_enabled {
+        game.flight.ship.rcs_translate
+    } else {
+        [0.0, 0.0]
     };
 
     // --- Rendering (always runs) ---
@@ -769,6 +879,68 @@ fn render_flight_frame(
 
                     // Pod info
                     let crew_capacity = def.and_then(|d| d.pod.as_ref().map(|pod| pod.crew_capacity));
+                    let (monoprop_current, monoprop_max) = if crew_capacity.is_some() {
+                        let cur = p.resources.get("monopropellant").copied();
+                        let max = p.max_resources.get("monopropellant").copied();
+                        (cur, max)
+                    } else {
+                        (None, None)
+                    };
+
+                    // Compute RCS nozzle activation state (combined rotation + translation)
+                    let has_rcs_input = rcs_direction_for_render.abs() > 0.001
+                        || rcs_translate_for_render[0].abs() > 0.001
+                        || rcs_translate_for_render[1].abs() > 0.001;
+                    let rcs_nozzle_state = if has_rcs_input && p.rcs_thrust > 0.0 {
+                        if let Some(rcs_def) = def.and_then(|d| d.rcs.as_ref()) {
+                            let dir = rcs_direction_for_render;
+                            let rx = p.local_position[0]; // part x relative to COM
+                            let ry = p.local_position[1]; // part y relative to COM
+                            let is_mirrored = rcs_def.is_mirrored;
+                            let trans_fwd = rcs_translate_for_render[0];   // +forward (vessel +Y)
+                            let trans_right = rcs_translate_for_render[1]; // +right (vessel +X for non-mirrored)
+
+                            // --- Rotation-driven nozzle activation ---
+                            let lateral_torque_sign = if is_mirrored { -ry } else { ry };
+                            let rot_lateral = dir.abs() > 0.001 && ((dir > 0.0 && lateral_torque_sign > 0.0) || (dir < 0.0 && lateral_torque_sign < 0.0));
+                            // Mirrored lateral: opposite rotation condition (for bilateral pod RCS)
+                            let lateral_torque_sign_m = if is_mirrored { ry } else { -ry };
+                            let rot_lateral_m = dir.abs() > 0.001 && ((dir > 0.0 && lateral_torque_sign_m > 0.0) || (dir < 0.0 && lateral_torque_sign_m < 0.0));
+                            let up_torque_sign = -rx;
+                            let rot_up = dir.abs() > 0.001 && ((dir > 0.0 && up_torque_sign > 0.0) || (dir < 0.0 && up_torque_sign < 0.0));
+                            let down_torque_sign = rx;
+                            let rot_down = dir.abs() > 0.001 && ((dir > 0.0 && down_torque_sign > 0.0) || (dir < 0.0 && down_torque_sign < 0.0));
+
+                            // --- Translation-driven nozzle activation ---
+                            // Forward (vessel +Y): down nozzles fire (push ship forward=up)
+                            let trans_down = trans_fwd > 0.001;
+                            // Backward (vessel -Y): up nozzles fire (push ship backward=down)
+                            let trans_up = trans_fwd < -0.001;
+                            // Going right (+X): fire right-mount laterals (exhaust left, push right)
+                            //   Non-mirrored = right-mount, mirrored = left-mount
+                            // Going left (-X): fire left-mount laterals (exhaust right, push left)
+                            //   Mirrored = left-mount (lateral nozzle exhausts right)
+                            let trans_lateral = (trans_right > 0.001 && !is_mirrored) || (trans_right < -0.001 && is_mirrored);
+                            let lateral = rot_lateral || trans_lateral;
+
+                            // Pod bilateral nozzles (opposite side):
+                            // Going left: fire right nozzle on non-mirrored pod (exhaust right, push left)
+                            // Going right: fire left nozzle on mirrored pod (exhaust left, push right)
+                            let trans_lateral_m = (trans_right < -0.001 && !is_mirrored) || (trans_right > 0.001 && is_mirrored);
+                            let lateral_mirrored = rot_lateral_m || trans_lateral_m;
+                            let up = rot_up || trans_up;
+                            let down = rot_down || trans_down;
+                            if lateral || lateral_mirrored || up || down {
+                                Some(sunscatter::render::RcsNozzleState { lateral, lateral_mirrored, up, down })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
 
                     ShipPartRenderData {
                         definition_id: p.definition_id.clone(),
@@ -792,10 +964,13 @@ fn render_flight_frame(
                         ox_current,
                         ox_max,
                         crew_capacity,
+                        monoprop_current,
+                        monoprop_max,
                         is_decoupler: def.map(|d| d.decoupler.is_some()).unwrap_or(false),
                         crossfeed_enabled: p.crossfeed_enabled,
                         gimbal_angle: p.gimbal_angle,
                         rcs_thrust: if p.rcs_thrust > 0.0 { Some(p.rcs_thrust) } else { None },
+                        rcs_nozzle_state,
                         heat_fraction: ((p.temperature - 300.0) / (p.max_heat_tolerance - 300.0)).clamp(0.0, 1.0) as f32,
                     }
                 })
@@ -868,6 +1043,15 @@ fn render_flight_frame(
         }
     };
 
+    // Compute drag force in kN for HUD display
+    let drag_kn = {
+        let soi = &game.solar_system.bodies[game.flight.ship.soi_body];
+        let drag_accel = game.flight.ship.compute_drag_accel(soi, vessel_physics.as_ref());
+        let drag_mag = (drag_accel[0].powi(2) + drag_accel[1].powi(2)).sqrt();
+        let mass_kg = vessel_physics.as_ref().map(|v| v.total_mass * 1000.0).unwrap_or(1000.0);
+        drag_mag * mass_kg / 1000.0 // N -> kN
+    };
+
     let ship_render = ShipRenderData {
         x: ship_abs_pos[0] * SCALE * BODY_SCALE,
         y: ship_abs_pos[1] * SCALE * BODY_SCALE,
@@ -887,6 +1071,7 @@ fn render_flight_frame(
         total_mass: vessel_mass,
         fuel_fraction: vessel_fuel_frac,
         thrust_kn: vessel_thrust,
+        drag_kn,
         delta_v: vessel_delta_v,
         soi_surface_gravity: game.solar_system.bodies[game.flight.ship.soi_body].surface_gravity(),
         g_force,
@@ -895,6 +1080,8 @@ fn render_flight_frame(
         temperature: effective_temp,
         heat_fraction,
         heat_flux: game.flight.ship.heat_flux,
+        rcs_direction: rcs_direction_for_render,
+        rcs_translate: rcs_translate_for_render,
         below_landing_altitude: game.flight.ship.below_landing_altitude(&game.solar_system),
         velocity_direction: {
             let vx = game.flight.ship.rel_velocity[0];
@@ -940,7 +1127,7 @@ fn render_flight_frame(
             sunscatter::render::TrackingVesselData {
                 id: v.id,
                 name: v.name.clone(),
-                color: [v.ship.color[0] * 0.5, v.ship.color[1] * 0.5, v.ship.color[2] * 0.5, 0.5],
+                color: v.ship.color,
                 x: abs_pos[0] * SCALE * BODY_SCALE,
                 y: abs_pos[1] * SCALE * BODY_SCALE,
                 soi_body: v.ship.soi_body,
@@ -1023,8 +1210,12 @@ fn render_flight_frame(
         && !(game.flight.ship.below_landing_altitude(&game.solar_system)
              && game.flight.ship.is_suborbital(&game.solar_system))
     );
+    let can_recover = match game.flight.ship.state {
+        ShipState::Landed { body_index, .. } => sunscatter::game::is_recoverable_body(body_index),
+        _ => false,
+    };
 
-    match render_state.render(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, can_exit_flight) {
+    match render_state.render(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, can_exit_flight, can_recover) {
         Ok((new_warp_index, pause_action)) => {
             game.warp_index = new_warp_index;
             match pause_action {
@@ -1032,6 +1223,13 @@ fn render_flight_frame(
                     // Save active vessel to inactive list before leaving flight
                     let nodes = render_state.swap_maneuver_nodes(Vec::new());
                     game.flight.shelve_active_vessel(nodes, &game.solar_system);
+                    game.enter_main_menu();
+                }
+                PauseAction::RecoverVessel => {
+                    // Discard maneuver nodes (vessel is recovered, not shelved)
+                    render_state.swap_maneuver_nodes(Vec::new());
+                    game.flight.vessel = None;
+                    log::info!("Recovered vessel: {} (id={})", game.flight.active_vessel_name, game.flight.active_vessel_id);
                     game.enter_main_menu();
                 }
                 PauseAction::Resume | PauseAction::None => {}
@@ -1072,7 +1270,10 @@ fn render_flight_frame(
             if part_idx < vessel.parts.len() && !vessel.parts[part_idx].decoupled {
                 let def = game.part_definitions.get(&vessel.parts[part_idx].definition_id);
                 if let Some(def) = def {
-                    if def.decoupler.is_some() {
+                    if let Some(ref dec_data) = def.decoupler {
+                        // Store ejection force for handle_post_decouple
+                        vessel.last_decouple_force = dec_data.ejection_force;
+
                         let decoupler_bottom = vessel.parts[part_idx].local_position[1]
                             - def.hitbox_height() / 2.0;
 
@@ -1135,9 +1336,9 @@ fn render_flight_frame(
         Vec::new()
     };
 
-    // Create debris vessels outside the vessel borrow
+    // Create debris vessels outside the vessel borrow (thermal breakup — no ejection force)
     for (debris_vessel, com_offset) in debris_list {
-        game.flight.create_debris_vessel(debris_vessel, com_offset, &game.solar_system);
+        game.flight.create_debris_vessel(debris_vessel, com_offset, 0.0, &game.solar_system);
     }
 
     // Remove vessel if all parts destroyed
@@ -1237,6 +1438,7 @@ fn render_editor_frame(
     // Handle editor actions
     match action {
         EditorAction::Launch => {
+            game.flight.recover_vessels_on_launchpad(&game.solar_system);
             match game.launch_from_editor() {
                 Ok(()) => {
                     // Zoom camera to see the vessel on the surface
@@ -1288,7 +1490,7 @@ fn render_editor_frame(
     // Handle pause action
     match editor_pause_action {
         PauseAction::MainMenu => game.enter_main_menu(),
-        PauseAction::Resume | PauseAction::None => {}
+        PauseAction::Resume | PauseAction::None | PauseAction::RecoverVessel => {}
     }
 
     // Process any pending part deletions
@@ -1411,10 +1613,13 @@ fn build_vessel_part_render_data(
                 ox_current: None,
                 ox_max: None,
                 crew_capacity: def.and_then(|d| d.pod.as_ref().map(|pod| pod.crew_capacity)),
+                monoprop_current: None,
+                monoprop_max: None,
                 is_decoupler: def.map(|d| d.decoupler.is_some()).unwrap_or(false),
                 crossfeed_enabled: p.crossfeed_enabled,
                 gimbal_angle: 0.0,
                 rcs_thrust: if p.rcs_thrust > 0.0 { Some(p.rcs_thrust) } else { None },
+                rcs_nozzle_state: None,
                 heat_fraction: ((p.temperature - 300.0) / (p.max_heat_tolerance - 300.0)).clamp(0.0, 1.0) as f32,
             }
         })
@@ -1634,7 +1839,7 @@ fn render_tracking_station_frame(
             game.warp_index = new_warp_index;
             match pause_action {
                 PauseAction::MainMenu => game.enter_main_menu(),
-                PauseAction::Resume | PauseAction::None => {}
+                PauseAction::Resume | PauseAction::None | PauseAction::RecoverVessel => {}
             }
             // Handle tracking station actions
             match ts_action {
@@ -1870,18 +2075,26 @@ fn handle_editor_cursor_moved(
 
 /// After decoupling, extract decoupled parts into a debris vessel and recenter the active vessel.
 fn handle_post_decouple(game: &mut Game) {
+    // Read ejection force before extracting (set by activate_next_stage or manual decouple)
+    let ejection_force = game.flight.vessel.as_ref()
+        .map(|v| v.last_decouple_force).unwrap_or(0.0);
+
     // Extract decoupled parts into debris (separate step to avoid borrow conflict)
     let extracted = game.flight.vessel.as_mut()
-        .and_then(|v| v.extract_decoupled_parts(&game.part_definitions));
+        .and_then(|v| {
+            let result = v.extract_decoupled_parts(&game.part_definitions);
+            v.last_decouple_force = 0.0; // Reset after reading
+            result
+        });
 
     if let Some((debris_vessel, com_offset)) = extracted {
-        game.flight.create_debris_vessel(debris_vessel, com_offset, &game.solar_system);
+        game.flight.create_debris_vessel(debris_vessel, com_offset, ejection_force, &game.solar_system);
     }
 
     // Recenter parts on new COM and shift ship position to match
     if let Some(ref mut vessel) = game.flight.vessel {
         let com_offset = vessel.recenter_on_com(&game.part_definitions);
-        let rot = game.flight.ship.rotation;
+        let rot = game.flight.ship.rotation - std::f64::consts::FRAC_PI_2;
         game.flight.ship.rel_position[0] += com_offset[0] * rot.cos() - com_offset[1] * rot.sin();
         game.flight.ship.rel_position[1] += com_offset[0] * rot.sin() + com_offset[1] * rot.cos();
     }
@@ -1895,22 +2108,36 @@ fn handle_flight_keyboard(
     pressed: bool,
 ) {
     if let Key::Named(named_key) = logical_key {
-        if *named_key == winit::keyboard::NamedKey::Space && pressed {
-            if let Some(ref mut vessel) = game.flight.vessel {
-                vessel.activate_next_stage(&game.part_definitions);
+        match named_key {
+            winit::keyboard::NamedKey::Space => {
+                if pressed {
+                    if let Some(ref mut vessel) = game.flight.vessel {
+                        vessel.activate_next_stage(&game.part_definitions);
+                    }
+                    handle_post_decouple(game);
+                }
             }
-            handle_post_decouple(game);
+            winit::keyboard::NamedKey::Shift => game.flight.ship_input.throttle_up = pressed,
+            winit::keyboard::NamedKey::Control => game.flight.ship_input.throttle_down = pressed,
+            _ => {}
         }
     }
 
     if let Key::Character(c) = logical_key {
         match c.as_str() {
-            "w" | "W" => game.flight.ship_input.throttle_up = pressed,
-            "s" | "S" => game.flight.ship_input.throttle_down = pressed,
+            "w" | "W" => game.flight.ship_input.translate_forward = pressed,
+            "s" | "S" => game.flight.ship_input.translate_backward = pressed,
+            "a" | "A" => game.flight.ship_input.translate_left = pressed,
+            "d" | "D" => game.flight.ship_input.translate_right = pressed,
+            "q" | "Q" => game.flight.ship_input.rotate_left = pressed,
+            "e" | "E" => game.flight.ship_input.rotate_right = pressed,
             "z" | "Z" => game.flight.ship_input.throttle_full = pressed,
             "x" | "X" => game.flight.ship_input.throttle_zero = pressed,
-            "a" | "A" => game.flight.ship_input.rotate_left = pressed,
-            "d" | "D" => game.flight.ship_input.rotate_right = pressed,
+            "r" | "R" => {
+                if pressed {
+                    render_state.rcs_enabled = !render_state.rcs_enabled;
+                }
+            }
             "`" => {
                 if pressed {
                     game.flight.tracking_ship = true;

@@ -63,6 +63,10 @@ Pods SHALL render as a dark grey trapezoid body (`[0.15, 0.15, 0.18, 1.0]`) with
 
 The pod window SHALL be rendered as a 12-segment triangle fan.
 
+### Requirement: Built-in RCS nozzle bumps
+
+When a pod definition has `rcs: Some(...)`, two small triangular nozzles SHALL protrude from the left and right edges of the pod trapezoid at 80% of the pod height. Each nozzle is a triangle with its base on the pod edge (half-width 0.04m) and tip pointing outward (length 0.08m), matching the style of standalone RCS nozzles. Nozzle X position SHALL be interpolated along the trapezoid edge at that height. Color: `RCS_NOZZLE_COLOR` (`[0.12, 0.12, 0.14, 1.0]`).
+
 ## Decoupler Rendering
 
 ### Requirement: Decoupler ring band
@@ -92,6 +96,57 @@ The adapter SHALL render detail lines as frustum projections. Line count = `roun
 ### Requirement: Ghost decoupler adapter preview
 
 Ghost previews of decouplers SHALL also render the adapter trapezoid by checking against existing placed parts.
+
+## RCS Thruster Rendering
+
+### Requirement: RCS thin side-mount shape
+
+RCS thrusters SHALL be rendered as thin side-mount parts. Small RCS (RV-1) uses `grid_height: 0.75` for a more compact visual, while medium RCS (RV-3) uses `grid_height: 1.0`. Both share `grid_width: 0.5` and a 1x1 hitbox. The visual sprite SHALL be offset to the side of the hitbox: right-mount (default) offsets to the right side, left-mount (`is_mirrored: true`) offsets to the left side. The offset SHALL be `sign * (hitbox_half_w - visual_half_w)` where sign is 1.0 for right-mount, -1.0 for left-mount.
+
+### Requirement: RCS body rectangle
+
+The RCS body SHALL be a dark grey rectangle (`[0.20, 0.20, 0.22, 1.0]`) covering 80% of the visual extents in both dimensions.
+
+### Requirement: RCS three directional nozzles
+
+Each RCS thruster SHALL render 3 triangular nozzles pointing outward:
+- **Lateral nozzle**: Points away from the vessel (left for right-mount, right for left-mount)
+- **Top nozzle**: Points upward from the body
+- **Bottom nozzle**: Points downward from the body
+
+No nozzle SHALL be rendered on the attachment face (the face against the vessel body). Nozzle color: `[0.12, 0.12, 0.14, 1.0]`.
+
+### Requirement: RCS mirror variants
+
+RCS parts SHALL come in mirror pairs via `mirror_def_id`. Right-mount parts (default, `is_mirrored: false`) have nozzles pointing left/up/down. Left-mount parts (`is_mirrored: true`) have nozzles pointing right/up/down. The `RcsData` struct SHALL include an `is_mirrored: bool` field (serde-default false).
+
+#### Scenario: Right-mount RCS placement
+- **WHEN** `rcs_small` is placed (right-mount, `is_mirrored: false`)
+- **THEN** the sprite offsets to the right side of the hitbox with nozzles pointing left, up, and down
+
+#### Scenario: Left-mount RCS mirror
+- **WHEN** `rcs_small_left` is the mirror variant (`is_mirrored: true`)
+- **THEN** the sprite offsets to the left side of the hitbox with nozzles pointing right, up, and down
+
+### Requirement: RCS plume rendering
+
+When RCS nozzles are active during rotation, white plume rectangles (`[0.95, 0.95, 1.0, 0.85]`) SHALL extend outward from each firing nozzle tip. Plume length SHALL be 1.5x the nozzle length, plume width SHALL be 60% of nozzle base width. Plumes SHALL only appear on nozzles whose torque contribution matches the desired rotation direction.
+
+### Requirement: Per-nozzle activation logic
+
+Each RCS nozzle SHALL fire when its torque contribution matches the desired rotation direction OR when translation demands it. The final activation is the union of rotation-driven and translation-driven activations.
+
+**Rotation-driven activation** — torque is computed as the 2D cross product of the part position vector (relative to COM) and the nozzle force direction:
+- **Lateral nozzle**: Torque sign = `sign * ry` (where sign is 1.0 for right-mount, -1.0 for left-mount)
+- **Up nozzle**: Torque sign = `-rx`
+- **Down nozzle**: Torque sign = `rx`
+- A nozzle fires when its torque sign matches the desired rotation direction sign.
+
+**Translation-driven activation**:
+- **Forward** (`translate[0] > 0`): down nozzles fire on all RCS parts
+- **Backward** (`translate[0] < 0`): up nozzles fire on all RCS parts
+- **Left** (`translate[1] < 0`): right-mount (non-mirrored) lateral nozzles fire
+- **Right** (`translate[1] > 0`): left-mount (mirrored) lateral nozzles fire
 
 ## Highlight Overlays
 

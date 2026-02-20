@@ -43,6 +43,7 @@ pub struct RenderState {
     pub vessel_total_mass: Option<f64>,    // tonnes
     pub vessel_fuel_fraction: Option<f64>, // 0.0-1.0
     pub vessel_thrust_kn: Option<f64>,     // kN
+    pub vessel_drag_kn: f64,               // kN, aerodynamic drag
     pub vessel_delta_v: Option<f64>,       // m/s
     pub vessel_current_stage: Option<usize>,  // Stages activated so far
     pub vessel_total_stages: Option<usize>,   // Total stages
@@ -84,6 +85,8 @@ pub struct RenderState {
     pub tracked_vessel: Option<u64>,
     // Autopilot state
     pub autopilot_target: AutopilotTarget,
+    // RCS toggle (off by default)
+    pub rcs_enabled: bool,
     // Egui state
     pub egui_ctx: egui::Context,
     pub egui_state: egui_winit::State,
@@ -312,6 +315,7 @@ impl RenderState {
             vessel_total_mass: None,
             vessel_fuel_fraction: None,
             vessel_thrust_kn: None,
+            vessel_drag_kn: 0.0,
             vessel_delta_v: None,
             vessel_current_stage: None,
             vessel_total_stages: None,
@@ -347,6 +351,7 @@ impl RenderState {
             background_vessel_screen_positions: Vec::new(),
             tracked_vessel: None,
             autopilot_target: AutopilotTarget::Off,
+            rcs_enabled: false,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -436,6 +441,7 @@ impl RenderState {
         paused: bool,
         date_str: &str,
         can_exit_flight: bool,
+        can_recover: bool,
     ) -> Result<(usize, PauseAction), wgpu::SurfaceError> {
         // Update camera buffer before rendering
         self.update_camera_buffer();
@@ -463,6 +469,7 @@ impl RenderState {
         let vessel_total_mass = self.vessel_total_mass;
         let vessel_fuel_fraction = self.vessel_fuel_fraction;
         let vessel_thrust_kn = self.vessel_thrust_kn;
+        let vessel_drag_kn = self.vessel_drag_kn;
         let vessel_delta_v = self.vessel_delta_v;
         let vessel_current_stage = self.vessel_current_stage;
         let vessel_total_stages = self.vessel_total_stages;
@@ -616,6 +623,28 @@ impl RenderState {
                     // Autopilot buttons row
                     ui.horizontal(|ui| {
                         ui.add_space(10.0);
+
+                        // RCS toggle button
+                        {
+                            let rcs_btn_color = if self.rcs_enabled {
+                                egui::Color32::from_rgb(80, 150, 80)
+                            } else {
+                                egui::Color32::from_rgb(60, 60, 70)
+                            };
+                            let rcs_text_color = if self.rcs_enabled {
+                                egui::Color32::WHITE
+                            } else {
+                                egui::Color32::LIGHT_GRAY
+                            };
+                            let rcs_btn = egui::Button::new(egui::RichText::new("RCS").size(11.0).color(rcs_text_color))
+                                .fill(rcs_btn_color)
+                                .min_size(egui::vec2(35.0, 20.0));
+                            if ui.add(rcs_btn).clicked() {
+                                self.rcs_enabled = !self.rcs_enabled;
+                            }
+                        }
+
+                        ui.add_space(5.0);
                         ui.label(egui::RichText::new("SAS").size(11.0).color(egui::Color32::GRAY));
                         ui.add_space(5.0);
 
@@ -695,6 +724,11 @@ impl RenderState {
                             ui.label(egui::RichText::new("T").size(11.0).color(egui::Color32::GRAY));
                             ui.label(egui::RichText::new(format!("{:.0}kN", thrust)).size(11.0).color(egui::Color32::WHITE));
 
+                            if vessel_drag_kn > 0.01 {
+                                ui.label(egui::RichText::new("D").size(11.0).color(egui::Color32::GRAY));
+                                ui.label(egui::RichText::new(format!("{:.1}kN", vessel_drag_kn)).size(11.0).color(egui::Color32::WHITE));
+                            }
+
                             // TWR display
                             if let Some(mass) = vessel_total_mass {
                                 if mass > 0.0 && ship_soi_surface_gravity > 0.0 {
@@ -741,19 +775,8 @@ impl RenderState {
                         ui.label(egui::RichText::new("ALT").size(11.0).color(egui::Color32::GRAY));
                         ui.label(egui::RichText::new(&alt_str).size(13.0).strong().color(egui::Color32::WHITE));
 
-                        // Temperature readout (shown when heating)
-                        if ship_heat_fraction > 0.01 {
-                            ui.add_space(20.0);
-                            let temp_color = if ship_heat_fraction < 0.33 {
-                                egui::Color32::from_rgb(220, 200, 80)
-                            } else if ship_heat_fraction < 0.66 {
-                                egui::Color32::from_rgb(220, 140, 40)
-                            } else {
-                                egui::Color32::from_rgb(220, 60, 60)
-                            };
-                            ui.label(egui::RichText::new(format!("{}K", ship_temperature as i32))
-                                .size(13.0).strong().color(temp_color));
-                        }
+
+
                     });
                 });
 
@@ -887,6 +910,30 @@ impl RenderState {
                         };
                         heat_painter.rect_filled(heat_fill_rect, 2.0, heat_color);
                         heat_painter.rect_stroke(heat_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+
+                        // Show the critical part (highest heat_fraction)
+                        if let Some(hottest) = flight_parts_cache.iter()
+                            .max_by(|a, b| a.heat_fraction.partial_cmp(&b.heat_fraction).unwrap_or(std::cmp::Ordering::Equal))
+                        {
+                            if hottest.heat_fraction > 0.01 {
+                                ui.add_space(5.0);
+                                let crit_color = if hottest.heat_fraction < 0.33 {
+                                    egui::Color32::from_rgb(220, 200, 80)
+                                } else if hottest.heat_fraction < 0.66 {
+                                    egui::Color32::from_rgb(220, 140, 40)
+                                } else {
+                                    egui::Color32::from_rgb(220, 60, 60)
+                                };
+                                // Truncate name to fit the narrow panel
+                                let name = if hottest.name.len() > 8 {
+                                    &hottest.name[..8]
+                                } else {
+                                    &hottest.name
+                                };
+                                ui.label(egui::RichText::new(name)
+                                    .size(8.0).color(crit_color));
+                            }
+                        }
                     }
 
                     // Stage indicator
@@ -1396,6 +1443,17 @@ impl RenderState {
                                 ui.separator();
                                 ui.label(egui::RichText::new("Command Pod").strong());
                                 ui.label(format!("Crew capacity: {}", crew));
+
+                                // Monopropellant bar
+                                if let (Some(current), Some(max)) = (part.monoprop_current, part.monoprop_max) {
+                                    if max > 0.0 {
+                                        let frac = (current / max) as f32;
+                                        let bar = egui::ProgressBar::new(frac)
+                                            .text(format!("Monoprop: {:.1}/{:.0} kg", current, max))
+                                            .fill(egui::Color32::from_rgb(180, 200, 80));
+                                        ui.add(bar);
+                                    }
+                                }
                             }
 
                             // Decoupler info
@@ -1482,6 +1540,15 @@ impl RenderState {
                                 ui.vertical_centered(|ui| {
                                     ui.heading(egui::RichText::new("Paused").size(32.0).color(egui::Color32::WHITE));
                                     ui.add_space(20.0);
+                                    if can_recover {
+                                        let recover_btn = egui::Button::new(
+                                            egui::RichText::new("Recover Vessel").size(18.0)
+                                        ).fill(egui::Color32::from_rgb(60, 130, 60));
+                                        if ui.add(recover_btn).clicked() {
+                                            pause_action = PauseAction::RecoverVessel;
+                                        }
+                                        ui.add_space(8.0);
+                                    }
                                     if can_exit_flight {
                                         if ui.button(egui::RichText::new("Main Menu").size(18.0)).clicked() {
                                             pause_action = PauseAction::MainMenu;
@@ -1797,6 +1864,7 @@ impl RenderState {
             self.vessel_total_mass = s.total_mass;
             self.vessel_fuel_fraction = s.fuel_fraction;
             self.vessel_thrust_kn = s.thrust_kn;
+            self.vessel_drag_kn = s.drag_kn;
             self.vessel_delta_v = s.delta_v;
             self.vessel_current_stage = s.current_stage;
             self.vessel_total_stages = s.total_stages;
@@ -2719,6 +2787,22 @@ impl RenderState {
                                 );
                             }
 
+                            // Add RCS plumes if nozzles are active
+                            if let Some(ref nozzle_state) = part_data.rcs_nozzle_state {
+                                if def.rcs.is_some() {
+                                    if def.category == crate::parts::PartCategory::Pods {
+                                        // Pods have bilateral nozzles — use pod-specific plume function
+                                        crate::editor::generate_pod_rcs_plume_vertices(
+                                            &mut part_verts, def, 0.0, 0.0, nozzle_state,
+                                        );
+                                    } else {
+                                        crate::editor::generate_rcs_plume_vertices(
+                                            &mut part_verts, def, 0.0, 0.0, nozzle_state,
+                                        );
+                                    }
+                                }
+                            }
+
                             // Apply gimbal rotation for engine parts, then scale
                             // and rotate each vertex by vessel rotation
                             let gimbal = if def.engine.is_some() {
@@ -3077,15 +3161,9 @@ impl RenderState {
                                 let vy = vert.position[1] * scale_factor;
                                 let rx = vx * cos_r - vy * sin_r;
                                 let ry = vx * sin_r + vy * cos_r;
-                                // Dim colors for background vessels in flight (alpha < 1)
-                                let color = if vessel.color[3] < 1.0 {
-                                    [vert.color[0] * 0.5, vert.color[1] * 0.5, vert.color[2] * 0.5, vert.color[3] * 0.7]
-                                } else {
-                                    vert.color
-                                };
                                 all_vertices.push(Vertex {
                                     position: [part_center_x + rx, part_center_y + ry],
-                                    color,
+                                    color: vert.color,
                                 });
                             }
                             let num_part_verts = part_verts.len() as u32;
@@ -3119,14 +3197,9 @@ impl RenderState {
                                     let vy = vert.position[1] * render_scale;
                                     let rx = vx * cos_r - vy * sin_r;
                                     let ry = vx * sin_r + vy * cos_r;
-                                    let color = if vessel.color[3] < 1.0 {
-                                        [vert.color[0] * 0.5, vert.color[1] * 0.5, vert.color[2] * 0.5, vert.color[3] * 0.7]
-                                    } else {
-                                        vert.color
-                                    };
                                     all_vertices.push(Vertex {
                                         position: [rel_x + rx, rel_y + ry],
-                                        color,
+                                        color: vert.color,
                                     });
                                 }
                                 let num_verts = adapter_verts.len() as u32;
@@ -3170,8 +3243,13 @@ impl RenderState {
                 let screen_y = (1.0 - ndc_y) * 0.5 * self.size.height as f32 / scale_factor;
                 self.background_vessel_screen_positions.push((vessel.id, [screen_x, screen_y]));
 
-                // Draw orbit line if available (parametric ellipse, same as body orbits)
-                if let Some(ref orbit) = vessel.orbit {
+                // Draw orbit line if available, but only in map view (active ship < 5px)
+                let in_map_view = ship.map(|s| {
+                    let sp = s.size as f32 * pixels_per_world_unit * 2.0;
+                    sp < 5.0
+                }).unwrap_or(true);
+                if in_map_view {
+                  if let Some(ref orbit) = vessel.orbit {
                     let e = orbit.eccentricity;
                     if e < 1.0 && orbit.semi_major_axis > 0.0 {
                         let a = orbit.semi_major_axis;
@@ -3216,6 +3294,7 @@ impl RenderState {
                             all_indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
                         }
                     }
+                  }
                 }
             }
         }

@@ -166,15 +166,18 @@ impl FlightState {
 
     /// Create a debris vessel from extracted decoupled parts.
     /// `com_offset` is in vessel-local coordinates (before rotation).
+    /// `ejection_force_kn` applies a separation impulse pushing debris away from the upper stage.
     pub fn create_debris_vessel(
         &mut self,
         debris_vessel: FlightVessel,
         com_offset: [f64; 2],
+        ejection_force_kn: f64,
         solar_system: &SolarSystem,
     ) {
-        let rot = self.ship.rotation;
-        let world_offset_x = com_offset[0] * rot.cos() - com_offset[1] * rot.sin();
-        let world_offset_y = com_offset[0] * rot.sin() + com_offset[1] * rot.cos();
+        // Local-to-world rotation for part positions (heading - PI/2, matches rendering)
+        let local_rot = self.ship.rotation - std::f64::consts::FRAC_PI_2;
+        let world_offset_x = com_offset[0] * local_rot.cos() - com_offset[1] * local_rot.sin();
+        let world_offset_y = com_offset[0] * local_rot.sin() + com_offset[1] * local_rot.cos();
 
         let mut debris_ship = self.ship.clone();
         debris_ship.rel_position[0] += world_offset_x;
@@ -183,7 +186,20 @@ impl FlightState {
         debris_ship.on_rails = false;
         debris_ship.cached_orbit = None;
         debris_ship.cached_trajectory = None;
-        debris_ship.color = [0.6, 0.6, 0.6, 1.0]; // Grey for debris
+        debris_ship.color = [1.0, 1.0, 1.0, 1.0]; // Same as active vessels
+
+        // Apply separation impulse: F*dt/m, using a 0.1s impulse duration
+        // Direction: opposite to vessel heading (push debris downward)
+        if ejection_force_kn > 0.0 && debris_vessel.total_mass > 0.0 {
+            let impulse_duration = 0.1; // seconds
+            let force_newtons = ejection_force_kn * 1000.0;
+            let mass_kg = debris_vessel.total_mass * 1000.0;
+            let dv = force_newtons * impulse_duration / mass_kg;
+            // Heading is [cos(rotation), sin(rotation)]; push debris opposite
+            let sep_dir = self.ship.rotation + std::f64::consts::PI;
+            debris_ship.rel_velocity[0] += dv * sep_dir.cos();
+            debris_ship.rel_velocity[1] += dv * sep_dir.sin();
+        }
 
         // Put debris on rails immediately
         debris_ship.enter_rails_mode(solar_system);
@@ -203,6 +219,34 @@ impl FlightState {
 
         log::info!("Created debris vessel: {} (id={})", name, id);
     }
+
+    /// Remove inactive vessels that are landed on the launchpad.
+    /// Called before launching a new vessel to clear the pad.
+    pub fn recover_vessels_on_launchpad(&mut self, solar_system: &crate::bodies::SolarSystem) {
+        let earth_radius = solar_system.bodies[LAUNCHPAD_BODY_INDEX].radius;
+        let half_angle = (LAUNCHPAD_BOTTOM_WIDTH * 0.5) / earth_radius;
+
+        self.inactive_vessels.retain(|v| {
+            let dominated_by_earth = v.ship.soi_body == LAUNCHPAD_BODY_INDEX;
+            let is_landed = matches!(v.ship.state, crate::ship::ShipState::Landed { body_index, .. } if body_index == LAUNCHPAD_BODY_INDEX);
+            if dominated_by_earth && is_landed {
+                let angle = v.ship.rel_position[1].atan2(v.ship.rel_position[0]);
+                let angle_diff = angle - LAUNCHPAD_SURFACE_ANGLE;
+                let angle_diff = angle_diff - (angle_diff / std::f64::consts::TAU).round() * std::f64::consts::TAU;
+                if angle_diff.abs() < half_angle {
+                    log::info!("Auto-recovered vessel on launchpad: {} (id={})", v.name, v.id);
+                    return false; // Remove
+                }
+            }
+            true // Keep
+        });
+    }
+}
+
+/// Returns true if the given body supports vessel recovery (i.e. has infrastructure).
+/// Currently only Earth. Future colonies will add more indices.
+pub fn is_recoverable_body(body_index: usize) -> bool {
+    body_index == LAUNCHPAD_BODY_INDEX
 }
 
 /// Central game state container

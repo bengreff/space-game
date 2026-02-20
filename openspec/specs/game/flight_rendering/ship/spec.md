@@ -64,6 +64,39 @@ When an engine is active and throttle > 0, an exhaust plume SHALL be rendered be
 #### Scenario: Inner plume
 - Yellow triangle `[1.0, 0.9, 0.1, 1.0]`, 60% width, 40% length
 
+## RCS Plumes
+
+### Requirement: RCS plume rendering in flight
+
+When RCS nozzles are active (vessel is rotating or translating via manual input or autopilot), white plume rectangles SHALL be rendered extending outward from each firing nozzle. Plumes are generated in part-local space at origin (0,0) and transformed with the rest of the part vertices (scale, gimbal rotation if applicable, vessel rotation).
+
+#### Scenario: RCS plume activation from rotation
+- **WHEN** the player presses Q (rotate left, `rcs_direction = 1.0`) and an RCS part is above the center of mass
+- **THEN** nozzles whose torque matches the positive rotation direction SHALL show white plumes
+
+#### Scenario: RCS plume activation from translation
+- **WHEN** the player presses W (translate forward, `rcs_translate[0] > 0`)
+- **THEN** down nozzles on all RCS parts SHALL fire (push ship forward=up)
+- **WHEN** S pressed (translate backward, `rcs_translate[0] < 0`): up nozzles fire
+- **WHEN** D pressed (translate right, `rcs_translate[1] > 0`): right-mount lateral nozzles fire (exhaust left, push right)
+- **WHEN** A pressed (translate left, `rcs_translate[1] < 0`): left-mount lateral nozzles fire (exhaust right, push left)
+
+#### Scenario: Combined rotation and translation
+- **WHEN** both rotation and translation inputs are active simultaneously
+- **THEN** nozzle activation SHALL be the union of rotation-driven and translation-driven activations
+
+#### Scenario: No plumes when idle
+- **WHEN** `rcs_direction = 0.0` AND `rcs_translate = [0.0, 0.0]` (no RCS input)
+- **THEN** no RCS plumes SHALL be rendered
+
+#### Scenario: Background vessel RCS
+- **WHEN** rendering an inactive/background vessel
+- **THEN** `rcs_nozzle_state` SHALL be `None` (no plumes)
+
+### Requirement: Pod RCS plume rendering
+
+When a pod has built-in RCS (`def.rcs.is_some()` AND `def.category == Pods`), plumes SHALL be rendered from bilateral nozzle positions near the top of the pod (80% up, at the trapezoid edges). The `lateral` flag fires the left nozzle (exhaust left) and `lateral_mirrored` fires the right nozzle (exhaust right). Pod RCS plumes use `generate_pod_rcs_plume_vertices()` instead of the standalone RCS plume function.
+
 ## Orbit Lines
 
 ### Requirement: Ship orbit line displayed in map view

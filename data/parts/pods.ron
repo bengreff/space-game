@@ -20,7 +20,11 @@
             pod: Some((
                 crew_capacity: 2,
             )),
-            resources: {},
+            rcs: Some((
+                thrust: 0.1,
+                isp: 240.0,
+            )),
+            resources: {"monopropellant": 10.0},
         ),
 
         // Medium Command Pod - larger trapezoid
@@ -41,7 +45,11 @@
             pod: Some((
                 crew_capacity: 4,
             )),
-            resources: {},
+            rcs: Some((
+                thrust: 0.3,
+                isp: 240.0,
+            )),
+            resources: {"monopropellant": 30.0},
         ),
     ],
 )

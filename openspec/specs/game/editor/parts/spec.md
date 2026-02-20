@@ -189,9 +189,17 @@ Each fuel bar SHALL be a custom-drawn interactive rectangle that responds to cli
 
 For pods, the info panel SHALL display: crew capacity.
 
+### Requirement: Built-in pod RCS
+
+Command pods MAY include built-in RCS thrusters and monopropellant. When a pod definition has `rcs: Some(...)` and `resources: {"monopropellant": N}`, the pod SHALL provide attitude control via bilateral RCS nozzles without requiring separate RCS blocks. Built-in pod RCS uses the same fuel zone system as standalone RCS — monopropellant in a pod above a non-crossfeed decoupler is isolated from tanks below it.
+
 ### Requirement: RCS info
 
 For RCS thrusters, the info panel SHALL display: thrust (kN), specific impulse (seconds), and fuel type (Monopropellant).
+
+### Requirement: RCS part variants
+
+RCS thrusters SHALL be thin side-mount parts (0.5 grid wide, 1x1 hitbox). Small RCS (RV-1) has `grid_height: 0.75` for a compact visual; medium RCS (RV-3) has `grid_height: 1.0`. Each RCS part SHALL have a mirror variant: right-mount (default) and left-mount (`is_mirrored: true`). Mirror variants SHALL be linked via `mirror_def_id` for automatic mirror-mode placement. Parts: `rcs_small`/`rcs_small_left`, `rcs_medium`/`rcs_medium_left`.
 
 ### Requirement: Decoupler info for placed parts
 

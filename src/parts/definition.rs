@@ -217,6 +217,8 @@ pub struct PodData {
 pub struct RcsData {
     pub thrust: f64,  // kN per axis
     pub isp: f64,     // Specific impulse (seconds)
+    #[serde(default)]
+    pub is_mirrored: bool,  // true = left-mount (nozzles point right/up/down)
 }
 
 /// A part definition loaded from RON files

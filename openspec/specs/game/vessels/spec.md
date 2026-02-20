@@ -17,17 +17,23 @@ Inactive vessels are stored in `FlightState.inactive_vessels: Vec<TrackedVessel>
 ## Debris Creation
 
 ### Requirement: Decoupling creates debris
-When `activate_next_stage()` or manual decouple marks parts as `decoupled = true`, `extract_decoupled_parts()` is called to split them into a new `FlightVessel`. The debris vessel is wrapped in a `TrackedVessel` and added to `inactive_vessels`.
+When `activate_next_stage()` or manual decouple marks parts as `decoupled = true`, `extract_decoupled_parts()` is called to split them into a new `FlightVessel`. The debris vessel is wrapped in a `TrackedVessel` and added to `inactive_vessels`. Decoupling has three phases: (1) Y-position-based: all parts whose top edge is at or below the decoupler's bottom edge are decoupled. (2) Fairing-side: parts beside the adapter/fairing zone are decoupled — this catches RCS blocks or other parts side-mounted on the fairing. The adapter zone spans from the decoupler's visual ring top (`center - hitbox_half_h + visual_height`) to the tank/pod bottom above. A part qualifies if its center Y is within this zone, its center X is off the center axis (`> 0.1m`), and within reach of the fairing (`< max(dec_half_w, tank_half_w) + GRID_SQUARE_SIZE`). (3) Connectivity-based: `decouple_disconnected()` runs a BFS from the vessel root to catch any remaining disconnected parts.
 
 ### Requirement: Debris naming
 Debris vessels are auto-named "Debris {N}" where N is a monotonically increasing counter (`debris_counter`).
 
+### Requirement: Extracted parts marked destroyed
+After `extract_decoupled_parts()` clones decoupled parts into a debris vessel, the original parts in the parent vessel SHALL be marked `destroyed = true`. This prevents previously-decoupled parts from being re-extracted into duplicate debris on subsequent staging events.
+
 ### Requirement: Debris properties
-- Grey color (`[0.6, 0.6, 0.6, 1.0]`)
+- Full color (`[1.0, 1.0, 1.0, 1.0]`), same as active vessels
 - No stages (empty `stages` vec)
 - All engines disabled
 - Put on rails immediately after creation
 - Position offset by the decoupled parts' center of mass relative to the active vessel
+
+### Requirement: Ejection force
+When a decoupler fires, its `ejection_force` (kN, from `DecouplerData`) is applied as a separation impulse to the debris vessel. The impulse pushes debris in the opposite direction of the vessel heading (away from the upper stage). The velocity change is `dv = (force_N * 0.1s) / mass_kg`, applied to the debris ship's `rel_velocity` before it goes on rails. Thermal breakup debris receives no ejection force (0 kN).
 
 ### Requirement: Active vessel recentering
 After debris extraction, the active vessel recenters its parts on its new COM and adjusts the ship's world position accordingly.
@@ -49,6 +55,9 @@ Vessels are deleted (removed from `inactive_vessels`) when BOTH of these conditi
 - Current position is in atmosphere (`in_atmosphere()`) or below landing altitude (`below_landing_altitude()`), including negative altitudes (inside the body surface)
 
 This means a vessel on an orbit that clips the atmosphere is not immediately deleted — it persists until it actually reaches the atmosphere/landing zone.
+
+### Requirement: Atmospheric proximity preservation
+In flight mode, inactive vessels within 3km of the active vessel are NOT deleted even if they are in atmosphere with a suborbital trajectory. This preserves recently-jettisoned stages so the player can see them separate. Outside of 3km (or in main menu/tracking station), atmospheric deletion applies normally.
 
 ## Vessel Switching
 
@@ -77,10 +86,10 @@ The tracking station sidebar "Fly" button switches to the selected vessel and en
 ## Rendering
 
 ### Requirement: Full vessel part rendering
-Inactive vessels with part data (`FlightVessel`) are rendered with their full parts using the same rendering pipeline as the active vessel (generate_part_shape_vertices, decoupler adapters). In flight mode, background vessel parts are dimmed (50% RGB, 70% alpha). Vessels without part data fall back to triangle icon rendering (8px screen-fixed).
+Inactive vessels with part data (`FlightVessel`) are rendered with their full parts using the same rendering pipeline as the active vessel (generate_part_shape_vertices, decoupler adapters). Inactive vessel parts use the same colors as the active vessel (no dimming). Vessels without part data fall back to triangle icon rendering (8px screen-fixed).
 
 ### Requirement: Background vessel orbits
-Inactive vessels with valid orbits have their orbit lines drawn in dimmed grey (`[0.5, 0.5, 0.5, 0.3]`). Only elliptical orbits (e < 1) are rendered, using 256-segment line approximation.
+Inactive vessels with valid orbits have their orbit lines drawn in dimmed grey (`[0.5, 0.5, 0.5, 0.3]`). Only elliptical orbits (e < 1) are rendered, using 256-segment line approximation. Background vessel orbits SHALL only be visible in map view (when the active ship is smaller than 5 pixels on screen), matching the active vessel's orbit line visibility.
 
 ### Requirement: Tracking station vessel rendering
 All vessels are rendered with full parts and orbit lines in grey (`[0.6, 0.6, 0.6, 0.4]`). Vessels without part data fall back to colored triangle icons.

@@ -28,6 +28,9 @@ pub struct FlightVessel {
     pub on_rails: bool,
     pub stages: Vec<Vec<usize>>,
     pub current_stage: usize,
+
+    // Ejection force from last decoupler firing (kN), consumed by handle_post_decouple
+    pub last_decouple_force: f64,
 }
 
 /// A part in flight
@@ -253,6 +256,7 @@ impl FlightVessel {
             on_rails: false,
             stages,
             current_stage: 0,
+            last_decouple_force: 0.0,
         })
     }
 
@@ -548,6 +552,92 @@ impl FlightVessel {
         }
 
         torque
+    }
+
+    /// Compute total available RCS translation force (kN) from all non-decoupled RCS thrusters
+    /// that have monopropellant available in their fuel zone.
+    pub fn compute_rcs_translation_force(&self, part_defs: &PartDefinitions) -> f64 {
+        let zones = self.compute_fuel_zones(part_defs);
+        let mut force = 0.0;
+
+        for (i, part) in self.parts.iter().enumerate() {
+            if part.destroyed || part.decoupled || part.rcs_thrust <= 0.0 {
+                continue;
+            }
+
+            let zone = zones[i];
+            if zone == usize::MAX {
+                continue;
+            }
+            let monoprop_available: f64 = self.parts.iter()
+                .enumerate()
+                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == zone)
+                .filter_map(|(_, p)| p.resources.get("monopropellant"))
+                .sum();
+            if monoprop_available < 0.001 {
+                continue;
+            }
+
+            force += part.rcs_thrust;
+        }
+
+        force
+    }
+
+    /// Consume monopropellant from RCS thrusters during translation.
+    /// `translate` is [forward, right] in vessel-local frame, -1..1 each.
+    pub fn consume_rcs_translation_fuel(&mut self, dt: f64, translate: [f64; 2], part_defs: &PartDefinitions) {
+        let mag = (translate[0].powi(2) + translate[1].powi(2)).sqrt();
+        if mag < 0.001 {
+            return;
+        }
+
+        let zones = self.compute_fuel_zones(part_defs);
+        let mut zone_demands: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
+
+        for (i, part) in self.parts.iter().enumerate() {
+            if part.destroyed || part.decoupled || part.rcs_thrust <= 0.0 {
+                continue;
+            }
+            let zone = zones[i];
+            if zone == usize::MAX {
+                continue;
+            }
+            let monoprop_available: f64 = self.parts.iter()
+                .enumerate()
+                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == zone)
+                .filter_map(|(_, p)| p.resources.get("monopropellant"))
+                .sum();
+            if monoprop_available < 0.001 {
+                continue;
+            }
+
+            // Scale consumption by translation magnitude (capped at 1)
+            let consumption = part.rcs_mass_flow_rate * mag.min(1.0) * dt;
+            *zone_demands.entry(zone).or_insert(0.0) += consumption;
+        }
+
+        for (&zone, &drain_amount) in &zone_demands {
+            let available: f64 = self.parts.iter()
+                .enumerate()
+                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == zone)
+                .filter_map(|(_, p)| p.resources.get("monopropellant"))
+                .sum();
+            if drain_amount > 0.0 && available > 0.0 {
+                let drain_frac = (drain_amount / available).min(1.0);
+                for (j, part) in self.parts.iter_mut().enumerate() {
+                    if part.destroyed || part.decoupled || zones[j] != zone {
+                        continue;
+                    }
+                    if let Some(mp) = part.resources.get_mut("monopropellant") {
+                        *mp -= *mp * drain_frac;
+                        if *mp < 0.001 {
+                            *mp = 0.0;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Consume monopropellant from RCS thrusters during rotation.
@@ -1499,6 +1589,7 @@ impl FlightVessel {
                 on_rails: false,
                 stages: Vec::new(),
                 current_stage: 0,
+                last_decouple_force: 0.0,
             };
 
             result.push((debris_vessel, debris_com));
@@ -1662,6 +1753,11 @@ impl FlightVessel {
             part
         }).collect();
 
+        // Mark originals as destroyed so they aren't re-extracted on future staging events
+        for &i in &decoupled_indices {
+            self.parts[i].destroyed = true;
+        }
+
         // Disable all engines on debris (no staging system)
         for part in &mut debris_parts {
             part.engine_active = false;
@@ -1706,6 +1802,7 @@ impl FlightVessel {
             on_rails: false,
             stages: Vec::new(),   // Debris can't stage
             current_stage: 0,
+            last_decouple_force: 0.0,
         };
 
         Some((debris_vessel, debris_com))
@@ -1718,6 +1815,7 @@ impl FlightVessel {
         }
 
         let stage_parts = self.stages[self.current_stage].clone();
+        self.last_decouple_force = 0.0;
 
         for &part_idx in &stage_parts {
             if part_idx >= self.parts.len() || self.parts[part_idx].decoupled {
@@ -1732,9 +1830,17 @@ impl FlightVessel {
             // Fire decouplers: decouple all parts below the decoupler
             let def = part_defs.get(&self.parts[part_idx].definition_id);
             if let Some(def) = def {
-                if def.decoupler.is_some() {
+                if let Some(ref dec_data) = def.decoupler {
+                    // Store max ejection force from decouplers in this stage
+                    if dec_data.ejection_force > self.last_decouple_force {
+                        self.last_decouple_force = dec_data.ejection_force;
+                    }
+                    let dec_x = self.parts[part_idx].local_position[0];
                     let decoupler_bottom = self.parts[part_idx].local_position[1]
                         - def.hitbox_height() / 2.0;
+                    let decoupler_top = self.parts[part_idx].local_position[1]
+                        + def.hitbox_height() / 2.0;
+                    let dec_half_w = def.width() / 2.0;
 
                     // Mark the decoupler itself as decoupled
                     self.parts[part_idx].decoupled = true;
@@ -1754,12 +1860,111 @@ impl FlightVessel {
                             self.parts[i].decoupled = true;
                         }
                     }
+
+                    // Also decouple parts beside the adapter/fairing.
+                    // The adapter zone spans from the visual ring top to the
+                    // tank/pod bottom above. (The ring is shorter than the hitbox;
+                    // the gap between ring top and hitbox top is the adapter space.)
+                    let ring_top = self.parts[part_idx].local_position[1]
+                        - def.hitbox_height() / 2.0 + def.height();
+
+                    // Find the closest aligned tank/pod above to get fairing width
+                    let mut adapter_top = decoupler_top;
+                    let mut tank_half_w = dec_half_w;
+                    let mut best_dist = f64::MAX;
+                    for j in 0..self.parts.len() {
+                        if self.parts[j].decoupled || self.parts[j].destroyed { continue; }
+                        let Some(jdef) = part_defs.get(&self.parts[j].definition_id) else { continue };
+                        if jdef.tank.is_none() && jdef.pod.is_none() { continue; }
+                        if (self.parts[j].local_position[0] - dec_x).abs() > 0.01 { continue; }
+                        let j_bottom = self.parts[j].local_position[1] - jdef.hitbox_height() / 2.0;
+                        if j_bottom < ring_top - 0.01 { continue; }
+                        let dist = j_bottom - ring_top;
+                        if dist < best_dist {
+                            best_dist = dist;
+                            adapter_top = j_bottom;
+                            tank_half_w = jdef.width() / 2.0;
+                        }
+                    }
+
+                    // Decouple parts beside the fairing. A part qualifies if its
+                    // center Y is in the adapter zone and it's off the center axis
+                    // but within reach of the fairing edge.
+                    let max_half_w = dec_half_w.max(tank_half_w);
+                    let margin = crate::parts::GRID_SQUARE_SIZE;
+                    for j in 0..self.parts.len() {
+                        if j == part_idx || self.parts[j].decoupled || self.parts[j].destroyed {
+                            continue;
+                        }
+                        let jy = self.parts[j].local_position[1];
+                        let jx = self.parts[j].local_position[0];
+                        if jy < ring_top - 0.01 || jy > adapter_top + 0.01 { continue; }
+                        let dx = (jx - dec_x).abs();
+                        // Off center axis, but close enough to be on the fairing
+                        if dx > 0.1 && dx < max_half_w + margin {
+                            self.parts[j].decoupled = true;
+                        }
+                    }
                 }
             }
         }
 
+        // After Y-based decoupling, also decouple any parts that are no longer
+        // connected to the vessel root (e.g., RCS blocks side-mounted on a decoupler).
+        self.decouple_disconnected(part_defs);
+
         self.current_stage += 1;
         true
+    }
+
+    /// Mark any non-decoupled parts that are disconnected from the root as decoupled.
+    /// Uses BFS through weld connections (which skip already-decoupled parts).
+    fn decouple_disconnected(&mut self, part_defs: &PartDefinitions) {
+        use std::collections::VecDeque;
+
+        let n = self.parts.len();
+        let connections = self.find_weld_connections(part_defs);
+
+        // Find a valid root (prefer current root, then any pod, then any part)
+        let root = if self.root_part_index < n
+            && !self.parts[self.root_part_index].destroyed
+            && !self.parts[self.root_part_index].decoupled
+        {
+            self.root_part_index
+        } else {
+            match self.parts.iter().enumerate()
+                .filter(|(_, p)| !p.destroyed && !p.decoupled)
+                .find(|(_, p)| part_defs.get(&p.definition_id).map(|d| d.pod.is_some()).unwrap_or(false))
+                .map(|(i, _)| i)
+                .or_else(|| self.parts.iter().enumerate()
+                    .find(|(_, p)| !p.destroyed && !p.decoupled)
+                    .map(|(i, _)| i))
+            {
+                Some(r) => r,
+                None => return,
+            }
+        };
+
+        // BFS from root
+        let mut reachable = vec![false; n];
+        let mut queue = VecDeque::new();
+        reachable[root] = true;
+        queue.push_back(root);
+        while let Some(idx) = queue.pop_front() {
+            for &neighbor in &connections[idx] {
+                if !reachable[neighbor] && !self.parts[neighbor].destroyed && !self.parts[neighbor].decoupled {
+                    reachable[neighbor] = true;
+                    queue.push_back(neighbor);
+                }
+            }
+        }
+
+        // Mark unreachable parts as decoupled
+        for i in 0..n {
+            if !reachable[i] && !self.parts[i].destroyed && !self.parts[i].decoupled {
+                self.parts[i].decoupled = true;
+            }
+        }
     }
 }
 
@@ -1849,5 +2054,6 @@ pub fn create_default_vessel(
         on_rails: false,
         stages: Vec::new(),
         current_stage: 0,
+        last_decouple_force: 0.0,
     }
 }

@@ -49,6 +49,19 @@ Below time warp buttons, orbital information SHALL be shown horizontally when th
 
 An egui bottom panel named "flight_info_panel" with background `rgba(20, 20, 30, 200)` SHALL show autopilot buttons, vessel stats, and velocity/altitude in a horizontal row.
 
+### Requirement: RCS toggle button
+
+An "RCS" toggle button SHALL appear at the left of the bottom panel, before the SAS buttons. RCS SHALL be off by default. Pressing R on the keyboard SHALL toggle RCS on/off.
+
+#### Scenario: RCS button colors
+- Active fill = `rgb(80, 150, 80)`, inactive = `rgb(60, 60, 70)`
+- Active text = white, inactive text = light gray
+- Button style matches SAS buttons (text size 11, min size 35x20)
+
+#### Scenario: RCS disabled effects
+- **WHEN** RCS is disabled
+- **THEN** RCS torque SHALL be 0 (no rotational authority from RCS thrusters), RCS translation force SHALL be 0, RCS fuel SHALL NOT be consumed, WASD translation SHALL have no effect, and no RCS plumes SHALL be rendered
+
 ### Requirement: Autopilot (SAS) buttons
 
 The SAS system SHALL display buttons for: "PRO" (Prograde), "RET" (Retrograde), "R-" (RadialIn), "R+" (RadialOut), and "MAN" (ManeuverNode, only when a maneuver node is selected).
@@ -63,7 +76,7 @@ The SAS system SHALL display buttons for: "PRO" (Prograde), "RET" (Retrograde), 
 
 ### Requirement: Vessel stats display
 
-The bottom panel SHALL show: mass ("M: {mass:.2}t"), thrust ("T: {thrust:.0}kN"), TWR ("TWR: {value:.2}" green if >= 1.0, red if < 1.0), delta-v ("Dv: {formatted}"), and G-force ("G: {value:.1}" color-coded: white < 3g, yellow < 6g, red >= 6g). G-force SHALL use atmospheric-adjusted thrust (interpolated between vacuum and sea-level values based on atmospheric pressure fraction), not vacuum thrust.
+The bottom panel SHALL show: mass ("M: {mass:.2}t"), thrust ("T: {thrust:.0}kN"), drag ("D: {drag:.1}kN", only when drag > 0.01 kN), TWR ("TWR: {value:.2}" green if >= 1.0, red if < 1.0), delta-v ("Dv: {formatted}"), and G-force ("G: {value:.1}" color-coded: white < 3g, yellow < 6g, red >= 6g). G-force SHALL use atmospheric-adjusted thrust (interpolated between vacuum and sea-level values based on atmospheric pressure fraction), not vacuum thrust.
 
 ### Requirement: Atmospheric thrust and TWR adjustment
 
@@ -71,7 +84,7 @@ Thrust and TWR displayed in the bottom panel SHALL be adjusted for atmospheric p
 
 ### Requirement: Velocity and altitude display
 
-Right side of bottom panel SHALL show: "VEL" label with value at font size 13 strong, and "ALT" label with value at font size 13 strong. When `heat_fraction > 0.01`, a temperature readout ("{temp}K") SHALL appear after altitude, colored by severity: yellow (`< 0.33`), orange (`< 0.66`), red (`>= 0.66`).
+Right side of bottom panel SHALL show: "VEL" label with value at font size 13 strong, and "ALT" label with value at font size 13 strong.
 
 #### Scenario: Velocity formatting
 - `>= 1000` -> "{X.XX} km/s", else "{X.X} m/s"
@@ -108,6 +121,10 @@ When ship temperature exceeds 350K, a vertical heat bar SHALL be shown:
 - Bar height 80px, width 20px, fill from bottom proportional to `heat_fraction`
 - Colors: `< 0.33` -> yellow `rgb(220, 200, 80)`, `< 0.66` -> orange `rgb(220, 140, 40)`, `>= 0.66` -> red `rgb(220, 60, 60)`
 - Background `rgb(40, 40, 50)`, border gray 1px
+
+### Requirement: Critical part indicator below heat bar
+
+Below the heat bar, when the hottest part has `heat_fraction > 0.01`, its name SHALL be displayed (truncated to 8 characters) at font size 8, colored by the same yellow/orange/red severity thresholds as the heat bar. This shows which part is closest to its critical temperature.
 
 ### Requirement: Stage indicator below fuel/heat bars
 
@@ -152,6 +169,27 @@ When a flight part is selected, an egui Window with the part's name SHALL show p
 
 #### Scenario: Pod info
 - Crew capacity
+- Monopropellant progress bar (`rgb(180, 200, 80)`) showing current/max kg, when pod has monopropellant
 
 #### Scenario: Decoupler info
 - Enable/Disable Crossfeed toggle, "Decouple" button
+
+## Pause Overlay
+
+### Requirement: Pause overlay with recovery and navigation
+
+When the game is paused in flight mode, a centered overlay SHALL appear with pause controls.
+
+#### Scenario: Recover Vessel button
+- **WHEN** the active vessel is `Landed` on a recoverable body (currently Earth, `LAUNCHPAD_BODY_INDEX`)
+- **THEN** a green-tinted `rgb(60, 130, 60)` "Recover Vessel" button SHALL appear above the "Main Menu" button
+- **WHEN** clicked, the vessel is removed from the simulation (not shelved), maneuver nodes are discarded, and the game returns to the main menu
+
+#### Scenario: Main Menu button
+- **WHEN** the ship can safely exit flight (landed, or not in atmosphere/landing zone while suborbital)
+- **THEN** a "Main Menu" button is enabled; the active vessel is shelved to inactive list
+- **WHEN** the ship cannot safely exit, the button is disabled with explanatory text
+
+#### Scenario: Launchpad clearing on launch
+- **WHEN** a new vessel is launched from the editor
+- **THEN** all inactive vessels that are `Landed` on `LAUNCHPAD_BODY_INDEX` near `LAUNCHPAD_SURFACE_ANGLE` SHALL be auto-recovered (removed) before the new vessel spawns

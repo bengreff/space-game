@@ -897,6 +897,30 @@ pub fn generate_pod_details(
     let window_radius = half_w.min(half_h) * 0.25;
     let window_y = y + half_h * 0.2;  // Slightly above center
     draw_circle(vertices, x, window_y, window_radius, window_color);
+
+    // Draw small triangular RCS nozzles if pod has built-in RCS
+    if def.rcs.is_some() {
+        let nozzle_color = [RCS_NOZZLE_COLOR[0], RCS_NOZZLE_COLOR[1], RCS_NOZZLE_COLOR[2], RCS_NOZZLE_COLOR[3] * alpha];
+        // Nozzle position: ~80% up the pod height, at left and right edges
+        let nozzle_y = y - half_h + half_h * 2.0 * 0.8;
+        // Interpolate pod width at nozzle height (trapezoid shape)
+        let t = 0.8; // fraction from bottom to top
+        let edge_x = half_w + t * (half_top_w - half_w); // half-width at nozzle height
+        let nozzle_hw: f32 = 0.04; // half-width of nozzle base
+        let nozzle_len: f32 = 0.08; // length of nozzle tip from base
+
+        // Right nozzle: triangle pointing right, base on pod edge
+        let r_base_x = x + edge_x;
+        vertices.push(Vertex { position: [r_base_x, nozzle_y - nozzle_hw], color: nozzle_color });
+        vertices.push(Vertex { position: [r_base_x, nozzle_y + nozzle_hw], color: nozzle_color });
+        vertices.push(Vertex { position: [r_base_x + nozzle_len, nozzle_y], color: nozzle_color });
+
+        // Left nozzle: triangle pointing left, base on pod edge
+        let l_base_x = x - edge_x;
+        vertices.push(Vertex { position: [l_base_x, nozzle_y - nozzle_hw], color: nozzle_color });
+        vertices.push(Vertex { position: [l_base_x, nozzle_y + nozzle_hw], color: nozzle_color });
+        vertices.push(Vertex { position: [l_base_x - nozzle_len, nozzle_y], color: nozzle_color });
+    }
 }
 
 /// Generate decoupler ring details (dark horizontal band on bottom half of hitbox)
@@ -994,7 +1018,9 @@ pub fn generate_heat_shield_details(
 const RCS_BODY_COLOR: [f32; 4] = [0.20, 0.20, 0.22, 1.0];     // Dark grey body
 const RCS_NOZZLE_COLOR: [f32; 4] = [0.12, 0.12, 0.14, 1.0];   // Darker nozzle tips
 
-/// Generate RCS thruster details (dark grey body with 4 triangular nozzles)
+/// Generate RCS thruster details — thin side-mount with 3 directional nozzles.
+/// Right-mount (default): body on right side of hitbox, nozzles point left/up/down.
+/// Left-mount (is_mirrored): body on left side of hitbox, nozzles point right/up/down.
 pub fn generate_rcs_details(
     vertices: &mut Vec<Vertex>,
     def: &PartDefinition,
@@ -1002,45 +1028,165 @@ pub fn generate_rcs_details(
     y: f32,
     alpha: f32,
 ) {
-    let half_w = (def.width() / 2.0) as f32;
-    let half_h = (def.height() / 2.0) as f32;
+    let is_mirrored = def.rcs.as_ref().map(|r| r.is_mirrored).unwrap_or(false);
+    // sign: 1.0 = right-mount (sprite on right side, nozzles face left)
+    //       -1.0 = left-mount  (sprite on left side, nozzles face right)
+    let sign: f32 = if is_mirrored { -1.0 } else { 1.0 };
+
+    let half_w = (def.width() / 2.0) as f32;   // visual half-width (0.125m for 0.5 grid)
+    let half_h = (def.height() / 2.0) as f32;  // visual half-height (0.25m for 1.0 grid)
+    let hitbox_half_w = (def.hitbox_width() / 2.0) as f32;  // hitbox half-width (0.25m for 1 grid)
+
+    // Offset visual center to the side of the hitbox
+    let cx = x + sign * (hitbox_half_w - half_w);
 
     let body_color = [RCS_BODY_COLOR[0], RCS_BODY_COLOR[1], RCS_BODY_COLOR[2], RCS_BODY_COLOR[3] * alpha];
     let nozzle_color = [RCS_NOZZLE_COLOR[0], RCS_NOZZLE_COLOR[1], RCS_NOZZLE_COLOR[2], RCS_NOZZLE_COLOR[3] * alpha];
 
-    // Central body (60% of size)
-    let body_hw = half_w * 0.6;
-    let body_hh = half_h * 0.6;
-    vertices.push(Vertex { position: [x - body_hw, y - body_hh], color: body_color });
-    vertices.push(Vertex { position: [x + body_hw, y - body_hh], color: body_color });
-    vertices.push(Vertex { position: [x + body_hw, y + body_hh], color: body_color });
-    vertices.push(Vertex { position: [x - body_hw, y - body_hh], color: body_color });
-    vertices.push(Vertex { position: [x + body_hw, y + body_hh], color: body_color });
-    vertices.push(Vertex { position: [x - body_hw, y + body_hh], color: body_color });
+    // Body: rectangle covering 80% of visual extents
+    let body_hw = half_w * 0.8;
+    let body_hh = half_h * 0.8;
+    vertices.push(Vertex { position: [cx - body_hw, y - body_hh], color: body_color });
+    vertices.push(Vertex { position: [cx + body_hw, y - body_hh], color: body_color });
+    vertices.push(Vertex { position: [cx + body_hw, y + body_hh], color: body_color });
+    vertices.push(Vertex { position: [cx - body_hw, y - body_hh], color: body_color });
+    vertices.push(Vertex { position: [cx + body_hw, y + body_hh], color: body_color });
+    vertices.push(Vertex { position: [cx - body_hw, y + body_hh], color: body_color });
 
-    // 4 nozzle triangles pointing outward
-    let nozzle_len = half_w * 0.4;
-    let nozzle_hw = half_h * 0.2;
+    // Nozzle dimensions
+    let nozzle_len = half_h * 0.3;
+    let nozzle_hw = half_w * 0.35;  // half-width of nozzle base
 
-    // Right nozzle
-    vertices.push(Vertex { position: [x + body_hw, y - nozzle_hw], color: nozzle_color });
-    vertices.push(Vertex { position: [x + body_hw, y + nozzle_hw], color: nozzle_color });
-    vertices.push(Vertex { position: [x + body_hw + nozzle_len, y], color: nozzle_color });
-
-    // Left nozzle
-    vertices.push(Vertex { position: [x - body_hw, y - nozzle_hw], color: nozzle_color });
-    vertices.push(Vertex { position: [x - body_hw, y + nozzle_hw], color: nozzle_color });
-    vertices.push(Vertex { position: [x - body_hw - nozzle_len, y], color: nozzle_color });
+    // Lateral nozzle: points away from vessel (left for right-mount, right for left-mount)
+    let lateral_base_x = cx - sign * body_hw;
+    vertices.push(Vertex { position: [lateral_base_x, y - nozzle_hw], color: nozzle_color });
+    vertices.push(Vertex { position: [lateral_base_x, y + nozzle_hw], color: nozzle_color });
+    vertices.push(Vertex { position: [lateral_base_x - sign * nozzle_len, y], color: nozzle_color });
 
     // Top nozzle
-    vertices.push(Vertex { position: [x - nozzle_hw, y + body_hh], color: nozzle_color });
-    vertices.push(Vertex { position: [x + nozzle_hw, y + body_hh], color: nozzle_color });
-    vertices.push(Vertex { position: [x, y + body_hh + nozzle_len], color: nozzle_color });
+    vertices.push(Vertex { position: [cx - nozzle_hw, y + body_hh], color: nozzle_color });
+    vertices.push(Vertex { position: [cx + nozzle_hw, y + body_hh], color: nozzle_color });
+    vertices.push(Vertex { position: [cx, y + body_hh + nozzle_len], color: nozzle_color });
 
     // Bottom nozzle
-    vertices.push(Vertex { position: [x - nozzle_hw, y - body_hh], color: nozzle_color });
-    vertices.push(Vertex { position: [x + nozzle_hw, y - body_hh], color: nozzle_color });
-    vertices.push(Vertex { position: [x, y - body_hh - nozzle_len], color: nozzle_color });
+    vertices.push(Vertex { position: [cx - nozzle_hw, y - body_hh], color: nozzle_color });
+    vertices.push(Vertex { position: [cx + nozzle_hw, y - body_hh], color: nozzle_color });
+    vertices.push(Vertex { position: [cx, y - body_hh - nozzle_len], color: nozzle_color });
+}
+
+/// Generate white RCS plume vertices for active nozzles.
+/// Called at origin (0,0) in part-local space, like engine plumes.
+pub fn generate_rcs_plume_vertices(
+    vertices: &mut Vec<Vertex>,
+    def: &PartDefinition,
+    x: f32,
+    y: f32,
+    nozzle_state: &crate::render::RcsNozzleState,
+) {
+    let is_mirrored = def.rcs.as_ref().map(|r| r.is_mirrored).unwrap_or(false);
+    let sign: f32 = if is_mirrored { -1.0 } else { 1.0 };
+
+    let half_w = (def.width() / 2.0) as f32;
+    let half_h = (def.height() / 2.0) as f32;
+    let hitbox_half_w = (def.hitbox_width() / 2.0) as f32;
+    let cx = x + sign * (hitbox_half_w - half_w);
+
+    let body_hw = half_w * 0.8;
+    let body_hh = half_h * 0.8;
+    let nozzle_len = half_h * 0.3;
+    let nozzle_hw = half_w * 0.35;
+
+    // Plume dimensions: extends outward from nozzle tip
+    let plume_len = nozzle_len * 1.5;
+    let plume_hw = nozzle_hw * 0.6;
+
+    let plume_color: [f32; 4] = [0.95, 0.95, 1.0, 0.85];
+
+    // Lateral plume
+    if nozzle_state.lateral {
+        let tip_x = cx - sign * (body_hw + nozzle_len);
+        let end_x = tip_x - sign * plume_len;
+        // Rectangle as two triangles
+        vertices.push(Vertex { position: [tip_x, y - plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [tip_x, y + plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [end_x, y + plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [tip_x, y - plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [end_x, y + plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [end_x, y - plume_hw], color: plume_color });
+    }
+
+    // Top plume
+    if nozzle_state.up {
+        let tip_y = y + body_hh + nozzle_len;
+        let end_y = tip_y + plume_len;
+        vertices.push(Vertex { position: [cx - plume_hw, tip_y], color: plume_color });
+        vertices.push(Vertex { position: [cx + plume_hw, tip_y], color: plume_color });
+        vertices.push(Vertex { position: [cx + plume_hw, end_y], color: plume_color });
+        vertices.push(Vertex { position: [cx - plume_hw, tip_y], color: plume_color });
+        vertices.push(Vertex { position: [cx + plume_hw, end_y], color: plume_color });
+        vertices.push(Vertex { position: [cx - plume_hw, end_y], color: plume_color });
+    }
+
+    // Bottom plume
+    if nozzle_state.down {
+        let tip_y = y - body_hh - nozzle_len;
+        let end_y = tip_y - plume_len;
+        vertices.push(Vertex { position: [cx - plume_hw, tip_y], color: plume_color });
+        vertices.push(Vertex { position: [cx + plume_hw, tip_y], color: plume_color });
+        vertices.push(Vertex { position: [cx + plume_hw, end_y], color: plume_color });
+        vertices.push(Vertex { position: [cx - plume_hw, tip_y], color: plume_color });
+        vertices.push(Vertex { position: [cx + plume_hw, end_y], color: plume_color });
+        vertices.push(Vertex { position: [cx - plume_hw, end_y], color: plume_color });
+    }
+}
+
+/// Generate RCS plume vertices for pods with built-in bilateral RCS nozzles.
+/// Pods have nozzles on both left and right sides near the top.
+/// `lateral` = left nozzle fires (exhaust left), `lateral_mirrored` = right nozzle fires (exhaust right).
+pub fn generate_pod_rcs_plume_vertices(
+    vertices: &mut Vec<Vertex>,
+    def: &PartDefinition,
+    x: f32,
+    y: f32,
+    nozzle_state: &crate::render::RcsNozzleState,
+) {
+    let half_w = (def.width() / 2.0) as f32;
+    let half_h = (def.height() / 2.0) as f32;
+    let half_top_w = (def.top_width() / 2.0) as f32;
+
+    // Nozzle position matches generate_pod_details: 80% up the pod
+    let nozzle_y = y - half_h + half_h * 2.0 * 0.8;
+    let t = 0.8;
+    let edge_x = half_w + t * (half_top_w - half_w);
+    let nozzle_len: f32 = 0.08; // matches nozzle triangle length
+
+    let plume_len: f32 = 0.12;
+    let plume_hw: f32 = 0.03;
+    let plume_color: [f32; 4] = [0.95, 0.95, 1.0, 0.85];
+
+    // Left nozzle plume (exhaust goes left, from triangle tip)
+    if nozzle_state.lateral {
+        let tip_x = x - edge_x - nozzle_len;
+        let end_x = tip_x - plume_len;
+        vertices.push(Vertex { position: [tip_x, nozzle_y - plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [tip_x, nozzle_y + plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [end_x, nozzle_y + plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [tip_x, nozzle_y - plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [end_x, nozzle_y + plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [end_x, nozzle_y - plume_hw], color: plume_color });
+    }
+
+    // Right nozzle plume (exhaust goes right, from triangle tip)
+    if nozzle_state.lateral_mirrored {
+        let tip_x = x + edge_x + nozzle_len;
+        let end_x = tip_x + plume_len;
+        vertices.push(Vertex { position: [tip_x, nozzle_y - plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [tip_x, nozzle_y + plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [end_x, nozzle_y + plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [tip_x, nozzle_y - plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [end_x, nozzle_y + plume_hw], color: plume_color });
+        vertices.push(Vertex { position: [end_x, nozzle_y - plume_hw], color: plume_color });
+    }
 }
 
 /// Generate adapter trapezoid connecting the closest aligned fuel tank above to a decoupler ring.

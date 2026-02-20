@@ -53,11 +53,36 @@ Ship rotation SHALL use an acceleration-based model:
 - **WHEN** no rotation input is active and `rotational_velocity` is positive but less than `ROTATION_DRAG * dt`
 - **THEN** `rotational_velocity` SHALL be set to 0.0 (not go negative)
 
+## RCS Translation
+
+### Requirement: RCS translation controls
+
+When RCS is enabled, WASD keys SHALL provide vessel-local translation:
+- W: translate forward (vessel +Y)
+- S: translate backward (vessel -Y)
+- A: translate left (vessel -X)
+- D: translate right (vessel +X)
+- When RCS is disabled, WASD SHALL have no effect
+
+### Requirement: RCS translation physics
+
+The `Ship` SHALL store `rcs_translate: [f64; 2]` representing [forward, right] in vessel-local frame, each -1..1. RCS translation acceleration SHALL be computed in `physics_substep`:
+- `accel_mag = rcs_translation_force / total_mass`
+- Forward direction: `[cos(rotation), sin(rotation)]`
+- Right direction: `[sin(rotation), -cos(rotation)]`
+- Total RCS acceleration: `(forward * translate[0] + right * translate[1]) * accel_mag`
+
+Translation SHALL only apply when `rcs_translation_force > 0` and `total_mass > 0`. The `rcs_translation_force` is the sum of `rcs_thrust` from all non-decoupled RCS thrusters that have monopropellant in their fuel zone.
+
+### Requirement: RCS translation fuel consumption
+
+Translation SHALL consume monopropellant proportionally to translation magnitude (capped at 1.0). Each RCS thruster drains `mass_flow_rate * magnitude * dt` from its fuel zone, using the same zone-based proportional drain as rotation fuel consumption.
+
 ## Vessel Physics Data
 
 ### Requirement: Vessel physics data bridge
 
-The `VesselPhysicsData` struct SHALL bridge vessel data into physics: `total_mass` (tonnes), `max_thrust_vac` (kN), `max_thrust_asl` (kN), `vessel_height` (meters), `bottom_extent` (meters), `moment_of_inertia`, `rcs_torque` (kN*m from RCS thrusters), `gimbal_torque` (kN*m, signed), and `vessel_half_width` (meters, for aerodynamic cross-section).
+The `VesselPhysicsData` struct SHALL bridge vessel data into physics: `total_mass` (tonnes), `max_thrust_vac` (kN), `max_thrust_asl` (kN), `vessel_height` (meters), `bottom_extent` (meters), `moment_of_inertia`, `rcs_torque` (kN*m from RCS thrusters), `gimbal_torque` (kN*m, signed), `vessel_half_width` (meters, for aerodynamic cross-section), and `rcs_translation_force` (kN total from all RCS thrusters for translation).
 
 ## Thrust
 
@@ -88,7 +113,7 @@ When the ship is landed, atmospheric pressure SHALL be assumed to be full surfac
 
 Each physics substep SHALL use velocity Verlet integration:
 1. Calculate gravity acceleration at current position: `a_grav = -G*M/r^2 * r_hat` (only if distance > body radius)
-2. Total acceleration = gravity + thrust
+2. Total acceleration = gravity + thrust + RCS translation + drag
 3. Update position: `pos += vel*dt + 0.5*accel*dt^2`
 4. Recalculate gravity at new position
 5. Update velocity: `vel += 0.5*(accel_old + accel_new)*dt`
