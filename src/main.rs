@@ -11,8 +11,9 @@ use sunscatter::editor::{
     render_editor_ui, EditorAction, generate_grid_vertices, generate_part_vertices,
     generate_ghost_vertices, screen_to_world, part_at_screen_pos, BodyInfo,
 };
+use egui;
 use sunscatter::game::{Game, GameMode};
-use sunscatter::render::{RenderState, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, StagedPartInfo, Vertex};
+use sunscatter::render::{RenderState, MainMenuAction, PauseAction, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, StagedPartInfo, Vertex};
 use sunscatter::ship::{AutopilotTarget, ShipState, VesselPhysicsData, SHIP_SIZE, MAX_THRUST_ACCELERATION, VESSEL_DESTRUCTION_TEMP, AMBIENT_TEMPERATURE, RAILS_WARP_THRESHOLD};
 
 // 1:1 Real-Scale Solar System Simulation
@@ -31,22 +32,14 @@ fn main() {
 
     println!("Sunscatter starting...");
     println!("Controls:");
-    println!("  W: Increase throttle");
-    println!("  S: Decrease throttle");
-    println!("  Z: Full throttle (100%)");
-    println!("  X: Cut throttle (0%)");
-    println!("  A: Rotate left");
-    println!("  D: Rotate right");
-    println!("  E: Open Editor");
+    println!("  Escape: Pause / Menu");
+    println!("  W/S: Throttle up/down");
+    println!("  Z/X: Full/cut throttle");
+    println!("  A/D: Rotate");
     println!("  ` (backtick): Focus on ship");
     println!("  Left mouse drag: Pan camera");
     println!("  Scroll wheel: Zoom in/out");
     println!("  Double-click planet: Focus on it");
-    println!("  Time warp: Click buttons at top of screen");
-    println!("  Close window to exit");
-    println!();
-    println!("Physics: 1:1 real-scale solar system");
-    println!("Earth LEO velocity: ~7.8 km/s (real value)");
 
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -67,8 +60,13 @@ fn main() {
     let mut last_click_time: Option<Instant> = None;
     let mut last_click_pos: [f32; 2] = [0.0, 0.0];
 
-    // Initial camera zoom to see ship on Earth's surface
-    render_state.camera.zoom = 5e6;
+    // Initial camera: focus on Sun, zoomed out to see all planets
+    {
+        let sun_pos = game.solar_system.body_position(0);
+        render_state.camera.position[0] = sun_pos[0] * SCALE * BODY_SCALE;
+        render_state.camera.position[1] = sun_pos[1] * SCALE * BODY_SCALE;
+        render_state.camera.zoom = 0.002; // Zoomed out to see full solar system
+    }
 
     event_loop
         .run(move |event, elwt| {
@@ -91,6 +89,13 @@ fn main() {
                             last_frame = now;
 
                             match game.mode {
+                                GameMode::MainMenu => {
+                                    render_main_menu_frame(
+                                        &mut game,
+                                        &mut render_state,
+                                        elwt,
+                                    );
+                                }
                                 GameMode::Flight => {
                                     render_flight_frame(
                                         &mut game,
@@ -104,11 +109,20 @@ fn main() {
                                         dt,
                                     );
                                 }
+                                GameMode::TrackingStation => {
+                                    render_tracking_station_frame(
+                                        &mut game,
+                                        &mut render_state,
+                                    );
+                                }
                             }
                         }
 
                         WindowEvent::MouseInput { state, button, .. } => {
                             match game.mode {
+                                GameMode::MainMenu => {
+                                    // egui-only handling (buttons in menu)
+                                }
                                 GameMode::Flight => {
                                     handle_flight_mouse_input(
                                         &mut game,
@@ -129,6 +143,17 @@ fn main() {
                                         egui_consumed,
                                     );
                                 }
+                                GameMode::TrackingStation => {
+                                    handle_tracking_station_mouse_input(
+                                        &mut game,
+                                        &mut render_state,
+                                        *state,
+                                        *button,
+                                        egui_consumed,
+                                        &mut last_click_time,
+                                        &mut last_click_pos,
+                                    );
+                                }
                             }
                         }
 
@@ -137,6 +162,9 @@ fn main() {
                             let y = position.y as f32;
 
                             match game.mode {
+                                GameMode::MainMenu => {
+                                    render_state.camera.last_mouse_pos = [x, y];
+                                }
                                 GameMode::Flight => {
                                     handle_flight_cursor_moved(
                                         &mut render_state,
@@ -147,6 +175,13 @@ fn main() {
                                 GameMode::Editor => {
                                     handle_editor_cursor_moved(
                                         &mut game,
+                                        &mut render_state,
+                                        x, y,
+                                        egui_consumed,
+                                    );
+                                }
+                                GameMode::TrackingStation => {
+                                    handle_tracking_station_cursor_moved(
                                         &mut render_state,
                                         x, y,
                                         egui_consumed,
@@ -164,8 +199,11 @@ fn main() {
                                 let zoom_factor = 1.0 + scroll_amount * 0.1;
 
                                 match game.mode {
-                                    GameMode::Flight => {
+                                    GameMode::Flight | GameMode::TrackingStation => {
                                         render_state.camera.zoom_by(zoom_factor);
+                                    }
+                                    GameMode::MainMenu => {
+                                        // Camera is locked at fixed zoom in main menu
                                     }
                                     GameMode::Editor => {
                                         game.editor.zoom_camera(zoom_factor);
@@ -184,22 +222,36 @@ fn main() {
                         } => {
                             let pressed = *state == ElementState::Pressed;
 
-                            match game.mode {
-                                GameMode::Flight => {
-                                    handle_flight_keyboard(
-                                        &mut game,
-                                        &mut render_state,
-                                        logical_key,
-                                        pressed,
-                                    );
-                                }
-                                GameMode::Editor => {
-                                    handle_editor_keyboard(
-                                        &mut game,
-                                        logical_key,
-                                        pressed,
-                                        egui_consumed,
-                                    );
+                            // Universal Escape: toggle pause in all modes
+                            // In editor: deselect first, then pause on next press
+                            let escape_pressed = pressed && matches!(logical_key, Key::Named(winit::keyboard::NamedKey::Escape));
+                            if escape_pressed && game.mode == GameMode::Editor
+                                && (game.editor.selected_part_def.is_some() || game.editor.selected_placed_part.is_some())
+                            {
+                                game.editor.deselect();
+                            } else if escape_pressed {
+                                game.toggle_pause();
+                            } else if !game.paused {
+                                match game.mode {
+                                    GameMode::MainMenu | GameMode::TrackingStation => {
+                                        // No keyboard shortcuts in these modes
+                                    }
+                                    GameMode::Flight => {
+                                        handle_flight_keyboard(
+                                            &mut game,
+                                            &mut render_state,
+                                            logical_key,
+                                            pressed,
+                                        );
+                                    }
+                                    GameMode::Editor => {
+                                        handle_editor_keyboard(
+                                            &mut game,
+                                            logical_key,
+                                            pressed,
+                                            egui_consumed,
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -223,141 +275,180 @@ fn render_flight_frame(
 ) {
     let dt = 1.0 / 60.0; // Approximate for now, actual dt passed separately
 
-    // Force warp to 1x if ship is below landing altitude at on-rails warp speeds (>10x)
-    if game.flight.ship.below_landing_altitude(&game.solar_system) {
-        let warp = WARP_LEVELS[game.flight.warp_index];
-        if warp > RAILS_WARP_THRESHOLD {
-            game.flight.warp_index = 0;
-        }
-    }
-
-    // Update simulation with current time warp
-    let time_warp = WARP_LEVELS[game.flight.warp_index];
-    game.solar_system.update(dt * time_warp);
-
-    // Determine autopilot state and desired direction (before gimbal update)
-    let autopilot_target = render_state.get_autopilot_target();
-    let autopilot_active = autopilot_target != AutopilotTarget::Off && !game.flight.ship.on_rails;
-    let autopilot_target_angle = if autopilot_active {
-        let maneuver_node = render_state.get_selected_maneuver_node();
-        game.flight.ship.autopilot_target_angle(autopilot_target, maneuver_node)
-    } else {
-        None
-    };
-
-    // Update engine gimbal angles: driven by autopilot when SAS active, else by A/D input
-    if let Some(ref mut vessel) = game.flight.vessel {
-        let (rotate_left, rotate_right) = if let Some(target_angle) = autopilot_target_angle {
-            // Autopilot commands gimbals based on desired rotation direction
-            let dir = game.flight.ship.autopilot_desired_direction(target_angle, None);
-            (dir > 0.0, dir < 0.0)
-        } else {
-            (game.flight.ship_input.rotate_left, game.flight.ship_input.rotate_right)
-        };
-        vessel.update_gimbal(rotate_left, rotate_right);
-    }
-
-    // Build VesselPhysicsData from flight vessel if available
-    // Uses active_thrust which excludes engines without fuel
-    let vessel_physics = game.flight.vessel.as_ref().map(|v| VesselPhysicsData {
-        total_mass: v.total_mass,
-        max_thrust_vac: v.active_thrust_vac(),
-        max_thrust_asl: v.active_thrust_asl(),
-        vessel_height: v.bounding_half_height(),
-        bottom_extent: v.bottom_extent(),
-        moment_of_inertia: v.moment_of_inertia,
-        torque: v.torque,
-        gimbal_torque: v.compute_gimbal_torque(),
-        vessel_half_width: v.bounding_half_width(),
-    });
-
-    // Update ship physics (gimbal torque always applied in update_flying)
-    game.flight.ship.update(dt * time_warp, time_warp, &game.flight.ship_input, &game.solar_system, vessel_physics.as_ref(), autopilot_active);
-    if let Some(target_angle) = autopilot_target_angle {
-        game.flight.ship.autopilot_rotate(target_angle, dt * time_warp, vessel_physics.as_ref());
-    }
-
-    // Fuel consumption and vessel sync
-    if let Some(ref mut vessel) = game.flight.vessel {
-        vessel.throttle = game.flight.ship.throttle;
-
-        // Compute atmospheric pressure fraction for engine ISP interpolation
-        let atmo_pressure = {
-            let soi = &game.solar_system.bodies[game.flight.ship.soi_body];
-            if let Some(ref atmo) = soi.atmosphere {
-                let dist = (game.flight.ship.rel_position[0].powi(2) + game.flight.ship.rel_position[1].powi(2)).sqrt();
-                let alt = dist - soi.radius;
-                if alt >= 0.0 && alt < atmo.visible_height() {
-                    (atmo.pressure_at_altitude(alt) / 101_325.0).clamp(0.0, 1.0) // normalized to 1 atm
-                } else {
-                    0.0
-                }
-            } else {
-                0.0
+    // --- Simulation (skipped when paused) ---
+    let vessel_physics = if !game.paused {
+        // Force warp to 1x if ship is below landing altitude at on-rails warp speeds (>10x)
+        if game.flight.ship.below_landing_altitude(&game.solar_system) {
+            let warp = WARP_LEVELS[game.warp_index];
+            if warp > RAILS_WARP_THRESHOLD {
+                game.warp_index = 0;
             }
+        }
+
+        // Update simulation with current time warp
+        let time_warp = WARP_LEVELS[game.warp_index];
+        game.solar_system.update(dt * time_warp);
+        game.simulation_time += dt * time_warp;
+
+        // Determine autopilot state and desired direction (before gimbal update)
+        let autopilot_target = render_state.get_autopilot_target();
+        let autopilot_active = autopilot_target != AutopilotTarget::Off && !game.flight.ship.on_rails;
+        let autopilot_target_angle = if autopilot_active {
+            let maneuver_node = render_state.get_selected_maneuver_node();
+            game.flight.ship.autopilot_target_angle(autopilot_target, maneuver_node)
+        } else {
+            None
         };
 
-        // Always update engine states and consume fuel (updates active flags even at 0 throttle)
-        let effective_dt = dt * time_warp;
-        vessel.consume_fuel(effective_dt, atmo_pressure, &game.part_definitions);
-        vessel.recalculate_mass(&game.part_definitions);
+        // Update engine gimbal angles: driven by autopilot when SAS active, else by A/D input
+        if let Some(ref mut vessel) = game.flight.vessel {
+            let (rotate_left, rotate_right) = if let Some(target_angle) = autopilot_target_angle {
+                // Autopilot commands gimbals based on desired rotation direction
+                let dir = game.flight.ship.autopilot_desired_direction(target_angle, None);
+                (dir > 0.0, dir < 0.0)
+            } else {
+                (game.flight.ship_input.rotate_left, game.flight.ship_input.rotate_right)
+            };
+            vessel.update_gimbal(rotate_left, rotate_right);
+        }
 
-        // Sync vessel state from ship
-        vessel.rel_position = game.flight.ship.rel_position;
-        vessel.rel_velocity = game.flight.ship.rel_velocity;
-        vessel.rotation = game.flight.ship.rotation;
+        // Build VesselPhysicsData from flight vessel if available
+        // Uses active_thrust which excludes engines without fuel
+        let vessel_physics = game.flight.vessel.as_ref().map(|v| VesselPhysicsData {
+            total_mass: v.total_mass,
+            max_thrust_vac: v.active_thrust_vac(),
+            max_thrust_asl: v.active_thrust_asl(),
+            vessel_height: v.bounding_half_height(),
+            bottom_extent: v.bottom_extent(),
+            moment_of_inertia: v.moment_of_inertia,
+            torque: v.torque,
+            gimbal_torque: v.compute_gimbal_torque(),
+            vessel_half_width: v.bounding_half_width(),
+        });
 
-        // Per-part terrain collision check
-        if matches!(game.flight.ship.state, ShipState::Flying) {
-            let soi_body = &game.solar_system.bodies[game.flight.ship.soi_body];
-            if let Some(surface_angle) = vessel.check_terrain_collision(
-                game.flight.ship.rel_position,
-                game.flight.ship.rotation,
-                soi_body.radius,
-                game.flight.ship.soi_body,
-            ) {
-                // If landing on launchpad, account for its height
-                let launchpad_offset = if game.flight.ship.soi_body == sunscatter::game::LAUNCHPAD_BODY_INDEX {
-                    let angle_diff = surface_angle - sunscatter::game::LAUNCHPAD_SURFACE_ANGLE;
-                    let angle_diff = angle_diff - (angle_diff / std::f64::consts::TAU).round() * std::f64::consts::TAU;
-                    let half_angle = (sunscatter::game::LAUNCHPAD_BOTTOM_WIDTH * 0.5)
-                        / game.solar_system.bodies[game.flight.ship.soi_body].radius;
-                    if angle_diff.abs() < half_angle {
-                        sunscatter::game::LAUNCHPAD_HEIGHT
+        // Update ship physics (gimbal torque always applied in update_flying)
+        game.flight.ship.update(dt * time_warp, time_warp, &game.flight.ship_input, &game.solar_system, vessel_physics.as_ref(), autopilot_active);
+        if let Some(target_angle) = autopilot_target_angle {
+            game.flight.ship.autopilot_rotate(target_angle, dt * time_warp, vessel_physics.as_ref());
+        }
+
+        // Fuel consumption and vessel sync
+        if let Some(ref mut vessel) = game.flight.vessel {
+            vessel.throttle = game.flight.ship.throttle;
+
+            // Compute atmospheric pressure fraction for engine ISP interpolation
+            let atmo_pressure = {
+                let soi = &game.solar_system.bodies[game.flight.ship.soi_body];
+                if let Some(ref atmo) = soi.atmosphere {
+                    let dist = (game.flight.ship.rel_position[0].powi(2) + game.flight.ship.rel_position[1].powi(2)).sqrt();
+                    let alt = dist - soi.radius;
+                    if alt >= 0.0 && alt < atmo.visible_height() {
+                        (atmo.pressure_at_altitude(alt) / 101_325.0).clamp(0.0, 1.0) // normalized to 1 atm
                     } else {
                         0.0
                     }
                 } else {
                     0.0
-                };
-                let surface_distance = soi_body.radius + launchpad_offset + vessel.bottom_extent();
-                game.flight.ship.rel_position = [
-                    surface_distance * surface_angle.cos(),
-                    surface_distance * surface_angle.sin(),
-                ];
-                game.flight.ship.rel_velocity = [0.0, 0.0];
-                game.flight.ship.throttle = 0.0;
-                game.flight.ship.rotation = surface_angle;
-                game.flight.ship.state = ShipState::Landed {
-                    body_index: game.flight.ship.soi_body,
-                    surface_angle,
-                };
-                game.flight.ship.on_rails = false;
+                }
+            };
+
+            // Always update engine states and consume fuel (updates active flags even at 0 throttle)
+            let effective_dt = dt * time_warp;
+            vessel.consume_fuel(effective_dt, atmo_pressure, &game.part_definitions);
+            vessel.recalculate_mass(&game.part_definitions);
+
+            // Sync vessel state from ship
+            vessel.rel_position = game.flight.ship.rel_position;
+            vessel.rel_velocity = game.flight.ship.rel_velocity;
+            vessel.rotation = game.flight.ship.rotation;
+
+            // Per-part terrain collision check
+            if matches!(game.flight.ship.state, ShipState::Flying) {
+                let soi_body = &game.solar_system.bodies[game.flight.ship.soi_body];
+                if let Some(surface_angle) = vessel.check_terrain_collision(
+                    game.flight.ship.rel_position,
+                    game.flight.ship.rotation,
+                    soi_body.radius,
+                    game.flight.ship.soi_body,
+                ) {
+                    // If landing on launchpad, account for its height
+                    let launchpad_offset = if game.flight.ship.soi_body == sunscatter::game::LAUNCHPAD_BODY_INDEX {
+                        let angle_diff = surface_angle - sunscatter::game::LAUNCHPAD_SURFACE_ANGLE;
+                        let angle_diff = angle_diff - (angle_diff / std::f64::consts::TAU).round() * std::f64::consts::TAU;
+                        let half_angle = (sunscatter::game::LAUNCHPAD_BOTTOM_WIDTH * 0.5)
+                            / game.solar_system.bodies[game.flight.ship.soi_body].radius;
+                        if angle_diff.abs() < half_angle {
+                            sunscatter::game::LAUNCHPAD_HEIGHT
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        0.0
+                    };
+                    let surface_distance = soi_body.radius + launchpad_offset + vessel.bottom_extent();
+                    game.flight.ship.rel_position = [
+                        surface_distance * surface_angle.cos(),
+                        surface_distance * surface_angle.sin(),
+                    ];
+                    game.flight.ship.rel_velocity = [0.0, 0.0];
+                    game.flight.ship.throttle = 0.0;
+                    game.flight.ship.rotation = surface_angle;
+                    game.flight.ship.state = ShipState::Landed {
+                        body_index: game.flight.ship.soi_body,
+                        surface_angle,
+                    };
+                    game.flight.ship.on_rails = false;
+                }
             }
         }
-    }
 
-    // Compute current acceleration for maneuver burns and HUD
+        // Apply burns to maneuver node delta-v
+        let current_accel = vessel_physics.as_ref()
+            .map(|v| if v.total_mass > 0.0 { v.max_thrust_vac / v.total_mass } else { 0.0 })
+            .unwrap_or(MAX_THRUST_ACCELERATION);
+        if game.flight.ship.throttle > 0.0 && render_state.get_selected_maneuver_node().is_some() {
+            let delta_v_this_frame = game.flight.ship.throttle * current_accel * dt * time_warp;
+            let burn_direction = [game.flight.ship.rotation.cos(), game.flight.ship.rotation.sin()];
+            render_state.apply_burn_to_maneuver(burn_direction, delta_v_this_frame);
+        }
+
+        // Propagate inactive vessels on rails
+        let dt_sim = dt * time_warp;
+        for vessel in &mut game.flight.inactive_vessels {
+            if !vessel.ship.on_rails {
+                vessel.ship.enter_rails_mode(&game.solar_system);
+            }
+            vessel.ship.update_on_rails(dt_sim, &game.solar_system);
+        }
+        // Delete vessels that entered atmosphere, hit surface, or whose orbit dips into atmosphere
+        game.flight.inactive_vessels.retain(|v| {
+            let in_landing_zone = v.ship.in_atmosphere(&game.solar_system)
+                || v.ship.below_landing_altitude(&game.solar_system);
+            !(v.ship.periapsis_below_surface(&game.solar_system) && in_landing_zone)
+        });
+
+        vessel_physics
+    } else {
+        // Paused: still need vessel_physics for HUD display
+        game.flight.vessel.as_ref().map(|v| VesselPhysicsData {
+            total_mass: v.total_mass,
+            max_thrust_vac: v.active_thrust_vac(),
+            max_thrust_asl: v.active_thrust_asl(),
+            vessel_height: v.bounding_half_height(),
+            bottom_extent: v.bottom_extent(),
+            moment_of_inertia: v.moment_of_inertia,
+            torque: v.torque,
+            gimbal_torque: v.compute_gimbal_torque(),
+            vessel_half_width: v.bounding_half_width(),
+        })
+    };
+
+    // --- Rendering (always runs) ---
+
+    // Compute current acceleration for HUD
     let current_accel = vessel_physics.as_ref()
         .map(|v| if v.total_mass > 0.0 { v.max_thrust_vac / v.total_mass } else { 0.0 })
         .unwrap_or(MAX_THRUST_ACCELERATION);
-
-    // Apply burns to maneuver node delta-v
-    if game.flight.ship.throttle > 0.0 && render_state.get_selected_maneuver_node().is_some() {
-        let delta_v_this_frame = game.flight.ship.throttle * current_accel * dt * time_warp;
-        let burn_direction = [game.flight.ship.rotation.cos(), game.flight.ship.rotation.sin()];
-        render_state.apply_burn_to_maneuver(burn_direction, delta_v_this_frame);
-    }
 
     // Collect body data for rendering
     let mut scaled_positions: Vec<[f64; 2]> = Vec::with_capacity(game.solar_system.bodies.len());
@@ -717,7 +808,39 @@ fn render_flight_frame(
         }),
     };
 
-    render_state.update_bodies_orbits_and_ship(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions));
+    // Build background vessel data for inactive vessels
+    let background_vessels: Vec<sunscatter::render::TrackingVesselData> = game.flight.inactive_vessels.iter()
+        .map(|v| {
+            let abs_pos = v.ship.absolute_position(&game.solar_system);
+            let orbit_data = v.ship.get_render_orbit().map(|(orbit, parent_idx)| {
+                let parent_pos = scaled_positions[parent_idx];
+                OrbitRenderData {
+                    parent_x: parent_pos[0] * SCALE,
+                    parent_y: parent_pos[1] * SCALE,
+                    semi_major_axis: orbit.semi_major_axis * SCALE * BODY_SCALE,
+                    eccentricity: orbit.eccentricity,
+                    argument_of_periapsis: orbit.argument_of_periapsis,
+                    color: [0.5, 0.5, 0.5, 0.3], // Dimmed grey
+                }
+            });
+            let parts = v.vessel.as_ref().map(|fv| {
+                build_vessel_part_render_data(fv, &game.part_definitions)
+            });
+            sunscatter::render::TrackingVesselData {
+                id: v.id,
+                name: v.name.clone(),
+                color: [v.ship.color[0] * 0.5, v.ship.color[1] * 0.5, v.ship.color[2] * 0.5, 0.5],
+                x: abs_pos[0] * SCALE * BODY_SCALE,
+                y: abs_pos[1] * SCALE * BODY_SCALE,
+                soi_body: v.ship.soi_body,
+                orbit: orbit_data,
+                parts,
+                rotation: v.ship.rotation,
+            }
+        })
+        .collect();
+
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions), &background_vessels);
 
     // Calculate predicted trajectories for maneuver nodes
     let mut predicted_trajectories: Vec<Vec<OrbitSegmentData>> = Vec::new();
@@ -779,10 +902,29 @@ fn render_flight_frame(
     render_state.set_predicted_trajectories(predicted_trajectories);
 
     let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
+    let date_str = sunscatter::game::format_date(game.simulation_time);
 
-    match render_state.render(&body_names, WARP_LEVELS, game.flight.warp_index) {
-        Ok(new_warp_index) => {
-            game.flight.warp_index = new_warp_index;
+    // Determine if the ship can safely exit flight (go to main menu)
+    // Cannot exit if in atmosphere or in landing zone while suborbital (and not landed)
+    let is_landed = matches!(game.flight.ship.state, ShipState::Landed { .. });
+    let can_exit_flight = is_landed || (
+        !game.flight.ship.in_atmosphere(&game.solar_system)
+        && !(game.flight.ship.below_landing_altitude(&game.solar_system)
+             && game.flight.ship.is_suborbital(&game.solar_system))
+    );
+
+    match render_state.render(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, can_exit_flight) {
+        Ok((new_warp_index, pause_action)) => {
+            game.warp_index = new_warp_index;
+            match pause_action {
+                PauseAction::MainMenu => {
+                    // Save active vessel to inactive list before leaving flight
+                    let nodes = render_state.swap_maneuver_nodes(Vec::new());
+                    game.flight.shelve_active_vessel(nodes, &game.solar_system);
+                    game.enter_main_menu();
+                }
+                PauseAction::Resume | PauseAction::None => {}
+            }
         }
         Err(wgpu::SurfaceError::Lost) => {
             println!("Surface lost, resizing...");
@@ -841,16 +983,11 @@ fn render_flight_frame(
                                 vessel.parts[i].decoupled = true;
                             }
                         }
-
-                        // Recenter parts on new COM and shift ship position to match
-                        let com_offset = vessel.recenter_on_com(&game.part_definitions);
-                        let rot = game.flight.ship.rotation;
-                        game.flight.ship.rel_position[0] += com_offset[0] * rot.cos() - com_offset[1] * rot.sin();
-                        game.flight.ship.rel_position[1] += com_offset[0] * rot.sin() + com_offset[1] * rot.cos();
                     }
                 }
             }
         }
+        handle_post_decouple(game);
         render_state.selected_flight_part = None;
     }
 
@@ -916,6 +1053,8 @@ fn render_editor_frame(
 
     // Render with editor UI
     let mut action = EditorAction::None;
+    let mut editor_pause_action = PauseAction::None;
+    let paused = game.paused;
 
     let stage_delta_vs = game.editor.calculate_stage_delta_v(&part_defs);
 
@@ -929,6 +1068,28 @@ fn render_editor_frame(
             &bodies,
             &stage_delta_vs,
         );
+
+        // Pause overlay on top of editor
+        if paused {
+            egui::Area::new(egui::Id::new("pause_overlay"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180))
+                        .inner_margin(egui::Margin::same(40.0))
+                        .rounding(egui::Rounding::same(8.0))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.heading(egui::RichText::new("Paused").size(32.0).color(egui::Color32::WHITE));
+                                ui.add_space(20.0);
+                                if ui.button(egui::RichText::new("Main Menu").size(18.0)).clicked() {
+                                    editor_pause_action = PauseAction::MainMenu;
+                                }
+                            });
+                        });
+                });
+        }
     });
 
     // Handle editor actions
@@ -976,6 +1137,12 @@ fn render_editor_frame(
         EditorAction::None => {}
     }
 
+    // Handle pause action
+    match editor_pause_action {
+        PauseAction::MainMenu => game.enter_main_menu(),
+        PauseAction::Resume | PauseAction::None => {}
+    }
+
     // Process any pending part deletions
     game.editor.process_pending_delete();
 
@@ -985,6 +1152,376 @@ fn render_editor_frame(
             wgpu::SurfaceError::OutOfMemory => std::process::exit(1),
             e => eprintln!("Editor render error: {:?}", e),
         }
+    }
+}
+
+/// Compute scaled body positions for rendering (shared across flight, main menu, tracking station)
+fn compute_scaled_positions(game: &Game) -> Vec<[f64; 2]> {
+    let mut scaled: Vec<[f64; 2]> = Vec::with_capacity(game.solar_system.bodies.len());
+    for i in 0..game.solar_system.bodies.len() {
+        let pos = game.solar_system.body_position(i);
+        let body = &game.solar_system.bodies[i];
+        let scaled_pos = if let Some(parent_idx) = body.parent {
+            let parent_scaled = scaled[parent_idx];
+            let parent_unscaled = game.solar_system.body_position(parent_idx);
+            let rel_x = pos[0] - parent_unscaled[0];
+            let rel_y = pos[1] - parent_unscaled[1];
+            [
+                parent_scaled[0] + rel_x * BODY_SCALE,
+                parent_scaled[1] + rel_y * BODY_SCALE,
+            ]
+        } else {
+            pos
+        };
+        scaled.push(scaled_pos);
+    }
+    scaled
+}
+
+/// Build body render tuples from scaled positions
+fn build_body_data(game: &Game, scaled_positions: &[[f64; 2]]) -> Vec<(f64, f64, f64, [f32; 4], f64, [f32; 3])> {
+    (0..game.solar_system.bodies.len())
+        .map(|i| {
+            let body = &game.solar_system.bodies[i];
+            let pos = scaled_positions[i];
+            let atmo_height = body.atmosphere.map(|a| a.visible_height()).unwrap_or(0.0);
+            let atmo_color = body.atmosphere.map(|a| a.color).unwrap_or([0.0; 3]);
+            (pos[0], pos[1], body.radius * BODY_SCALE, body.color, atmo_height, atmo_color)
+        })
+        .collect()
+}
+
+/// Build orbit render data from scaled positions
+fn build_orbit_data(game: &Game, scaled_positions: &[[f64; 2]], render_state: &RenderState) -> Vec<Option<OrbitRenderData>> {
+    let pixels_per_world_unit = render_state.camera.zoom * render_state.size.height as f32 / 2.0;
+    (0..game.solar_system.bodies.len())
+        .map(|i| {
+            let body = &game.solar_system.bodies[i];
+            match (body.parent, &body.orbit) {
+                (Some(parent_idx), Some(orbit)) => {
+                    let body_world_radius = (body.radius * BODY_SCALE * SCALE) as f32;
+                    let body_pixels = body_world_radius * pixels_per_world_unit * 2.0;
+                    let is_moon = parent_idx != 0;
+                    let pixel_threshold = if is_moon { 100.0 } else { 5.0 };
+                    if body_pixels >= pixel_threshold {
+                        return None;
+                    }
+                    let parent_pos = scaled_positions[parent_idx];
+                    let orbit_color = [
+                        body.color[0] * 0.4,
+                        body.color[1] * 0.4,
+                        body.color[2] * 0.4,
+                        0.5,
+                    ];
+                    Some(OrbitRenderData {
+                        parent_x: parent_pos[0] * SCALE,
+                        parent_y: parent_pos[1] * SCALE,
+                        semi_major_axis: orbit.semi_major_axis * SCALE * BODY_SCALE,
+                        eccentricity: orbit.eccentricity,
+                        argument_of_periapsis: orbit.argument_of_periapsis,
+                        color: orbit_color,
+                    })
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// Build part render data from a FlightVessel for rendering inactive vessels
+fn build_vessel_part_render_data(
+    vessel: &sunscatter::parts::FlightVessel,
+    part_defs: &sunscatter::parts::PartDefinitions,
+) -> Vec<ShipPartRenderData> {
+    vessel.parts.iter()
+        .enumerate()
+        .filter(|(_, p)| !p.destroyed && !p.decoupled)
+        .map(|(i, p)| {
+            let def = part_defs.get(&p.definition_id);
+            let name = def.map(|d| d.name.clone()).unwrap_or_else(|| p.definition_id.clone());
+            let dry_mass = def.map(|d| d.mass).unwrap_or(0.0);
+            let is_engine = p.propellant_type.is_some();
+            ShipPartRenderData {
+                definition_id: p.definition_id.clone(),
+                local_x: p.local_position[0],
+                local_y: p.local_position[1],
+                engine_active: false, // Inactive vessels don't fire engines
+                part_index: i,
+                name,
+                dry_mass,
+                hitbox_half_w: p.hitbox_half_extents[0],
+                hitbox_half_h: p.hitbox_half_extents[1],
+                engine_thrust_vac: if is_engine { Some(p.engine_thrust_vac) } else { None },
+                engine_thrust_asl: if is_engine { Some(p.engine_thrust_asl) } else { None },
+                engine_isp_vac: if is_engine { Some(p.engine_isp_vac) } else { None },
+                engine_isp_asl: if is_engine { Some(p.engine_isp_asl) } else { None },
+                engine_enabled: p.engine_enabled,
+                propellant_name: p.propellant_type.map(|pt| pt.display_name().to_string()),
+                fuel_type_name: None,
+                fuel_current: None,
+                fuel_max: None,
+                ox_current: None,
+                ox_max: None,
+                crew_capacity: def.and_then(|d| d.pod.as_ref().map(|pod| pod.crew_capacity)),
+                is_decoupler: def.map(|d| d.decoupler.is_some()).unwrap_or(false),
+                crossfeed_enabled: p.crossfeed_enabled,
+                gimbal_angle: 0.0,
+            }
+        })
+        .collect()
+}
+
+/// Build tracking vessel data for all vessels (active + inactive)
+fn build_tracking_vessel_data(
+    game: &Game,
+    scaled_positions: &[[f64; 2]],
+) -> Vec<sunscatter::render::TrackingVesselData> {
+    use sunscatter::render::TrackingVesselData;
+
+    let mut vessels = Vec::new();
+
+    // All vessels are in inactive_vessels when not in flight
+    for v in &game.flight.inactive_vessels {
+        let abs_pos = v.ship.absolute_position(&game.solar_system);
+        let orbit_data = v.ship.get_render_orbit().map(|(orbit, parent_idx)| {
+            let parent_pos = scaled_positions[parent_idx];
+            sunscatter::render::OrbitRenderData {
+                parent_x: parent_pos[0] * SCALE,
+                parent_y: parent_pos[1] * SCALE,
+                semi_major_axis: orbit.semi_major_axis * SCALE * BODY_SCALE,
+                eccentricity: orbit.eccentricity,
+                argument_of_periapsis: orbit.argument_of_periapsis,
+                color: [0.6, 0.6, 0.6, 0.4], // Grey for all vessels in tracking station
+            }
+        });
+        let parts = v.vessel.as_ref().map(|fv| {
+            build_vessel_part_render_data(fv, &game.part_definitions)
+        });
+        vessels.push(TrackingVesselData {
+            id: v.id,
+            name: v.name.clone(),
+            color: v.ship.color,
+            x: abs_pos[0] * SCALE * BODY_SCALE,
+            y: abs_pos[1] * SCALE * BODY_SCALE,
+            soi_body: v.ship.soi_body,
+            orbit: orbit_data,
+            parts,
+            rotation: v.ship.rotation,
+        });
+    }
+
+    vessels
+}
+
+/// Render a main menu frame
+fn render_main_menu_frame(
+    game: &mut Game,
+    render_state: &mut RenderState,
+    _elwt: &winit::event_loop::EventLoopWindowTarget<()>,
+) {
+    // Always keep camera focused on the Sun at a fixed zoom
+    let sun_pos = game.solar_system.body_position(0);
+    render_state.camera.position[0] = sun_pos[0] * SCALE * BODY_SCALE;
+    render_state.camera.position[1] = sun_pos[1] * SCALE * BODY_SCALE;
+    render_state.camera.zoom = 0.002;
+
+    if !game.paused {
+        let dt = 1.0 / 60.0;
+        let time_warp = WARP_LEVELS[game.warp_index];
+        game.solar_system.update(dt * time_warp);
+        game.simulation_time += dt * time_warp;
+
+        // Propagate all vessels on rails (no active vessel while not in flight)
+        let dt_sim = dt * time_warp;
+        for vessel in &mut game.flight.inactive_vessels {
+            if !vessel.ship.on_rails {
+                vessel.ship.enter_rails_mode(&game.solar_system);
+            }
+            vessel.ship.update_on_rails(dt_sim, &game.solar_system);
+        }
+        game.flight.inactive_vessels.retain(|v| {
+            let in_landing_zone = v.ship.in_atmosphere(&game.solar_system)
+                || v.ship.below_landing_altitude(&game.solar_system);
+            !(v.ship.periapsis_below_surface(&game.solar_system) && in_landing_zone)
+        });
+    }
+
+    let scaled_positions = compute_scaled_positions(game);
+    let bodies = build_body_data(game, &scaled_positions);
+    let orbits = build_orbit_data(game, &scaled_positions, render_state);
+
+    // Update body/orbit geometry (no ship)
+    render_state.update_bodies_orbits_and_ship(&bodies, &orbits, None, SCALE, None);
+
+    let paused = game.paused;
+    let date_str = sunscatter::game::format_date(game.simulation_time);
+
+    match render_state.render_main_menu(WARP_LEVELS, game.warp_index, &date_str, |ctx| {
+        let mut action = MainMenuAction::None;
+
+        if paused {
+            // Pause overlay
+            egui::Area::new(egui::Id::new("pause_overlay"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180))
+                        .inner_margin(egui::Margin::same(40.0))
+                        .rounding(egui::Rounding::same(8.0))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.heading(egui::RichText::new("Paused").size(32.0).color(egui::Color32::WHITE));
+                                ui.add_space(20.0);
+                                if ui.button(egui::RichText::new("Exit Game").size(18.0)).clicked() {
+                                    std::process::exit(0);
+                                }
+                            });
+                        });
+                });
+        } else {
+            // Main menu centered
+            egui::Area::new(egui::Id::new("main_menu"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180))
+                        .inner_margin(egui::Margin::same(40.0))
+                        .rounding(egui::Rounding::same(8.0))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.heading(egui::RichText::new("Sunscatter").size(36.0).color(egui::Color32::WHITE));
+                                ui.add_space(30.0);
+                                if ui.button(egui::RichText::new("Editor").size(20.0)).clicked() {
+                                    action = MainMenuAction::Editor;
+                                }
+                                ui.add_space(10.0);
+                                if ui.button(egui::RichText::new("Tracking Station").size(20.0)).clicked() {
+                                    action = MainMenuAction::TrackingStation;
+                                }
+                            });
+                        });
+                });
+        }
+
+        action
+    }) {
+        Ok((new_warp_index, menu_action)) => {
+            game.warp_index = new_warp_index;
+            match menu_action {
+                MainMenuAction::Editor => game.enter_editor(),
+                MainMenuAction::TrackingStation => {
+                    game.enter_tracking_station();
+                    render_state.focus_on_body(sunscatter::game::LAUNCHPAD_BODY_INDEX);
+                    // Zoom so Earth fills ~half the screen
+                    let earth_radius_world = game.solar_system.bodies[sunscatter::game::LAUNCHPAD_BODY_INDEX].radius * SCALE * BODY_SCALE;
+                    render_state.camera.zoom = (0.25 / earth_radius_world) as f32;
+                },
+                MainMenuAction::None => {}
+            }
+        }
+        Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
+        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(e) => eprintln!("Main menu render error: {:?}", e),
+    }
+}
+
+/// Render a tracking station frame
+fn render_tracking_station_frame(
+    game: &mut Game,
+    render_state: &mut RenderState,
+) {
+    if !game.paused {
+        let dt = 1.0 / 60.0;
+        let time_warp = WARP_LEVELS[game.warp_index];
+        game.solar_system.update(dt * time_warp);
+        game.simulation_time += dt * time_warp;
+
+        // Propagate all vessels on rails (no active vessel while not in flight)
+        let dt_sim = dt * time_warp;
+        for vessel in &mut game.flight.inactive_vessels {
+            if !vessel.ship.on_rails {
+                vessel.ship.enter_rails_mode(&game.solar_system);
+            }
+            vessel.ship.update_on_rails(dt_sim, &game.solar_system);
+        }
+        game.flight.inactive_vessels.retain(|v| {
+            let in_landing_zone = v.ship.in_atmosphere(&game.solar_system)
+                || v.ship.below_landing_altitude(&game.solar_system);
+            !(v.ship.periapsis_below_surface(&game.solar_system) && in_landing_zone)
+        });
+    }
+
+    let scaled_positions = compute_scaled_positions(game);
+    let bodies = build_body_data(game, &scaled_positions);
+    let orbits = build_orbit_data(game, &scaled_positions, render_state);
+
+    // Update camera tracking (body or vessel focus)
+    render_state.update_tracking(&scaled_positions, SCALE);
+
+    // Build vessel tracking data
+    let tracking_vessels = build_tracking_vessel_data(game, &scaled_positions);
+
+    // Update camera tracking for focused vessel
+    if let Some(vessel_id) = render_state.tracked_vessel {
+        if let Some(vessel_data) = tracking_vessels.iter().find(|v| v.id == vessel_id) {
+            render_state.camera.position[0] = vessel_data.x;
+            render_state.camera.position[1] = vessel_data.y;
+        } else {
+            // Tracked vessel was destroyed, focus on Earth
+            render_state.tracked_vessel = None;
+            render_state.focus_on_body(sunscatter::game::LAUNCHPAD_BODY_INDEX);
+        }
+    }
+
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &tracking_vessels);
+
+    let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
+    let date_str = sunscatter::game::format_date(game.simulation_time);
+    let active_id = game.flight.active_vessel_id;
+
+    match render_state.render_tracking_station(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, &tracking_vessels, active_id) {
+        Ok((new_warp_index, pause_action, ts_action)) => {
+            game.warp_index = new_warp_index;
+            match pause_action {
+                PauseAction::MainMenu => game.enter_main_menu(),
+                PauseAction::Resume | PauseAction::None => {}
+            }
+            // Handle tracking station actions
+            match ts_action {
+                sunscatter::render::TrackingStationAction::FlyVessel(id) => {
+                    // Pull vessel from inactive list and enter flight
+                    match game.flight.activate_vessel(id, &game.solar_system) {
+                        Ok(new_nodes) => {
+                            render_state.swap_maneuver_nodes(new_nodes);
+                            game.warp_index = 0;
+                        }
+                        Err(e) => log::error!("Failed to activate vessel: {}", e),
+                    }
+                    game.enter_flight();
+                }
+                sunscatter::render::TrackingStationAction::FocusVessel(id) => {
+                    // Focus camera on vessel and track it continuously
+                    if let Some(vessel_data) = tracking_vessels.iter().find(|v| v.id == id) {
+                        render_state.camera.position[0] = vessel_data.x;
+                        render_state.camera.position[1] = vessel_data.y;
+                        render_state.tracked_body = None;
+                        render_state.tracked_vessel = Some(id);
+                    }
+                }
+                sunscatter::render::TrackingStationAction::DeleteVessel(id) => {
+                    game.flight.inactive_vessels.retain(|v| v.id != id);
+                    // If we were tracking the deleted vessel, stop tracking
+                    if render_state.tracked_vessel == Some(id) {
+                        render_state.tracked_vessel = None;
+                        render_state.focus_on_body(sunscatter::game::LAUNCHPAD_BODY_INDEX);
+                    }
+                }
+                sunscatter::render::TrackingStationAction::None => {}
+            }
+        }
+        Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
+        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(e) => eprintln!("Tracking station render error: {:?}", e),
     }
 }
 
@@ -1025,10 +1562,13 @@ fn handle_flight_mouse_input(
                 render_state.selected_flight_part = None;
             }
 
-            // Check for double-click on body
+            // Check for double-click on body or vessel
             if let Some(last_time) = *last_click_time {
                 if now.duration_since(last_time) < DOUBLE_CLICK_TIME && dist < DOUBLE_CLICK_DIST {
-                    if let Some(body_idx) = render_state.body_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
+                    // Check vessel icons first (higher priority)
+                    if let Some(vessel_id) = render_state.background_vessel_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
+                        switch_to_next_vessel_by_id(game, render_state, vessel_id);
+                    } else if let Some(body_idx) = render_state.body_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
                         render_state.focus_on_body(body_idx);
                         game.flight.tracking_ship = false;
                         println!("Focused on: {}", game.solar_system.bodies[body_idx].name);
@@ -1178,6 +1718,25 @@ fn handle_editor_cursor_moved(
     }
 }
 
+/// After decoupling, extract decoupled parts into a debris vessel and recenter the active vessel.
+fn handle_post_decouple(game: &mut Game) {
+    // Extract decoupled parts into debris (separate step to avoid borrow conflict)
+    let extracted = game.flight.vessel.as_mut()
+        .and_then(|v| v.extract_decoupled_parts(&game.part_definitions));
+
+    if let Some((debris_vessel, com_offset)) = extracted {
+        game.flight.create_debris_vessel(debris_vessel, com_offset, &game.solar_system);
+    }
+
+    // Recenter parts on new COM and shift ship position to match
+    if let Some(ref mut vessel) = game.flight.vessel {
+        let com_offset = vessel.recenter_on_com(&game.part_definitions);
+        let rot = game.flight.ship.rotation;
+        game.flight.ship.rel_position[0] += com_offset[0] * rot.cos() - com_offset[1] * rot.sin();
+        game.flight.ship.rel_position[1] += com_offset[0] * rot.sin() + com_offset[1] * rot.cos();
+    }
+}
+
 /// Handle flight mode keyboard input
 fn handle_flight_keyboard(
     game: &mut Game,
@@ -1189,12 +1748,8 @@ fn handle_flight_keyboard(
         if *named_key == winit::keyboard::NamedKey::Space && pressed {
             if let Some(ref mut vessel) = game.flight.vessel {
                 vessel.activate_next_stage(&game.part_definitions);
-                // Recenter parts on new COM and shift ship position to match
-                let com_offset = vessel.recenter_on_com(&game.part_definitions);
-                let rot = game.flight.ship.rotation;
-                game.flight.ship.rel_position[0] += com_offset[0] * rot.cos() - com_offset[1] * rot.sin();
-                game.flight.ship.rel_position[1] += com_offset[0] * rot.sin() + com_offset[1] * rot.cos();
             }
+            handle_post_decouple(game);
         }
     }
 
@@ -1206,11 +1761,6 @@ fn handle_flight_keyboard(
             "x" | "X" => game.flight.ship_input.throttle_zero = pressed,
             "a" | "A" => game.flight.ship_input.rotate_left = pressed,
             "d" | "D" => game.flight.ship_input.rotate_right = pressed,
-            "e" | "E" => {
-                if pressed {
-                    game.enter_editor();
-                }
-            }
             "`" => {
                 if pressed {
                     game.flight.tracking_ship = true;
@@ -1218,8 +1768,53 @@ fn handle_flight_keyboard(
                     println!("Focused on: Ship");
                 }
             }
+            "[" | "]" => {
+                if pressed {
+                    switch_to_next_vessel(game, render_state, c.as_str() == "]");
+                }
+            }
             _ => {}
         }
+    }
+}
+
+/// Switch to the next/previous vessel in the sorted vessel list.
+fn switch_to_next_vessel(game: &mut Game, render_state: &mut RenderState, forward: bool) {
+    if game.flight.inactive_vessels.is_empty() {
+        return;
+    }
+
+    let ids = game.flight.all_vessel_ids();
+    let current_pos = ids.iter().position(|&id| id == game.flight.active_vessel_id).unwrap_or(0);
+    let next_pos = if forward {
+        (current_pos + 1) % ids.len()
+    } else {
+        (current_pos + ids.len() - 1) % ids.len()
+    };
+
+    let target_id = ids[next_pos];
+    if target_id == game.flight.active_vessel_id {
+        return;
+    }
+
+    switch_to_next_vessel_by_id(game, render_state, target_id);
+}
+
+/// Switch directly to a specific vessel by ID
+fn switch_to_next_vessel_by_id(game: &mut Game, render_state: &mut RenderState, target_id: u64) {
+    if target_id == game.flight.active_vessel_id {
+        return;
+    }
+
+    let old_nodes = render_state.swap_maneuver_nodes(Vec::new());
+    match game.flight.switch_to_vessel(target_id, old_nodes, &game.solar_system) {
+        Ok(new_nodes) => {
+            render_state.swap_maneuver_nodes(new_nodes);
+            render_state.tracked_body = None;
+            game.warp_index = 0;
+            log::info!("Switched to vessel: {} (id={})", game.flight.active_vessel_name, target_id);
+        }
+        Err(e) => log::error!("Failed to switch vessel: {}", e),
     }
 }
 
@@ -1245,14 +1840,6 @@ fn handle_editor_keyboard(
             winit::keyboard::NamedKey::ArrowRight => {
                 game.editor.keys_held.right = pressed;
             }
-            // Other named keys only on press
-            winit::keyboard::NamedKey::Escape if pressed => {
-                if game.editor.selected_part_def.is_some() {
-                    game.editor.deselect();
-                } else if game.editor.selected_placed_part.is_some() {
-                    game.editor.selected_placed_part = None;
-                }
-            }
             winit::keyboard::NamedKey::Delete | winit::keyboard::NamedKey::Backspace if pressed => {
                 if let Some(part_id) = game.editor.selected_placed_part {
                     game.editor.delete_part(part_id);
@@ -1273,5 +1860,74 @@ fn handle_editor_keyboard(
                 _ => {}
             }
         }
+    }
+}
+
+/// Handle tracking station mouse input (body double-click focus, camera drag)
+fn handle_tracking_station_mouse_input(
+    game: &mut Game,
+    render_state: &mut RenderState,
+    state: ElementState,
+    button: MouseButton,
+    egui_consumed: bool,
+    last_click_time: &mut Option<Instant>,
+    last_click_pos: &mut [f32; 2],
+) {
+    const DOUBLE_CLICK_TIME: Duration = Duration::from_millis(300);
+    const DOUBLE_CLICK_DIST: f32 = 10.0;
+
+    if !egui_consumed && button == MouseButton::Left {
+        if state == ElementState::Pressed {
+            let now = Instant::now();
+            let mouse_pos = render_state.camera.last_mouse_pos;
+            let dx = mouse_pos[0] - last_click_pos[0];
+            let dy = mouse_pos[1] - last_click_pos[1];
+            let dist = (dx * dx + dy * dy).sqrt();
+
+            render_state.camera.is_dragging = true;
+
+            // Double-click on body to focus
+            if let Some(last_time) = *last_click_time {
+                if now.duration_since(last_time) < DOUBLE_CLICK_TIME && dist < DOUBLE_CLICK_DIST {
+                    if let Some(body_idx) = render_state.body_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
+                        render_state.focus_on_body(body_idx);
+                        println!("Focused on: {}", game.solar_system.bodies[body_idx].name);
+                    }
+                    *last_click_time = None;
+                } else {
+                    *last_click_time = Some(now);
+                    *last_click_pos = mouse_pos;
+                }
+            } else {
+                *last_click_time = Some(now);
+                *last_click_pos = mouse_pos;
+            }
+        } else {
+            render_state.camera.is_dragging = false;
+        }
+    }
+}
+
+/// Handle tracking station cursor movement (camera drag, hover)
+fn handle_tracking_station_cursor_moved(
+    render_state: &mut RenderState,
+    x: f32,
+    y: f32,
+    egui_consumed: bool,
+) {
+    if render_state.camera.is_dragging && !egui_consumed {
+        let dx = x - render_state.camera.last_mouse_pos[0];
+        let dy = y - render_state.camera.last_mouse_pos[1];
+        let scale = 2.0 / render_state.size.height as f32;
+        render_state.camera.pan(dx * scale, dy * scale);
+        // Panning breaks body and vessel tracking
+        render_state.tracked_body = None;
+        render_state.tracked_vessel = None;
+    }
+
+    render_state.camera.last_mouse_pos = [x, y];
+
+    if !egui_consumed {
+        render_state.update_hover(x, y);
     }
 }

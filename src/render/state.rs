@@ -6,7 +6,8 @@ use egui_wgpu::ScreenDescriptor;
 use crate::ship::{AutopilotTarget, RAILS_WARP_THRESHOLD};
 use super::camera::Camera;
 use super::types::{
-    BodyData, ManeuverNode, OrbitRenderData, ShipOrbitData, ShipRenderData, Vertex,
+    BodyData, MainMenuAction, ManeuverNode, OrbitRenderData, PauseAction, ShipOrbitData, ShipRenderData,
+    TrackingStationAction, TrackingVesselData, Vertex,
     HYPERBOLIC_RENDER_MARGIN, HYPERBOLIC_SKIP_MARGIN,
 };
 
@@ -76,6 +77,10 @@ pub struct RenderState {
     pub current_trajectory: Vec<super::types::OrbitSegmentData>, // Stored for click detection
     pub predicted_trajectories: Vec<Vec<super::types::OrbitSegmentData>>, // Predicted trajectories after maneuver burns (one per node)
     pub dragging_maneuver_node: Option<u64>, // ID of node being dragged
+    // Background vessel screen positions for click detection
+    pub background_vessel_screen_positions: Vec<(u64, [f32; 2])>,
+    // Vessel the camera is following (tracking station)
+    pub tracked_vessel: Option<u64>,
     // Autopilot state
     pub autopilot_target: AutopilotTarget,
     // Egui state
@@ -337,6 +342,8 @@ impl RenderState {
             current_trajectory: Vec::new(),
             predicted_trajectories: Vec::new(),
             dragging_maneuver_node: None,
+            background_vessel_screen_positions: Vec::new(),
+            tracked_vessel: None,
             autopilot_target: AutopilotTarget::Off,
             egui_ctx,
             egui_state,
@@ -424,7 +431,10 @@ impl RenderState {
         body_names: &[String],
         warp_levels: &[f64],
         current_warp_index: usize,
-    ) -> Result<usize, wgpu::SurfaceError> {
+        paused: bool,
+        date_str: &str,
+        can_exit_flight: bool,
+    ) -> Result<(usize, PauseAction), wgpu::SurfaceError> {
         // Update camera buffer before rendering
         self.update_camera_buffer();
 
@@ -473,6 +483,7 @@ impl RenderState {
         let vessel_stage_delta_vs = self.vessel_stage_delta_vs.clone();
 
         let mut new_warp_index = current_warp_index;
+        let mut pause_action = PauseAction::None;
         let mut create_node_at: Option<(f64, usize)> = None;
         let mut delete_node_id: Option<u64> = None;
         let mut close_maneuver_panel = false;
@@ -522,6 +533,9 @@ impl RenderState {
                     ui.separator();
                     let current_warp = warp_levels[current_warp_index];
                     ui.label(format!("Current: {}x", current_warp as i64));
+
+                    ui.separator();
+                    ui.label(date_str);
                 });
 
                 // Orbital info display
@@ -1450,6 +1464,35 @@ impl RenderState {
                     }
                 }
             }
+
+            // Pause overlay (drawn on top of everything)
+            if paused {
+                egui::Area::new(egui::Id::new("pause_overlay"))
+                    .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                    .order(egui::Order::Foreground)
+                    .show(ctx, |ui| {
+                        egui::Frame::none()
+                            .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180))
+                            .inner_margin(egui::Margin::same(40.0))
+                            .rounding(egui::Rounding::same(8.0))
+                            .show(ui, |ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.heading(egui::RichText::new("Paused").size(32.0).color(egui::Color32::WHITE));
+                                    ui.add_space(20.0);
+                                    if can_exit_flight {
+                                        if ui.button(egui::RichText::new("Main Menu").size(18.0)).clicked() {
+                                            pause_action = PauseAction::MainMenu;
+                                        }
+                                    } else {
+                                        ui.add_enabled(false, egui::Button::new(egui::RichText::new("Main Menu").size(18.0)));
+                                        ui.label(egui::RichText::new("Cannot exit while in atmosphere or landing zone")
+                                            .size(11.0)
+                                            .color(egui::Color32::from_rgb(200, 150, 100)));
+                                    }
+                                });
+                            });
+                    });
+            }
         });
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
@@ -1599,7 +1642,7 @@ impl RenderState {
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
-        Ok(new_warp_index)
+        Ok((new_warp_index, pause_action))
     }
 
     /// Get window reference
@@ -1724,6 +1767,19 @@ impl RenderState {
         ship: Option<&ShipRenderData>,
         scale: f64,
         part_defs: Option<&crate::parts::PartDefinitions>,
+    ) {
+        self.update_bodies_orbits_ship_and_vessels(bodies, orbits, ship, scale, part_defs, &[]);
+    }
+
+    /// Update geometry with bodies, orbits, optionally a ship, and background vessels
+    pub fn update_bodies_orbits_ship_and_vessels(
+        &mut self,
+        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3])],
+        orbits: &[Option<OrbitRenderData>],
+        ship: Option<&ShipRenderData>,
+        scale: f64,
+        part_defs: Option<&crate::parts::PartDefinitions>,
+        background_vessels: &[TrackingVesselData],
     ) {
         // Store ship info for UI display
         self.ship_orbit_info = ship.and_then(|s| s.orbit.clone());
@@ -2884,6 +2940,207 @@ impl RenderState {
             }
         }
 
+        // Background vessels (tracking station, flight map view)
+        if !background_vessels.is_empty() {
+            let cam_x = self.camera.position[0];
+            let cam_y = self.camera.position[1];
+            let pixels_per_world_unit = self.camera.zoom * self.size.height as f32 / 2.0;
+
+            self.background_vessel_screen_positions.clear();
+
+            for vessel in background_vessels {
+                let rel_x = (vessel.x - cam_x) as f32;
+                let rel_y = (vessel.y - cam_y) as f32;
+
+                let has_parts = vessel.parts.is_some() && part_defs.is_some();
+
+                // Estimate vessel size in pixels to decide if we need an indicator
+                let vessel_size_world = if has_parts {
+                    let parts = vessel.parts.as_ref().unwrap();
+                    let max_extent = parts.iter()
+                        .map(|p| (p.local_x.abs() + p.hitbox_half_h).max(p.local_y.abs() + p.hitbox_half_h))
+                        .fold(0.0f64, f64::max);
+                    (max_extent * 2.0 * scale) as f32
+                } else {
+                    0.0
+                };
+                let vessel_pixels = vessel_size_world * pixels_per_world_unit * 2.0;
+                let needs_indicator = !has_parts || vessel_pixels < 5.0;
+
+                if has_parts {
+                    // Full part rendering for background vessels
+                    let parts = vessel.parts.as_ref().unwrap();
+                    let defs = part_defs.unwrap();
+                    let render_scale = scale as f32;
+                    let visual_rotation = vessel.rotation as f32 - std::f32::consts::FRAC_PI_2;
+                    let cos_r = visual_rotation.cos();
+                    let sin_r = visual_rotation.sin();
+
+                    // First pass: parts
+                    for part_data in parts {
+                        if let Some(def) = defs.get(&part_data.definition_id) {
+                            let local_x = part_data.local_x as f32 * render_scale;
+                            let local_y = part_data.local_y as f32 * render_scale;
+                            let rotated_x = local_x * cos_r - local_y * sin_r;
+                            let rotated_y = local_x * sin_r + local_y * cos_r;
+                            let part_center_x = rel_x + rotated_x;
+                            let part_center_y = rel_y + rotated_y;
+
+                            let mut part_verts: Vec<Vertex> = Vec::new();
+                            crate::editor::generate_part_shape_vertices(
+                                &mut part_verts, def, 0.0, 0.0, 1.0,
+                            );
+
+                            let base_index = all_vertices.len() as u32;
+                            let scale_factor = render_scale;
+                            for vert in &part_verts {
+                                let vx = vert.position[0] * scale_factor;
+                                let vy = vert.position[1] * scale_factor;
+                                let rx = vx * cos_r - vy * sin_r;
+                                let ry = vx * sin_r + vy * cos_r;
+                                // Dim colors for background vessels in flight (alpha < 1)
+                                let color = if vessel.color[3] < 1.0 {
+                                    [vert.color[0] * 0.5, vert.color[1] * 0.5, vert.color[2] * 0.5, vert.color[3] * 0.7]
+                                } else {
+                                    vert.color
+                                };
+                                all_vertices.push(Vertex {
+                                    position: [part_center_x + rx, part_center_y + ry],
+                                    color,
+                                });
+                            }
+                            let num_part_verts = part_verts.len() as u32;
+                            for i in (0..num_part_verts).step_by(3) {
+                                if i + 2 < num_part_verts {
+                                    all_indices.push(base_index + i);
+                                    all_indices.push(base_index + i + 1);
+                                    all_indices.push(base_index + i + 2);
+                                }
+                            }
+                        }
+                    }
+
+                    // Second pass: decoupler adapter fairings
+                    for part_data in parts {
+                        if let Some(decoupler_def) = defs.get(&part_data.definition_id) {
+                            if decoupler_def.decoupler.is_none() {
+                                continue;
+                            }
+                            let dec_x = part_data.local_x as f32;
+                            let dec_y = part_data.local_y as f32;
+                            let mut adapter_verts: Vec<Vertex> = Vec::new();
+                            crate::editor::generate_flight_decoupler_adapter(
+                                &mut adapter_verts, decoupler_def,
+                                dec_x, dec_y, parts, defs, 1.0,
+                            );
+                            if !adapter_verts.is_empty() {
+                                let base_index = all_vertices.len() as u32;
+                                for vert in &adapter_verts {
+                                    let vx = vert.position[0] * render_scale;
+                                    let vy = vert.position[1] * render_scale;
+                                    let rx = vx * cos_r - vy * sin_r;
+                                    let ry = vx * sin_r + vy * cos_r;
+                                    let color = if vessel.color[3] < 1.0 {
+                                        [vert.color[0] * 0.5, vert.color[1] * 0.5, vert.color[2] * 0.5, vert.color[3] * 0.7]
+                                    } else {
+                                        vert.color
+                                    };
+                                    all_vertices.push(Vertex {
+                                        position: [rel_x + rx, rel_y + ry],
+                                        color,
+                                    });
+                                }
+                                let num_verts = adapter_verts.len() as u32;
+                                for i in (0..num_verts).step_by(3) {
+                                    if i + 2 < num_verts {
+                                        all_indices.push(base_index + i);
+                                        all_indices.push(base_index + i + 1);
+                                        all_indices.push(base_index + i + 2);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Triangle indicator when vessel is too small to see or has no parts
+                if needs_indicator {
+                    let icon_screen_size = 8.0f32;
+                    let icon_world_size = icon_screen_size / pixels_per_world_unit;
+
+                    let base_idx = all_vertices.len() as u32;
+                    let (tri_verts, tri_idxs) = super::geometry::create_ship_triangle(
+                        rel_x, rel_y,
+                        icon_world_size,
+                        std::f32::consts::FRAC_PI_2,
+                        vessel.color,
+                    );
+                    for v in tri_verts {
+                        all_vertices.push(v);
+                    }
+                    for idx in tri_idxs {
+                        all_indices.push(base_idx + idx);
+                    }
+                }
+
+                // Store screen position for click detection
+                let ndc_x = rel_x * self.camera.zoom / self.camera.aspect_ratio;
+                let ndc_y = rel_y * self.camera.zoom;
+                let scale_factor = self.window.scale_factor() as f32;
+                let screen_x = (ndc_x + 1.0) * 0.5 * self.size.width as f32 / scale_factor;
+                let screen_y = (1.0 - ndc_y) * 0.5 * self.size.height as f32 / scale_factor;
+                self.background_vessel_screen_positions.push((vessel.id, [screen_x, screen_y]));
+
+                // Draw orbit line if available (parametric ellipse, same as body orbits)
+                if let Some(ref orbit) = vessel.orbit {
+                    let e = orbit.eccentricity;
+                    if e < 1.0 && orbit.semi_major_axis > 0.0 {
+                        let a = orbit.semi_major_axis;
+                        let b = a * (1.0 - e * e).sqrt();
+                        let c = a * e;
+                        let arg_peri = orbit.argument_of_periapsis;
+                        let center_x = orbit.parent_x - c * arg_peri.cos();
+                        let center_y = orbit.parent_y - c * arg_peri.sin();
+
+                        let segments = 256u32;
+                        let line_width = 0.002 / self.camera.zoom as f64;
+
+                        for i in 0..segments {
+                            let angle = (i as f64 / segments as f64) * std::f64::consts::TAU;
+                            let ex = a * angle.cos();
+                            let ey = b * angle.sin();
+                            let rx = ex * arg_peri.cos() - ey * arg_peri.sin();
+                            let ry = ex * arg_peri.sin() + ey * arg_peri.cos();
+                            let px = center_x + rx;
+                            let py = center_y + ry;
+
+                            let next_angle = ((i + 1) as f64 / segments as f64) * std::f64::consts::TAU;
+                            let next_ex = a * next_angle.cos();
+                            let next_ey = b * next_angle.sin();
+                            let next_rx = next_ex * arg_peri.cos() - next_ey * arg_peri.sin();
+                            let next_ry = next_ex * arg_peri.sin() + next_ey * arg_peri.cos();
+
+                            let dx = next_rx - rx;
+                            let dy = next_ry - ry;
+                            let len = (dx * dx + dy * dy).sqrt();
+                            if len < 1e-20 { continue; }
+                            let nx = -dy / len * line_width;
+                            let ny = dx / len * line_width;
+
+                            let base = all_vertices.len() as u32;
+                            all_vertices.push(Vertex { position: [(px + nx - cam_x) as f32, (py + ny - cam_y) as f32], color: orbit.color });
+                            all_vertices.push(Vertex { position: [(px - nx - cam_x) as f32, (py - ny - cam_y) as f32], color: orbit.color });
+                            let next_px = center_x + next_rx;
+                            let next_py = center_y + next_ry;
+                            all_vertices.push(Vertex { position: [(next_px - nx - cam_x) as f32, (next_py - ny - cam_y) as f32], color: orbit.color });
+                            all_vertices.push(Vertex { position: [(next_px + nx - cam_x) as f32, (next_py + ny - cam_y) as f32], color: orbit.color });
+                            all_indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+                        }
+                    }
+                }
+            }
+        }
+
         self.num_indices = all_indices.len() as u32;
 
         self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&all_vertices));
@@ -3683,11 +3940,31 @@ impl RenderState {
         closest.map(|(i, _)| i)
     }
 
+    /// Find background vessel at screen position, returns vessel ID if within click range (20px)
+    pub fn background_vessel_at_screen_pos(&self, screen_x: f32, screen_y: f32) -> Option<u64> {
+        let threshold = 20.0f32;
+        let mut closest: Option<(u64, f32)> = None;
+
+        for &(id, pos) in &self.background_vessel_screen_positions {
+            let dx = screen_x - pos[0];
+            let dy = screen_y - pos[1];
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist < threshold {
+                if closest.is_none() || dist < closest.unwrap().1 {
+                    closest = Some((id, dist));
+                }
+            }
+        }
+
+        closest.map(|(id, _)| id)
+    }
+
     /// Focus camera on a body by index and start tracking it
     pub fn focus_on_body(&mut self, index: usize) {
         if let Some(body) = self.bodies.get(index) {
             self.camera.focus_on([body.x, body.y]); // Both are now f64
             self.tracked_body = Some(index);
+            self.tracked_vessel = None; // Stop tracking any vessel
         }
     }
 
@@ -3847,6 +4124,375 @@ impl RenderState {
     /// Get the egui context for direct UI access
     pub fn egui_context(&self) -> &egui::Context {
         &self.egui_ctx
+    }
+
+    /// Render the main menu: planets + centered menu buttons + time warp panel.
+    /// Returns a MainMenuAction if the user clicked a button.
+    pub fn render_main_menu(
+        &mut self,
+        warp_levels: &[f64],
+        current_warp_index: usize,
+        date_str: &str,
+        egui_callback: impl FnOnce(&egui::Context) -> MainMenuAction,
+    ) -> Result<(usize, MainMenuAction), wgpu::SurfaceError> {
+        self.update_camera_buffer();
+
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut menu_action = MainMenuAction::None;
+        let mut new_warp_index = current_warp_index;
+
+        let raw_input = self.egui_state.take_egui_input(&self.window);
+        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            // Time warp panel at top
+            egui::TopBottomPanel::top("time_warp_panel").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Time Warp:");
+                    for (i, &warp) in warp_levels.iter().enumerate() {
+                        let label = if warp >= 1_000_000_000.0 {
+                            format!("{}B", (warp / 1_000_000_000.0) as i32)
+                        } else if warp >= 1_000_000.0 {
+                            format!("{}M", (warp / 1_000_000.0) as i32)
+                        } else if warp >= 1000.0 {
+                            format!("{}K", (warp / 1000.0) as i32)
+                        } else {
+                            format!("{}x", warp as i32)
+                        };
+                        let is_selected = i == current_warp_index;
+                        if ui.selectable_label(is_selected, &label).clicked() {
+                            new_warp_index = i;
+                        }
+                    }
+                    ui.separator();
+                    let current_warp = warp_levels[current_warp_index];
+                    ui.label(format!("Current: {}x", current_warp as i64));
+
+                    ui.separator();
+                    ui.label(date_str);
+                });
+            });
+
+            menu_action = egui_callback(ctx);
+        });
+
+        self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
+        let tris = self.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+        for (id, image_delta) in &full_output.textures_delta.set {
+            self.egui_renderer.update_texture(&self.device, &self.queue, *id, image_delta);
+        }
+
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [self.size.width, self.size.height],
+            pixels_per_point: self.window.scale_factor() as f32,
+        };
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Main Menu Render Encoder"),
+        });
+        self.egui_renderer.update_buffers(&self.device, &self.queue, &mut encoder, &tris, &screen_descriptor);
+
+        // Geometry pass (planets/orbits already in self.vertex_buffer)
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Main Menu Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.msaa_view,
+                    resolve_target: Some(&view),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+        }
+
+        // Egui pass
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Main Menu Egui Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            self.egui_renderer.render(&mut render_pass, &tris, &screen_descriptor);
+        }
+
+        for id in &full_output.textures_delta.free {
+            self.egui_renderer.free_texture(id);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok((new_warp_index, menu_action))
+    }
+
+    /// Render tracking station: planets + time warp panel + vessel list.
+    /// Returns the new warp index, pause action, and tracking station action.
+    pub fn render_tracking_station(
+        &mut self,
+        body_names: &[String],
+        warp_levels: &[f64],
+        current_warp_index: usize,
+        paused: bool,
+        date_str: &str,
+        vessels: &[TrackingVesselData],
+        active_vessel_id: u64,
+    ) -> Result<(usize, PauseAction, TrackingStationAction), wgpu::SurfaceError> {
+        self.update_camera_buffer();
+
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut new_warp_index = current_warp_index;
+        let mut pause_action = PauseAction::None;
+        let mut ts_action = TrackingStationAction::None;
+        let hovered = self.hovered_body;
+        let bodies_copy = self.bodies.clone();
+        let size = self.size;
+        let camera_pos = self.camera.position;
+        let camera_zoom = self.camera.zoom;
+        let camera_rotation = self.camera.rotation;
+        let aspect_ratio = self.camera.aspect_ratio;
+        let scale_factor = self.window.scale_factor() as f32;
+
+        let raw_input = self.egui_state.take_egui_input(&self.window);
+        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            // Time warp panel at top
+            egui::TopBottomPanel::top("time_warp_panel").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Time Warp:");
+                    for (i, &warp) in warp_levels.iter().enumerate() {
+                        let label = if warp >= 1_000_000_000.0 {
+                            format!("{}B", (warp / 1_000_000_000.0) as i32)
+                        } else if warp >= 1_000_000.0 {
+                            format!("{}M", (warp / 1_000_000.0) as i32)
+                        } else if warp >= 1000.0 {
+                            format!("{}K", (warp / 1000.0) as i32)
+                        } else {
+                            format!("{}x", warp as i32)
+                        };
+                        let is_selected = i == current_warp_index;
+                        if ui.selectable_label(is_selected, &label).clicked() {
+                            new_warp_index = i;
+                        }
+                    }
+                    ui.separator();
+                    let current_warp = warp_levels[current_warp_index];
+                    ui.label(format!("Current: {}x", current_warp as i64));
+
+                    ui.separator();
+                    ui.label(date_str);
+                });
+            });
+
+            // Vessels sidebar
+            if !vessels.is_empty() {
+                egui::SidePanel::left("vessels_panel")
+                    .default_width(180.0)
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        ui.heading(egui::RichText::new("Vessels").size(16.0).color(egui::Color32::WHITE));
+                        ui.separator();
+
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            for vessel in vessels {
+                                let is_active = vessel.id == active_vessel_id;
+                                let body_name = body_names.get(vessel.soi_body)
+                                    .cloned()
+                                    .unwrap_or_else(|| "Unknown".to_string());
+
+                                ui.horizontal(|ui| {
+                                    // Color indicator
+                                    let color = egui::Color32::from_rgba_unmultiplied(
+                                        (vessel.color[0] * 255.0) as u8,
+                                        (vessel.color[1] * 255.0) as u8,
+                                        (vessel.color[2] * 255.0) as u8,
+                                        255,
+                                    );
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(8.0, 8.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().circle_filled(rect.center(), 4.0, color);
+
+                                    ui.vertical(|ui| {
+                                        let name_text = if is_active {
+                                            egui::RichText::new(&vessel.name)
+                                                .color(egui::Color32::from_rgb(100, 255, 100))
+                                                .size(13.0)
+                                        } else {
+                                            egui::RichText::new(&vessel.name)
+                                                .color(egui::Color32::WHITE)
+                                                .size(13.0)
+                                        };
+                                        if ui.add(egui::Label::new(name_text).sense(egui::Sense::click())).clicked() {
+                                            ts_action = TrackingStationAction::FocusVessel(vessel.id);
+                                        }
+                                        ui.label(egui::RichText::new(format!("SOI: {}", body_name))
+                                            .size(11.0)
+                                            .color(egui::Color32::GRAY));
+                                    });
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.small_button("Fly").clicked() {
+                                            ts_action = TrackingStationAction::FlyVessel(vessel.id);
+                                        }
+                                        let delete_btn = egui::Button::new(
+                                            egui::RichText::new("X").color(egui::Color32::from_rgb(200, 80, 80))
+                                        ).small();
+                                        if ui.add(delete_btn).on_hover_text("Delete vessel").clicked() {
+                                            ts_action = TrackingStationAction::DeleteVessel(vessel.id);
+                                        }
+                                    });
+                                });
+                                ui.add_space(4.0);
+                            }
+                        });
+                    });
+            }
+
+            // Bottom panel: Tracking Station label
+            egui::TopBottomPanel::bottom("tracking_station_label").show(ctx, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.label(egui::RichText::new("Tracking Station").size(14.0).color(egui::Color32::from_rgb(180, 180, 180)));
+                });
+            });
+
+            // Hovered body labels (same logic as flight)
+            if let Some(idx) = hovered {
+                if let Some(body) = bodies_copy.get(idx) {
+                    if let Some(name) = body_names.get(idx) {
+                        let rel_x = (body.x - camera_pos[0]) as f32;
+                        let rel_y = (body.y - camera_pos[1]) as f32;
+                        let cos_r = camera_rotation.cos();
+                        let sin_r = camera_rotation.sin();
+                        let rot_x = rel_x * cos_r - rel_y * sin_r;
+                        let rot_y = rel_x * sin_r + rel_y * cos_r;
+                        let ndc_x = rot_x * camera_zoom / aspect_ratio;
+                        let ndc_y = rot_y * camera_zoom;
+                        let screen_x = (ndc_x + 1.0) * 0.5 * size.width as f32 / scale_factor;
+                        let screen_y = (1.0 - ndc_y) * 0.5 * size.height as f32 / scale_factor;
+                        let label_y = screen_y - 20.0;
+
+                        egui::Area::new(egui::Id::new("body_label"))
+                            .fixed_pos(egui::pos2(screen_x, label_y))
+                            .pivot(egui::Align2::CENTER_BOTTOM)
+                            .show(ctx, |ui| {
+                                ui.label(egui::RichText::new(name).color(egui::Color32::WHITE).size(14.0));
+                            });
+                    }
+                }
+            }
+
+            // Pause overlay
+            if paused {
+                egui::Area::new(egui::Id::new("pause_overlay"))
+                    .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                    .order(egui::Order::Foreground)
+                    .show(ctx, |ui| {
+                        egui::Frame::none()
+                            .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180))
+                            .inner_margin(egui::Margin::same(40.0))
+                            .rounding(egui::Rounding::same(8.0))
+                            .show(ui, |ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.heading(egui::RichText::new("Paused").size(32.0).color(egui::Color32::WHITE));
+                                    ui.add_space(20.0);
+                                    if ui.button(egui::RichText::new("Main Menu").size(18.0)).clicked() {
+                                        pause_action = PauseAction::MainMenu;
+                                    }
+                                });
+                            });
+                    });
+            }
+        });
+
+        self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
+        let tris = self.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+        for (id, image_delta) in &full_output.textures_delta.set {
+            self.egui_renderer.update_texture(&self.device, &self.queue, *id, image_delta);
+        }
+
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [self.size.width, self.size.height],
+            pixels_per_point: self.window.scale_factor() as f32,
+        };
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Tracking Station Render Encoder"),
+        });
+        self.egui_renderer.update_buffers(&self.device, &self.queue, &mut encoder, &tris, &screen_descriptor);
+
+        // Geometry pass
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Tracking Station Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.msaa_view,
+                    resolve_target: Some(&view),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+        }
+
+        // Egui pass
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Tracking Station Egui Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            self.egui_renderer.render(&mut render_pass, &tris, &screen_descriptor);
+        }
+
+        for id in &full_output.textures_delta.free {
+            self.egui_renderer.free_texture(id);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok((new_warp_index, pause_action, ts_action))
     }
 }
 

@@ -1077,6 +1077,100 @@ impl FlightVessel {
         stage_dvs
     }
 
+    /// Extract decoupled parts into a new FlightVessel (debris).
+    /// Call after activate_next_stage() or manual decouple marks parts as `decoupled = true`.
+    /// Returns (debris_vessel, com_offset_local) if any decoupled parts were extracted.
+    /// The com_offset_local is in vessel-local coordinates (before rotation) so the caller
+    /// can place the debris ship at the correct world position.
+    pub fn extract_decoupled_parts(&mut self, part_defs: &PartDefinitions) -> Option<(FlightVessel, [f64; 2])> {
+        let decoupled_indices: Vec<usize> = self.parts.iter()
+            .enumerate()
+            .filter(|(_, p)| p.decoupled && !p.destroyed)
+            .map(|(i, _)| i)
+            .collect();
+
+        if decoupled_indices.is_empty() {
+            return None;
+        }
+
+        // Compute COM of the decoupled parts (in the current vessel's local frame)
+        let mut debris_mass = 0.0;
+        let mut debris_com = [0.0f64, 0.0];
+        for &i in &decoupled_indices {
+            let part = &self.parts[i];
+            let base_mass = part_defs.get(&part.definition_id)
+                .map(|d| d.mass).unwrap_or(0.0);
+            let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
+            let pm = base_mass + resource_mass;
+            debris_mass += pm;
+            debris_com[0] += part.local_position[0] * pm;
+            debris_com[1] += part.local_position[1] * pm;
+        }
+        if debris_mass <= 0.0 {
+            return None;
+        }
+        debris_com[0] /= debris_mass;
+        debris_com[1] /= debris_mass;
+
+        // Clone decoupled parts, shift them relative to their own COM, clear decoupled flag
+        let mut debris_parts: Vec<FlightPart> = decoupled_indices.iter().map(|&i| {
+            let mut part = self.parts[i].clone();
+            part.local_position[0] -= debris_com[0];
+            part.local_position[1] -= debris_com[1];
+            part.decoupled = false;
+            part
+        }).collect();
+
+        // Disable all engines on debris (no staging system)
+        for part in &mut debris_parts {
+            part.engine_active = false;
+            part.engine_enabled = false;
+        }
+
+        // Calculate moment of inertia for debris
+        let mut moi = 0.0;
+        for part in &debris_parts {
+            let base_mass = part_defs.get(&part.definition_id)
+                .map(|d| d.mass).unwrap_or(0.0);
+            let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
+            let pm = base_mass + resource_mass;
+            let r_sq = part.local_position[0].powi(2) + part.local_position[1].powi(2);
+            moi += pm * r_sq;
+            let (w, h) = part_defs.get(&part.definition_id)
+                .map(|d| (d.width(), d.height()))
+                .unwrap_or((1.0, 1.0));
+            moi += pm * (w * w + h * h) / 12.0;
+        }
+        moi = moi.max(0.1);
+
+        let dry_mass = debris_parts.iter()
+            .map(|p| part_defs.get(&p.definition_id).map(|d| d.mass).unwrap_or(0.0))
+            .sum();
+
+        let debris_vessel = FlightVessel {
+            rel_position: [0.0, 0.0], // Will be set by caller
+            rel_velocity: [0.0, 0.0],
+            rotation: self.rotation,
+            rotational_velocity: 0.0,
+            soi_body: self.soi_body,
+            parts: debris_parts,
+            root_part_index: 0,
+            total_mass: debris_mass,
+            dry_mass,
+            center_of_mass: [0.0, 0.0],
+            max_thrust_vac: 0.0,
+            max_thrust_asl: 0.0,
+            moment_of_inertia: moi,
+            torque: 0.0,
+            throttle: 0.0,
+            on_rails: false,
+            stages: Vec::new(),   // Debris can't stage
+            current_stage: 0,
+        };
+
+        Some((debris_vessel, debris_com))
+    }
+
     /// Activate next stage (enables engines and fires decouplers in that stage)
     pub fn activate_next_stage(&mut self, part_defs: &PartDefinitions) -> bool {
         if self.current_stage >= self.stages.len() {

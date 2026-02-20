@@ -1,0 +1,99 @@
+# Multi-Vessel System
+
+## Overview
+The game supports multiple simultaneous vessels. Decoupling creates debris vessels, inactive vessels propagate on-rails, and the player can switch between vessels via keyboard shortcuts, tracking station, or double-click in flight map view.
+
+## Data Model
+
+### Requirement: Active vessel direct access
+The active vessel's `ship` and `vessel` fields remain directly on `FlightState` (not wrapped in a Vec). This preserves all existing code that reads `game.flight.ship.*` or `game.flight.vessel.*` with zero changes.
+
+### Requirement: Vessel identity
+Each vessel has a unique `VesselId` (u64). `FlightState` tracks `active_vessel_id`, `active_vessel_name`, and `next_vessel_id` (monotonically increasing counter).
+
+### Requirement: Inactive vessel storage
+Inactive vessels are stored in `FlightState.inactive_vessels: Vec<TrackedVessel>`. Each `TrackedVessel` contains: `id`, `name`, `ship: Ship`, `vessel: Option<FlightVessel>`, `maneuver_nodes: Vec<ManeuverNode>`.
+
+## Debris Creation
+
+### Requirement: Decoupling creates debris
+When `activate_next_stage()` or manual decouple marks parts as `decoupled = true`, `extract_decoupled_parts()` is called to split them into a new `FlightVessel`. The debris vessel is wrapped in a `TrackedVessel` and added to `inactive_vessels`.
+
+### Requirement: Debris naming
+Debris vessels are auto-named "Debris {N}" where N is a monotonically increasing counter (`debris_counter`).
+
+### Requirement: Debris properties
+- Grey color (`[0.6, 0.6, 0.6, 1.0]`)
+- No stages (empty `stages` vec)
+- All engines disabled
+- Put on rails immediately after creation
+- Position offset by the decoupled parts' center of mass relative to the active vessel
+
+### Requirement: Active vessel recentering
+After debris extraction, the active vessel recenters its parts on its new COM and adjusts the ship's world position accordingly.
+
+## On-Rails Propagation
+
+### Requirement: No active vessel outside flight
+When leaving flight mode (to main menu or tracking station), the active vessel is shelved: put on rails via `shelve_active_vessel()` and moved into `inactive_vessels`. There is no active vessel concept in main menu or tracking station — all vessels are equal entries in the inactive list. When entering flight (via tracking station "Fly"), a vessel is pulled from `inactive_vessels` and activated via `activate_vessel()`.
+
+### Requirement: Exit flight restrictions
+The "Main Menu" button in the flight pause overlay is disabled (greyed out) when the ship is in atmosphere or in the landing zone while suborbital (below landing altitude AND not in a stable orbit). Landed ships can always exit. This prevents the ship from being put on rails in a state where it would be immediately deleted.
+
+### Requirement: Vessels propagate on rails
+Every frame (in flight for inactive vessels, and in tracking station/main menu for all vessels), vessels are propagated on rails using `ship.update_on_rails(dt_sim, solar_system)`. If not already on rails, `enter_rails_mode()` is called first.
+
+### Requirement: Vessel deletion
+Vessels are deleted (removed from `inactive_vessels`) when BOTH of these conditions are true:
+- Orbit periapsis is below the planet's surface (`periapsis_below_surface()`). Uses cached orbit if available; falls back to computing orbital elements from state vectors (vis-viva + angular momentum) when cached orbit is unavailable.
+- Current position is in atmosphere (`in_atmosphere()`) or below landing altitude (`below_landing_altitude()`), including negative altitudes (inside the body surface)
+
+This means a vessel on an orbit that clips the atmosphere is not immediately deleted — it persists until it actually reaches the atmosphere/landing zone.
+
+## Vessel Switching
+
+### Requirement: Keyboard switching
+`]` cycles forward and `[` cycles backward through all vessels (sorted by ID). The active vessel ID list includes both active and inactive vessels.
+
+### Requirement: Switch mechanics
+`FlightState.switch_to_vessel(target_id, current_maneuver_nodes, solar_system)`:
+1. Saves current active vessel as a `TrackedVessel` in `inactive_vessels` (put on rails)
+2. Removes target from `inactive_vessels`
+3. Loads target as active (takes off rails, resets input, sets tracking)
+4. Returns target's maneuver nodes for loading into render state
+
+### Requirement: Maneuver node persistence
+Each vessel's maneuver nodes are saved with the vessel during switching and restored when switching back. `RenderState.swap_maneuver_nodes()` handles the exchange.
+
+### Requirement: Warp reset on switch
+Time warp resets to 1x when switching vessels.
+
+### Requirement: Double-click switching in flight
+Double-clicking a background vessel icon in flight map view switches to that vessel. Hit detection uses stored screen positions with a 20px radius threshold.
+
+### Requirement: Tracking station switching
+The tracking station sidebar "Fly" button switches to the selected vessel and enters flight mode.
+
+## Rendering
+
+### Requirement: Full vessel part rendering
+Inactive vessels with part data (`FlightVessel`) are rendered with their full parts using the same rendering pipeline as the active vessel (generate_part_shape_vertices, decoupler adapters). In flight mode, background vessel parts are dimmed (50% RGB, 70% alpha). Vessels without part data fall back to triangle icon rendering (8px screen-fixed).
+
+### Requirement: Background vessel orbits
+Inactive vessels with valid orbits have their orbit lines drawn in dimmed grey (`[0.5, 0.5, 0.5, 0.3]`). Only elliptical orbits (e < 1) are rendered, using 256-segment line approximation.
+
+### Requirement: Tracking station vessel rendering
+All vessels are rendered with full parts and orbit lines in grey (`[0.6, 0.6, 0.6, 0.4]`). Vessels without part data fall back to colored triangle icons.
+
+### Requirement: Vessel deletion from tracking station
+The tracking station sidebar shows an "X" delete button next to each vessel's "Fly" button. Clicking it removes the vessel from `inactive_vessels`. If the deleted vessel was being tracked by the camera, tracking resets to focus on Earth.
+
+## Implementation
+- `VesselId`, `TrackedVessel`, `FlightState` extensions in `src/game.rs`
+- `extract_decoupled_parts()` in `src/parts/vessel.rs`
+- `create_debris_vessel()`, `switch_to_vessel()`, `all_vessel_ids()` on `FlightState`
+- `handle_post_decouple()`, `switch_to_next_vessel()`, `switch_to_next_vessel_by_id()` in `src/main.rs`
+- `swap_maneuver_nodes()` in `src/render/maneuver.rs`
+- `background_vessel_at_screen_pos()`, `background_vessel_screen_positions` field on `RenderState`
+- Background vessel geometry in `update_bodies_orbits_ship_and_vessels()`
+- `TrackingVesselData`, `TrackingStationAction` in `src/render/types.rs`

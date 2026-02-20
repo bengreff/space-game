@@ -40,9 +40,11 @@ A 2D space game (KSP-like) with 1:1 real-scale orbital mechanics. Build rockets 
 - Go fix failing CI tests without being told how
 
 ## Spec Management
-- **All changes must update specs**: Every code change should have corresponding requirements in an `openspec/specs/` spec file. If a spec doesn't exist yet for the area being changed, add requirements to the closest existing spec.
+- **Specs update WITH code, not after**: Every code change MUST have its corresponding spec updated in the SAME task, before moving to the next task. Never batch spec updates as a separate step. When you finish implementing a feature or fix, update the relevant spec file immediately — the task is not done until the spec reflects the code.
+- **No code-only changes**: If you change behavior, add a feature, or fix a bug, the spec must be updated as part of that same unit of work. Do not commit code without its spec update. Do not defer spec updates to "later" or "cleanup."
 - **Merge into existing specs**: When syncing delta specs from an opsx change (design/proposal), merge new requirements into the pre-existing spec files under `openspec/specs/game/`. Only create a new spec file/folder if the change introduces something entirely new that doesn't fit any existing spec.
-- **Spec structure**: `openspec/specs/game/<domain>/<capability>/spec.md`. Domains: `editor`, `editor_rendering`, `flight_rendering`, `orbits`. See existing files for the pattern.
+- **Spec structure**: `openspec/specs/game/<domain>/<capability>/spec.md`. Domains: `editor`, `editor_rendering`, `flight_rendering`, `orbits`, `physics`. See existing files for the pattern.
+- **If no spec exists yet**: Create one in the closest matching domain/capability. If the area is entirely new, create the domain folder and spec file.
 
 ## Task Management
 1. **Plan First**: Write plan to 'tasks/todo.md' with checkable items

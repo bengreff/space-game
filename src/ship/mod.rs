@@ -269,11 +269,70 @@ impl Ship {
 
     /// Check if the ship is below the landing altitude of the current SOI body.
     /// Works for both atmospheric and airless bodies.
+    /// Returns true for negative altitudes (inside the body surface), which can
+    /// happen for on-rails vessels whose Keplerian orbits pass through the body.
     pub fn below_landing_altitude(&self, solar_system: &SolarSystem) -> bool {
         let soi_body = &solar_system.bodies[self.soi_body];
         let dist = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
         let altitude = dist - soi_body.radius;
-        altitude >= 0.0 && altitude < soi_body.landing_altitude()
+        altitude < soi_body.landing_altitude()
+    }
+
+    /// Check if the ship's orbit periapsis dips below the planet's surface.
+    /// Used together with position checks to delete vessels that will
+    /// inevitably hit the surface.
+    pub fn periapsis_below_surface(&self, solar_system: &SolarSystem) -> bool {
+        if matches!(self.state, ShipState::Landed { .. }) {
+            return false;
+        }
+
+        let soi_body = &solar_system.bodies[self.soi_body];
+        let threshold = soi_body.radius;
+
+        // Use cached orbit if available
+        if let Some(ref ship_orbit) = self.cached_orbit {
+            let a = ship_orbit.orbit.semi_major_axis;
+            let e = ship_orbit.orbit.eccentricity;
+            let periapsis = if e < 1.0 {
+                a * (1.0 - e)
+            } else {
+                a.abs() * (e - 1.0)
+            };
+            return periapsis < threshold;
+        }
+
+        // Fallback: compute from state vectors using vis-viva and angular momentum
+        let r = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
+        let v2 = self.rel_velocity[0].powi(2) + self.rel_velocity[1].powi(2);
+        let mu = G * soi_body.mass;
+
+        // Semi-major axis from vis-viva: 1/a = 2/r - v²/μ
+        let inv_a = 2.0 / r - v2 / mu;
+        if inv_a.abs() < 1e-20 {
+            return true; // parabolic - will hit surface
+        }
+        let a = 1.0 / inv_a;
+
+        // Angular momentum magnitude: h = |r × v| (2D cross product)
+        let h = (self.rel_position[0] * self.rel_velocity[1] - self.rel_position[1] * self.rel_velocity[0]).abs();
+
+        // Semi-latus rectum: p = h²/μ
+        let p = h * h / mu;
+
+        // Eccentricity from p = a(1-e²) for elliptical, p = |a|(e²-1) for hyperbolic
+        let e = if a > 0.0 {
+            (1.0 - p / a).max(0.0).sqrt()
+        } else {
+            (1.0 + p / a.abs()).max(0.0).sqrt()
+        };
+
+        let periapsis = if a > 0.0 {
+            a * (1.0 - e)
+        } else {
+            a.abs() * (e - 1.0)
+        };
+
+        periapsis < threshold
     }
 
     /// Check if the ship's orbit is suborbital (periapsis below body surface).
@@ -375,7 +434,7 @@ impl Ship {
     }
 
     /// Enter on-rails mode - calculate and cache the current orbit
-    fn enter_rails_mode(&mut self, solar_system: &SolarSystem) {
+    pub fn enter_rails_mode(&mut self, solar_system: &SolarSystem) {
         if let Some(ship_orbit) = self.calculate_orbit_with_anomaly(solar_system) {
             self.cached_orbit = Some(ship_orbit);
             self.on_rails = true;
@@ -383,7 +442,7 @@ impl Ship {
     }
 
     /// Exit on-rails mode - restore position and velocity from orbit
-    fn exit_rails_mode(&mut self, solar_system: &SolarSystem) {
+    pub fn exit_rails_mode(&mut self, solar_system: &SolarSystem) {
         if let Some(ref ship_orbit) = self.cached_orbit {
             let parent = &solar_system.bodies[ship_orbit.parent_idx];
             self.rel_position = ship_orbit.orbit.position_from_mean_anomaly(
@@ -417,7 +476,7 @@ impl Ship {
     }
 
     /// Update while on rails - follow the orbit exactly
-    fn update_on_rails(&mut self, dt: f64, solar_system: &SolarSystem) {
+    pub fn update_on_rails(&mut self, dt: f64, solar_system: &SolarSystem) {
         if let Some(ref mut ship_orbit) = self.cached_orbit {
             let parent = &solar_system.bodies[ship_orbit.parent_idx];
 
@@ -752,7 +811,7 @@ impl Ship {
                           LAUNCHPAD_HEIGHT, LAUNCHPAD_BOTTOM_WIDTH};
 
         let ship_radius = vessel
-            .map(|v| v.vessel_height)
+            .map(|v| v.bottom_extent)
             .unwrap_or(SHIP_SIZE / 2.0);
         let abs_pos = self.absolute_position(solar_system);
 

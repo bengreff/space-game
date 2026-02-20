@@ -277,3 +277,42 @@ impl ManeuverNode {
         [prograde[1], -prograde[0]]
     }
 }
+
+/// Render data for a vessel in the tracking station or as a background vessel in flight
+#[derive(Clone)]
+pub struct TrackingVesselData {
+    pub id: u64,
+    pub name: String,
+    pub color: [f32; 4],
+    pub x: f64,       // Absolute position (scaled for rendering)
+    pub y: f64,
+    pub soi_body: usize,
+    pub orbit: Option<OrbitRenderData>,
+    pub parts: Option<Vec<ShipPartRenderData>>,
+    pub rotation: f64,
+}
+
+/// Action returned from the tracking station UI
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackingStationAction {
+    None,
+    FlyVessel(u64), // VesselId
+    FocusVessel(u64), // VesselId - focus camera on this vessel
+    DeleteVessel(u64), // VesselId - remove vessel from tracking
+}
+
+/// Action returned from the main menu UI
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainMenuAction {
+    None,
+    Editor,
+    TrackingStation,
+}
+
+/// Action returned from the pause overlay UI
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PauseAction {
+    None,
+    Resume,
+    MainMenu,
+}
