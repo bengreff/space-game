@@ -18,8 +18,9 @@ An egui top panel named "time_warp_panel" SHALL display time warp controls and o
 - **THEN** warp levels where warp > `RAILS_WARP_THRESHOLD` (10.0) SHALL be disabled
 
 #### Scenario: Warp blocking near SOI boundary
-- **WHEN** `time_to_intercept / warp_rate < 0.5` seconds of real time
+- **WHEN** warp > `RAILS_WARP_THRESHOLD` (on-rails only) AND `time_to_intercept / warp_rate < 0.5` seconds of real time
 - **THEN** that warp level SHALL be disabled
+- Physics warp levels (≤ `RAILS_WARP_THRESHOLD`) are never blocked by SOI proximity, as physics substeps handle SOI transitions precisely
 
 #### Scenario: Warp blocking below landing altitude
 - **WHEN** ship is below the current SOI body's landing altitude

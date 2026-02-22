@@ -12,6 +12,7 @@ use sunscatter::editor::{
     generate_ghost_vertices, screen_to_world, part_at_screen_pos, BodyInfo,
 };
 use egui;
+use sunscatter::bodies::G;
 use sunscatter::game::{Game, GameMode};
 use sunscatter::render::{RenderState, MainMenuAction, PauseAction, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, SelectedTarget, StagedPartInfo, TargetPopup, Vertex};
 use sunscatter::ship::{AutopilotTarget, ShipState, VesselPhysicsData, SHIP_SIZE, MAX_THRUST_ACCELERATION, AMBIENT_TEMPERATURE, RAILS_WARP_THRESHOLD};
@@ -294,6 +295,17 @@ fn render_flight_frame(
 
         // Update simulation with current time warp
         let time_warp = WARP_LEVELS[game.warp_index];
+
+        // Auto-disable RCS when entering on-rails warp, re-enable when returning to physics warp
+        let on_rails_warp = time_warp > RAILS_WARP_THRESHOLD;
+        if on_rails_warp && render_state.rcs_enabled {
+            render_state.rcs_enabled = false;
+            render_state.rcs_disabled_by_rails = true;
+        } else if !on_rails_warp && render_state.rcs_disabled_by_rails {
+            render_state.rcs_enabled = true;
+            render_state.rcs_disabled_by_rails = false;
+        }
+
         game.solar_system.update(dt * time_warp);
         game.simulation_time += dt * time_warp;
 
@@ -846,7 +858,7 @@ fn render_flight_frame(
         .and_then(|traj| traj.segments.first())
         .and_then(|seg| seg.end_time);
 
-    let patched_trajectory = patched_traj_raw
+    let patched_trajectory = patched_traj_raw.as_ref()
         .map(|traj| {
             traj.segments.iter().enumerate().map(|(i, seg)| {
                 let parent_pos = scaled_positions[seg.parent_idx];
@@ -1230,6 +1242,157 @@ fn render_flight_frame(
         render_state.selected_target_angle = None;
     }
 
+    // Compute closest approach marker to navigation target
+    render_state.closest_approach_world_pos = None;
+    render_state.closest_approach_marker = None;
+    if let (Some(target), Some(ref traj)) = (render_state.selected_target, &patched_traj_raw) {
+        // Determine which SOI the target is in
+        let target_soi_parent = match target {
+            SelectedTarget::Body(idx) => game.solar_system.bodies[idx].parent,
+            SelectedTarget::Vessel(id) => {
+                game.flight.inactive_vessels.iter()
+                    .find(|v| v.id == id)
+                    .map(|v| v.ship.soi_body)
+            }
+        };
+
+        if let Some(target_parent) = target_soi_parent {
+            // Find first trajectory segment in the same SOI as the target
+            if let Some(seg) = traj.segments.iter().find(|s| s.parent_idx == target_parent) {
+                let e = seg.orbit.eccentricity;
+                let a = seg.orbit.semi_major_axis;
+                let arg_peri = seg.orbit.argument_of_periapsis;
+                let parent_mass = game.solar_system.bodies[seg.parent_idx].mass;
+                let mu = G * parent_mass;
+
+                // Semi-latus rectum
+                let p = if e < 1.0 { a * (1.0 - e * e) } else { a.abs() * (e * e - 1.0) };
+
+                // End true anomaly: use segment end or full orbit
+                let end_ta = seg.end_true_anomaly.unwrap_or_else(|| {
+                    if seg.retrograde {
+                        seg.start_true_anomaly - std::f64::consts::TAU
+                    } else {
+                        seg.start_true_anomaly + std::f64::consts::TAU
+                    }
+                });
+
+                let start_ma = game.flight.ship.true_to_mean_anomaly(&seg.orbit, seg.start_true_anomaly);
+                let n = if e < 1.0 {
+                    (mu / a.powi(3)).sqrt()
+                } else {
+                    (mu / a.abs().powi(3)).sqrt()
+                };
+
+                // Closure to compute ship pos and target pos at parameter t in [0,1]
+                let compute_positions = |t: f64| -> Option<([f64; 2], [f64; 2])> {
+                    let sample_ta = seg.start_true_anomaly + t * (end_ta - seg.start_true_anomaly);
+                    let denom = 1.0 + e * sample_ta.cos();
+                    if denom <= 0.001 { return None; }
+                    let r = p / denom;
+                    if r <= 0.0 || !r.is_finite() { return None; }
+
+                    let angle = sample_ta + arg_peri;
+                    let ship_pos = [r * angle.cos(), r * angle.sin()];
+
+                    // Travel time from segment start
+                    let sample_ma = game.flight.ship.true_to_mean_anomaly(&seg.orbit, sample_ta);
+                    let delta_ma = if e < 1.0 {
+                        if seg.retrograde {
+                            let mut d = start_ma - sample_ma;
+                            if d < 0.0 { d += std::f64::consts::TAU; }
+                            d
+                        } else {
+                            let mut d = sample_ma - start_ma;
+                            if d < 0.0 { d += std::f64::consts::TAU; }
+                            d
+                        }
+                    } else {
+                        (sample_ma - start_ma).abs()
+                    };
+                    let travel_time = if n > 0.0 { delta_ma / n } else { 0.0 };
+                    let abs_time = game.simulation_time + seg.start_time + travel_time;
+
+                    // Target position relative to shared parent at abs_time
+                    let target_pos = match target {
+                        SelectedTarget::Body(idx) => {
+                            game.solar_system.bodies[idx].orbit.as_ref()
+                                .map(|orb| orb.position_at(abs_time, parent_mass))
+                                .unwrap_or([0.0, 0.0])
+                        }
+                        SelectedTarget::Vessel(id) => {
+                            // Use vessel's current position (no orbit propagation)
+                            game.flight.inactive_vessels.iter()
+                                .find(|v| v.id == id)
+                                .map(|v| v.ship.rel_position)
+                                .unwrap_or([0.0, 0.0])
+                        }
+                    };
+
+                    Some((ship_pos, target_pos))
+                };
+
+                let compute_dist = |t: f64| -> f64 {
+                    compute_positions(t).map_or(f64::MAX, |(sp, tp)| {
+                        let dx = sp[0] - tp[0];
+                        let dy = sp[1] - tp[1];
+                        (dx * dx + dy * dy).sqrt()
+                    })
+                };
+
+                // Coarse sampling (64 points)
+                let num_samples = 64usize;
+                let mut best_t = 0.0f64;
+                let mut best_dist = f64::MAX;
+                for i in 0..num_samples {
+                    let t = i as f64 / (num_samples - 1) as f64;
+                    let dist = compute_dist(t);
+                    if dist < best_dist {
+                        best_dist = dist;
+                        best_t = t;
+                    }
+                }
+
+                // Golden-section refinement (12 iterations)
+                if best_dist < f64::MAX {
+                    let phi = (5.0_f64.sqrt() + 1.0) / 2.0;
+                    let step = 1.0 / (num_samples - 1) as f64;
+                    let mut lo = (best_t - step).max(0.0);
+                    let mut hi = (best_t + step).min(1.0);
+                    for _ in 0..12 {
+                        let c = hi - (hi - lo) / phi;
+                        let d = lo + (hi - lo) / phi;
+                        if compute_dist(c) < compute_dist(d) {
+                            hi = d;
+                        } else {
+                            lo = c;
+                        }
+                    }
+                    best_t = (lo + hi) / 2.0;
+                    best_dist = compute_dist(best_t);
+                }
+
+                // Convert best point to render coordinates
+                if best_dist < f64::MAX {
+                    let best_ta = seg.start_true_anomaly + best_t * (end_ta - seg.start_true_anomaly);
+                    let denom = 1.0 + e * best_ta.cos();
+                    if denom > 0.001 {
+                        let r = p / denom;
+                        if r > 0.0 && r.is_finite() {
+                            let angle = best_ta + arg_peri;
+                            let rel_x = r * angle.cos();
+                            let rel_y = r * angle.sin();
+                            let parent_scaled = scaled_positions[seg.parent_idx];
+                            let world_x = parent_scaled[0] * SCALE + rel_x * SCALE * BODY_SCALE;
+                            let world_y = parent_scaled[1] * SCALE + rel_y * SCALE * BODY_SCALE;
+                            render_state.closest_approach_world_pos = Some(([world_x, world_y], best_dist));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Calculate predicted trajectories for maneuver nodes
     let mut predicted_trajectories: Vec<Vec<OrbitSegmentData>> = Vec::new();
     for node in render_state.get_maneuver_nodes() {
@@ -1476,18 +1639,18 @@ fn render_flight_frame(
                 // Past the burn start point — stop warping
                 render_state.warp_to_node = false;
                 game.warp_index = 0;
-            } else if effective_time / WARP_LEVELS[5] < 2.0 {
-                // Even minimum on-rails warp (100x) would arrive in < 2 real seconds
+            } else if effective_time / WARP_LEVELS[5] < 1.0 {
+                // Even minimum on-rails warp (100x) would arrive in < 1 real second
                 // Drop to 1x and stop auto-warp
                 render_state.warp_to_node = false;
                 game.warp_index = 0;
             } else {
                 // Find the highest warp level where we won't overshoot
-                // (effective_time / warp_level >= 2.0 real seconds remaining)
+                // (effective_time / warp_level >= 1.0 real second remaining)
                 // Minimum auto-warp: index 5 (100x)
                 let mut best_index = 5; // 100x minimum
                 for i in (5..WARP_LEVELS.len()).rev() {
-                    if effective_time / WARP_LEVELS[i] >= 2.0 {
+                    if effective_time / WARP_LEVELS[i] >= 1.0 {
                         best_index = i;
                         break;
                     }

@@ -71,11 +71,11 @@ When a pod definition has `rcs: Some(...)`, two small triangular nozzles SHALL p
 
 ### Requirement: Decoupler ring band
 
-Decouplers SHALL render as a horizontal band from hitbox bottom upward by visual height. Color: `[0.25, 0.25, 0.28, 1.0]`.
+Stack decouplers SHALL render as a horizontal band from hitbox bottom upward by visual height. Color: `[0.25, 0.25, 0.28, 1.0]`. Radial decouplers (`is_radial: true`) SHALL instead render as a simple dark rectangle (`[0.1, 0.1, 0.1, alpha]`) filling the part's visual bounds, with no ring band.
 
 ### Requirement: Decoupler adapter trapezoid
 
-A second pass SHALL draw adapter trapezoids connecting decouplers to the closest aligned fuel tank **or command pod** above (same center X within 0.01 tolerance). Bottom edge matches decoupler width, top edge matches tank/pod width.
+A second pass SHALL draw adapter trapezoids connecting stack decouplers to the closest aligned fuel tank **or command pod** above (same center X within 0.01 tolerance). Bottom edge matches decoupler width, top edge matches tank/pod width. Radial decouplers SHALL NOT render adapter trapezoids.
 
 #### Scenario: Adapter with size transition
 - **GIVEN** medium decoupler (2.5m) with small tank (1.5m) above

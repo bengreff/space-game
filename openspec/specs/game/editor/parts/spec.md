@@ -10,7 +10,7 @@ The parts palette SHALL display selectable tabs for each `PartCategory`. The def
 
 ### Requirement: Size grouping
 
-Within a selected category, parts SHALL be grouped by `PartSize` under collapsible headers (default open). Sizes with no parts in the current category SHALL be hidden.
+Within a selected category, parts SHALL be grouped by `PartSize` under collapsible headers (default open). Sizes with no parts in the current category SHALL be hidden. Size categories: Tiny (1 grid square, 0.5m), Small (3, 1.5m), Medium (5, 2.5m), Large (9, 4.5m), XL (13, 6.5m).
 
 ### Requirement: Palette selection toggle
 
@@ -204,6 +204,10 @@ RCS thrusters SHALL be thin side-mount parts (0.5 grid wide, 1x1 hitbox). Small 
 ### Requirement: Decoupler info for placed parts
 
 For placed decouplers, the info panel SHALL display a "Fuel Crossfeed" checkbox toggling `crossfeed_enabled`.
+
+### Requirement: Radial decoupler
+
+`DecouplerData` SHALL include an `is_radial: bool` field (serde-default `false`). Radial decouplers separate sideways (disconnecting side-mounted parts) instead of using Y-position-based stack separation. They are rendered as a simple dark rectangle without the ring band or adapter trapezoid. The TT-38K Radial Decoupler is a Tiny-size (1x2) radial decoupler with 10 kN ejection force.
 
 ### Requirement: Linked part info panel
 

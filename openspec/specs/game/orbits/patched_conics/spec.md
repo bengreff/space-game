@@ -6,7 +6,7 @@ Trajectory prediction across SOI boundaries, SOI transition detection, and frame
 
 ### Requirement: Maximum patched conic segments
 
-The system SHALL predict a maximum of `MAX_PATCHED_CONICS = 1` SOI change beyond the current orbit.
+The system SHALL predict a maximum of `MAX_PATCHED_CONICS = 2` SOI changes beyond the current orbit, producing up to 3 trajectory segments (e.g., Earth orbit → Sun transfer → Mars intercept, or Earth orbit → Moon flyby → Earth return).
 
 ### Requirement: Trajectory caching
 
@@ -29,13 +29,25 @@ For hyperbolic orbits, the exit true anomaly SHALL be calculated from the orbit 
 3. If `|cos(nu_exit)| <= 1`: `exit_ta = acos(cos(nu_exit))`; negate for retrograde
 4. If `|cos(nu_exit)| > 1` (no intersection): use `exit_ta = acos(-1/e) - HYPERBOLIC_ANGLE_MARGIN`
 
-### Requirement: Hyperbolic SOI exit frame conversion
+### Requirement: Hyperbolic SOI exit continuation
 
 After predicting a hyperbolic SOI exit, the system SHALL:
 1. Calculate exit position and velocity from the orbit at the exit mean anomaly
-2. Convert to parent frame via `convert_to_parent_frame()`
-3. Calculate a new orbit in the parent body's frame
-4. Add the new orbit as a second segment
+2. Calculate transit time to exit for correct body position computation
+3. Convert to parent frame via `convert_to_parent_frame()`
+4. Calculate a new orbit in the parent body's frame
+5. Continue the prediction loop with the new orbit (allowing further SOI transitions up to `MAX_PATCHED_CONICS`)
+
+## Unified Trajectory Loop
+
+### Requirement: Unified trajectory computation
+
+Both live trajectory and maneuver node predictions SHALL use a shared `compute_patched_segments()` loop that:
+1. Handles hyperbolic and elliptical orbits at each iteration
+2. For hyperbolic orbits: calculates SOI exit analytically, pushes segment, continues to parent if crossings remain
+3. For elliptical orbits at max crossings: pushes full orbit as final segment
+4. For elliptical orbits below max: searches for SOI intersection, pushes truncated segment if found, converts frame, and continues
+5. Terminates when: no SOI transition found, max crossings exhausted, orbit calculation fails, or no parent body exists
 
 ## Elliptical SOI Intersection
 
@@ -105,7 +117,7 @@ When on-rails and a SOI transition is detected:
 
 ### Requirement: Predicted trajectory for maneuver nodes
 
-The system SHALL support calculating a predicted trajectory from arbitrary state vectors (`pos`, `vel`, `parent_idx`, `epoch`) for maneuver node predictions. This uses the same patched conics logic: orbit calculation, hyperbolic exit detection, SOI intersection finding, and frame conversion, returning a `PatchedTrajectory` with up to two segments.
+The system SHALL support calculating a predicted trajectory from arbitrary state vectors (`pos`, `vel`, `parent_idx`, `epoch`) for maneuver node predictions. This uses the shared `compute_patched_segments()` helper with the same patched conics logic as the live trajectory, returning a `PatchedTrajectory` with up to `MAX_PATCHED_CONICS + 1` segments.
 
 #### Scenario: Epoch-aware body positions
 - The `epoch` parameter specifies when the maneuver occurs (absolute simulation time)
@@ -116,8 +128,47 @@ The system SHALL support calculating a predicted trajectory from arbitrary state
 
 #### Scenario: Maneuver node predicts SOI escape
 - **WHEN** a maneuver node creates a hyperbolic orbit relative to the current body
-- **THEN** the predicted trajectory SHALL show the escape segment ending at the SOI boundary and a second segment in the parent body's frame
+- **THEN** the predicted trajectory SHALL show the escape segment ending at the SOI boundary and continuation segments in parent frames (up to MAX_PATCHED_CONICS transitions)
 
 #### Scenario: Maneuver node predicts Moon encounter
 - **WHEN** a maneuver node creates an orbit that intersects the Moon's SOI
-- **THEN** the predicted trajectory SHALL show the current orbit ending at the Moon's SOI boundary and a second segment in the Moon's frame
+- **THEN** the predicted trajectory SHALL show the current orbit ending at the Moon's SOI boundary, the Moon flyby segment, and the return orbit around Earth
+
+#### Scenario: Interplanetary transfer prediction
+- **WHEN** a maneuver from LEO creates an escape trajectory from Earth
+- **THEN** the predicted trajectory SHALL show: (1) the Earth escape hyperbola, (2) the heliocentric transfer orbit with intercept at the target planet, and (3) the hyperbolic approach at the target planet
+
+## Closest Approach Indicator
+
+### Requirement: Closest approach computation
+
+When a navigation target is selected (body or vessel), the system SHALL compute and display the closest approach point on the trajectory segment that shares the same SOI as the target.
+
+#### Scenario: SOI matching for body targets
+- **GIVEN** a body target with index `target_idx`
+- **THEN** the system SHALL find the first trajectory segment where `segment.parent_idx == bodies[target_idx].parent`
+- **AND** if the target body's parent is `None` (Sun), no closest approach is computed
+
+#### Scenario: SOI matching for vessel targets
+- **GIVEN** a vessel target with id `target_id`
+- **THEN** the system SHALL find the first trajectory segment where `segment.parent_idx == target_vessel.ship.soi_body`
+
+#### Scenario: No matching segment
+- **WHEN** no trajectory segment shares the target's SOI
+- **THEN** no closest approach marker is displayed
+
+### Requirement: Closest approach sampling algorithm
+
+The closest approach point SHALL be found by:
+1. **Coarse sampling**: 64 uniformly-spaced samples across the segment's true anomaly arc
+2. For each sample, compute the ship's position on the orbit and the target's position at the corresponding absolute time (`simulation_time + segment.start_time + travel_time`)
+3. Travel time is derived from mean anomaly difference divided by mean motion
+4. Track the minimum distance sample
+5. **Golden-section refinement**: 12 iterations around the best coarse sample for sub-sample accuracy
+
+### Requirement: Closest approach rendering
+
+The closest approach marker SHALL be:
+- A yellow (`[1.0, 1.0, 0.0, 0.9]`) filled circle using a 16-segment triangle fan, same size as Ap/Pe markers
+- Labeled "CA" in yellow text above the dot (11pt)
+- On hover (20px radius): display "Closest Approach: {distance}" below the dot using standard altitude formatting

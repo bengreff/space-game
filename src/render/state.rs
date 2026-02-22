@@ -92,6 +92,8 @@ pub struct RenderState {
     pub decouple_request: Option<usize>,  // part_index to manually decouple
     pub ap_markers: Vec<([f64; 2], f64)>, // Apoapsis markers: (world pos relative to camera, altitude)
     pub pe_markers: Vec<([f64; 2], f64)>, // Periapsis markers: (world pos relative to camera, altitude)
+    pub closest_approach_world_pos: Option<([f64; 2], f64)>, // (render world pos, distance meters) - set by main.rs
+    pub closest_approach_marker: Option<([f64; 2], f64)>, // (camera-relative pos, distance meters) - for egui hover
     // Simulation time (updated each frame from main.rs)
     pub simulation_time: f64,
     // Maneuver node state
@@ -119,6 +121,8 @@ pub struct RenderState {
     pub target_popup: Option<super::types::TargetPopup>,
     // RCS toggle (off by default)
     pub rcs_enabled: bool,
+    // RCS was auto-disabled when entering on-rails warp; re-enable when returning to physics warp
+    pub rcs_disabled_by_rails: bool,
     // Transfer planner state
     pub transfer_planner_open: bool,
     pub transfer_planner_mode: u8,              // 0 = Hohmann, 1 = Lambert
@@ -431,6 +435,8 @@ impl RenderState {
             decouple_request: None,
             ap_markers: Vec::new(),
             pe_markers: Vec::new(),
+            closest_approach_world_pos: None,
+            closest_approach_marker: None,
             simulation_time: 0.0,
             pending_orbit_click: None,
             selected_maneuver_node: None,
@@ -451,6 +457,7 @@ impl RenderState {
             selected_target_angle: None,
             target_popup: None,
             rcs_enabled: false,
+            rcs_disabled_by_rails: false,
             transfer_planner_open: false,
             transfer_planner_mode: 0,
             transfer_selected_target: None,
@@ -643,8 +650,9 @@ impl RenderState {
                         // Block selecting warp > max physics warp while actually producing thrust
                         let actually_thrusting = ship_throttle > 0.0 && ship_acceleration > 0.0;
                         let blocked_throttle = actually_thrusting && warp > RAILS_WARP_THRESHOLD;
-                        // Block warps that would reach SOI boundary in < 0.5 seconds
-                        let blocked_intercept = ship_time_to_intercept
+                        // Block on-rails warps that would reach SOI boundary in < 0.5 seconds
+                        // Physics warp (≤10x) handles SOI transitions via substeps, so only block on-rails
+                        let blocked_intercept = warp > RAILS_WARP_THRESHOLD && ship_time_to_intercept
                             .map(|t| t / warp < 0.5)
                             .unwrap_or(false);
                         // Block on-rails warp when below landing altitude
@@ -1299,6 +1307,34 @@ impl RenderState {
                         &format_altitude(*altitude),
                         egui::FontId::proportional(10.0),
                         egui::Color32::from_rgb(77, 204, 255),
+                    );
+                }
+            }
+
+            // Draw closest approach marker label
+            if let Some((pos, distance)) = &self.closest_approach_marker {
+                let (screen_x, screen_y) = world_to_screen(*pos);
+                let marker_screen_pos = egui::pos2(screen_x, screen_y);
+
+                let is_hovered = mouse_pos.map_or(false, |mp| {
+                    (mp - marker_screen_pos).length() < hover_radius
+                });
+
+                marker_painter.text(
+                    egui::pos2(screen_x, screen_y - 12.0),
+                    egui::Align2::CENTER_BOTTOM,
+                    "CA",
+                    egui::FontId::proportional(11.0),
+                    egui::Color32::from_rgb(255, 255, 0), // Yellow
+                );
+
+                if is_hovered {
+                    marker_painter.text(
+                        egui::pos2(screen_x, screen_y + 14.0),
+                        egui::Align2::CENTER_TOP,
+                        &format!("Closest Approach: {}", format_altitude(*distance)),
+                        egui::FontId::proportional(10.0),
+                        egui::Color32::from_rgb(255, 255, 0),
                     );
                 }
             }
@@ -2476,6 +2512,7 @@ impl RenderState {
         // Only show orbit line when ship is small on screen (< 5 pixels)
         self.ap_markers.clear();
         self.pe_markers.clear();
+        self.closest_approach_marker = None;
 
         if let Some(ship_data) = ship {
             let pixels_per_world_unit = self.camera.zoom * self.size.height as f32 / 2.0;
@@ -2861,6 +2898,29 @@ impl RenderState {
                         // Store for UI hover
                         self.ap_markers.push(([ap_x - cam_x, ap_y - cam_y], ap_altitude));
                     }
+                }
+
+                // Draw closest approach marker (yellow dot)
+                if let Some((world_pos, dist)) = self.closest_approach_world_pos {
+                    let ca_x = world_pos[0];
+                    let ca_y = world_pos[1];
+                    let ca_color = [1.0, 1.0, 0.0, 0.9_f32];
+
+                    let ca_base = all_vertices.len() as u32;
+                    all_vertices.push(Vertex::new([(ca_x - cam_x) as f32, (ca_y - cam_y) as f32], ca_color));
+                    for i in 0..marker_segments {
+                        let angle = (i as f64 / marker_segments as f64) * std::f64::consts::TAU;
+                        all_vertices.push(Vertex::new([
+                            (ca_x + marker_radius * angle.cos() - cam_x) as f32,
+                            (ca_y + marker_radius * angle.sin() - cam_y) as f32,
+                        ], ca_color));
+                    }
+                    for i in 0..marker_segments {
+                        all_indices.push(ca_base);
+                        all_indices.push(ca_base + 1 + i);
+                        all_indices.push(ca_base + 1 + (i + 1) % marker_segments);
+                    }
+                    self.closest_approach_marker = Some(([ca_x - cam_x, ca_y - cam_y], dist));
                 }
             }
         }

@@ -42,71 +42,100 @@ impl Ship {
             return None;
         }
 
-        let mut segments = Vec::new();
-
         let parent_idx = self.soi_body;
         let parent = &solar_system.bodies[parent_idx];
 
-        if let Some((orbit, true_anomaly, retrograde)) = self.calculate_orbit_from_state(
+        let (orbit, true_anomaly, retrograde) = self.calculate_orbit_from_state(
             self.rel_position,
             self.rel_velocity,
             parent.mass,
-        ) {
-            // If current orbit is hyperbolic, calculate where it exits the SOI
-            if orbit.eccentricity >= 1.0 {
-                let e = orbit.eccentricity;
-                let a_abs = orbit.semi_major_axis.abs();
-                let p = a_abs * (e * e - 1.0);
+        )?;
 
+        let segments = self.compute_patched_segments(
+            orbit, true_anomaly, retrograde, parent_idx,
+            solar_system.time, solar_system,
+        );
+
+        if segments.is_empty() { None } else { Some(PatchedTrajectory { segments }) }
+    }
+
+    /// Compute patched conic segments from given orbital state.
+    /// Handles both elliptical and hyperbolic orbits, continuing across SOI boundaries
+    /// up to MAX_PATCHED_CONICS transitions.
+    pub(crate) fn compute_patched_segments(
+        &self,
+        initial_orbit: Orbit,
+        initial_ta: f64,
+        initial_retrograde: bool,
+        initial_parent_idx: usize,
+        base_time: f64,
+        solar_system: &SolarSystem,
+    ) -> Vec<PatchedConicSegment> {
+        let mut segments = Vec::new();
+        let mut current_orbit = initial_orbit;
+        let mut current_parent_idx = initial_parent_idx;
+        let mut current_ta = initial_ta;
+        let mut current_retrograde = initial_retrograde;
+        let mut cumulative_time = 0.0;
+        let mut soi_crossings = 0;
+
+        loop {
+            let parent = &solar_system.bodies[current_parent_idx];
+
+            if current_orbit.eccentricity >= 1.0 {
+                // Hyperbolic orbit - calculate SOI exit analytically
+                let e = current_orbit.eccentricity;
+                let a_abs = current_orbit.semi_major_axis.abs();
+                let p = a_abs * (e * e - 1.0);
                 let soi_radius = parent.soi_radius;
                 let cos_nu_exit = (p / soi_radius - 1.0) / e;
 
-                // For retrograde orbits, exit is at negative true anomaly
                 let exit_true_anomaly = if cos_nu_exit.abs() <= 1.0 {
                     let ta = cos_nu_exit.acos();
-                    if retrograde { -ta } else { ta }
+                    if current_retrograde { -ta } else { ta }
                 } else {
                     let ta = (-1.0 / e).acos() - HYPERBOLIC_ANGLE_MARGIN;
-                    if retrograde { -ta } else { ta }
+                    if current_retrograde { -ta } else { ta }
+                };
+
+                // Calculate time to exit for body position computation
+                let exit_ma = self.true_to_mean_anomaly(&current_orbit, exit_true_anomaly);
+                let start_ma = self.true_to_mean_anomaly(&current_orbit, current_ta);
+                let mu = G * parent.mass;
+                let n = (mu / a_abs.powi(3)).sqrt();
+                let time_to_exit = if n > 0.0 {
+                    (exit_ma - start_ma).abs() / n
+                } else {
+                    0.0
                 };
 
                 segments.push(PatchedConicSegment {
-                    orbit,
-                    parent_idx,
-                    retrograde,
-                    start_true_anomaly: true_anomaly,
+                    orbit: current_orbit,
+                    parent_idx: current_parent_idx,
+                    retrograde: current_retrograde,
+                    start_true_anomaly: current_ta,
                     end_true_anomaly: Some(exit_true_anomaly),
-                    start_time: 0.0,
-                    end_time: None,
+                    start_time: cumulative_time,
+                    end_time: Some(cumulative_time + time_to_exit),
                 });
 
-                // Continue to parent body after SOI exit
+                // Try to continue to parent body after SOI exit
+                if soi_crossings >= MAX_PATCHED_CONICS {
+                    break;
+                }
+
                 if let Some(grandparent_idx) = parent.parent {
-                    let exit_mean_anomaly = self.true_to_mean_anomaly(&orbit, exit_true_anomaly);
-                    let current_mean_anomaly = self.true_to_mean_anomaly(&orbit, true_anomaly);
-
-                    let mu = G * parent.mass;
-                    let mean_motion = (mu / orbit.semi_major_axis.abs().powi(3)).sqrt();
-                    // For retrograde, mean anomaly decreases, so reverse the difference
-                    let time_to_exit = if retrograde {
-                        (current_mean_anomaly - exit_mean_anomaly) / mean_motion
-                    } else {
-                        (exit_mean_anomaly - current_mean_anomaly) / mean_motion
-                    };
-                    let exit_time = solar_system.time + time_to_exit.abs().max(0.0);
-
-                    let exit_pos = orbit.position_from_mean_anomaly(exit_mean_anomaly, parent.mass);
-                    let exit_vel = orbit.velocity_from_mean_anomaly_with_direction(
-                        exit_mean_anomaly,
-                        parent.mass,
-                        retrograde,
+                    let exit_pos = current_orbit.position_from_mean_anomaly(exit_ma, parent.mass);
+                    let exit_vel = current_orbit.velocity_from_mean_anomaly_with_direction(
+                        exit_ma, parent.mass, current_retrograde,
                     );
+                    let exit_absolute_time = base_time + cumulative_time + time_to_exit;
 
                     let (new_pos, new_vel, _) = self.convert_to_parent_frame(
                         exit_pos, exit_vel,
-                        parent_idx,
+                        current_parent_idx,
                         grandparent_idx,
-                        exit_time,
+                        exit_absolute_time,
                         solar_system,
                     );
 
@@ -114,152 +143,112 @@ impl Ship {
                     if let Some((new_orbit, new_ta, new_retro)) = self.calculate_orbit_from_state(
                         new_pos, new_vel, grandparent.mass,
                     ) {
-                        segments.push(PatchedConicSegment {
-                            orbit: new_orbit,
-                            parent_idx: grandparent_idx,
-                            retrograde: new_retro,
-                            start_true_anomaly: new_ta,
-                            end_true_anomaly: None,
-                            start_time: 0.0,
-                            end_time: None,
-                        });
+                        cumulative_time += time_to_exit;
+                        current_orbit = new_orbit;
+                        current_parent_idx = grandparent_idx;
+                        current_ta = new_ta;
+                        current_retrograde = new_retro;
+                        soi_crossings += 1;
+                        continue;
                     }
                 }
-
-                return Some(PatchedTrajectory { segments });
+                break;
             }
 
-            // Elliptical orbit - calculate trajectory with SOI transitions
-            let mean_anomaly = self.true_to_mean_anomaly(&orbit, true_anomaly);
-            let (current_orbit, current_mean_anomaly, current_retrograde) = (orbit, mean_anomaly, retrograde);
+            // Elliptical orbit - if max crossings reached, push full orbit as final segment
+            if soi_crossings >= MAX_PATCHED_CONICS {
+                segments.push(PatchedConicSegment {
+                    orbit: current_orbit,
+                    parent_idx: current_parent_idx,
+                    retrograde: current_retrograde,
+                    start_true_anomaly: current_ta,
+                    end_true_anomaly: None,
+                    start_time: cumulative_time,
+                    end_time: None,
+                });
+                break;
+            }
 
-            let mut current_orbit = current_orbit;
-            let mut current_parent_idx = parent_idx;
-            let mut current_mean_anomaly = current_mean_anomaly;
-            let mut current_retrograde = current_retrograde;
-            let mut cumulative_time = 0.0;
+            let current_ma = self.true_to_mean_anomaly(&current_orbit, current_ta);
 
-            for _ in 0..MAX_PATCHED_CONICS {
-                let parent = &solar_system.bodies[current_parent_idx];
+            let intersection = self.find_soi_intersection(
+                &current_orbit,
+                current_parent_idx,
+                current_ma,
+                current_retrograde,
+                solar_system,
+                base_time + cumulative_time,
+            );
 
-                let intersection = self.find_soi_intersection(
-                    &current_orbit,
-                    current_parent_idx,
-                    current_mean_anomaly,
-                    current_retrograde,
-                    solar_system,
-                    solar_system.time + cumulative_time,
-                );
+            match intersection {
+                Some((intersect_ta, intersect_time, new_parent_idx, entry)) => {
+                    segments.push(PatchedConicSegment {
+                        orbit: current_orbit,
+                        parent_idx: current_parent_idx,
+                        retrograde: current_retrograde,
+                        start_true_anomaly: current_ta,
+                        end_true_anomaly: Some(intersect_ta),
+                        start_time: cumulative_time,
+                        end_time: Some(cumulative_time + intersect_time),
+                    });
 
-                match intersection {
-                    Some((intersect_true_anomaly, intersect_time, new_parent_idx, entry)) => {
-                        segments.push(PatchedConicSegment {
-                            orbit: current_orbit,
-                            parent_idx: current_parent_idx,
-                            retrograde: current_retrograde,
-                            start_true_anomaly: self.mean_to_true_anomaly(&current_orbit, current_mean_anomaly),
-                            end_true_anomaly: Some(intersect_true_anomaly),
-                            start_time: cumulative_time,
-                            end_time: Some(cumulative_time + intersect_time),
-                        });
+                    let intersect_mean_anomaly = self.true_to_mean_anomaly(&current_orbit, intersect_ta);
+                    let pos = current_orbit.position_from_mean_anomaly(intersect_mean_anomaly, parent.mass);
+                    let vel = current_orbit.velocity_from_mean_anomaly_with_direction(
+                        intersect_mean_anomaly,
+                        parent.mass,
+                        current_retrograde,
+                    );
 
-                        let intersect_mean_anomaly = self.true_to_mean_anomaly(&current_orbit, intersect_true_anomaly);
-                        let pos = current_orbit.position_from_mean_anomaly(intersect_mean_anomaly, parent.mass);
-                        let vel = current_orbit.velocity_from_mean_anomaly_with_direction(
-                            intersect_mean_anomaly,
-                            parent.mass,
-                            current_retrograde,
-                        );
+                    let absolute_intersect_time = base_time + cumulative_time + intersect_time;
+                    let (new_pos, new_vel, _) = if entry {
+                        self.convert_to_child_frame(
+                            pos, vel,
+                            current_parent_idx,
+                            new_parent_idx,
+                            absolute_intersect_time,
+                            solar_system,
+                        )
+                    } else {
+                        self.convert_to_parent_frame(
+                            pos, vel,
+                            current_parent_idx,
+                            new_parent_idx,
+                            absolute_intersect_time,
+                            solar_system,
+                        )
+                    };
 
-                        let absolute_intersect_time = solar_system.time + cumulative_time + intersect_time;
-                        let (new_pos, new_vel, _new_retrograde) = if entry {
-                            self.convert_to_child_frame(
-                                pos, vel,
-                                current_parent_idx,
-                                new_parent_idx,
-                                absolute_intersect_time,
-                                solar_system,
-                            )
-                        } else {
-                            self.convert_to_parent_frame(
-                                pos, vel,
-                                current_parent_idx,
-                                new_parent_idx,
-                                absolute_intersect_time,
-                                solar_system,
-                            )
-                        };
-
-                        let new_parent = &solar_system.bodies[new_parent_idx];
-                        if let Some((new_orbit, new_ta, retrograde)) = self.calculate_orbit_from_state(
-                            new_pos, new_vel, new_parent.mass,
-                        ) {
-                            cumulative_time += intersect_time;
-
-                            // Check if new orbit is hyperbolic
-                            if new_orbit.eccentricity >= 1.0 {
-                                let start_ta = new_ta;
-
-                                let e = new_orbit.eccentricity;
-                                let a_abs = new_orbit.semi_major_axis.abs();
-                                let p = a_abs * (e * e - 1.0);
-                                let soi_radius = new_parent.soi_radius;
-                                let cos_nu_exit = (p / soi_radius - 1.0) / e;
-
-                                let end_true_anomaly = if cos_nu_exit.abs() <= 1.0 {
-                                    let nu_exit = cos_nu_exit.acos();
-                                    if retrograde {
-                                        Some(-nu_exit)
-                                    } else {
-                                        Some(nu_exit)
-                                    }
-                                } else {
-                                    None
-                                };
-
-                                segments.push(PatchedConicSegment {
-                                    orbit: new_orbit,
-                                    parent_idx: new_parent_idx,
-                                    retrograde,
-                                    start_true_anomaly: start_ta,
-                                    end_true_anomaly,
-                                    start_time: cumulative_time,
-                                    end_time: None,
-                                });
-                                break;
-                            }
-
-                            current_orbit = new_orbit;
-                            current_parent_idx = new_parent_idx;
-                            current_mean_anomaly = self.true_to_mean_anomaly(&new_orbit, new_ta);
-                            current_retrograde = retrograde;
-                        } else {
-                            break;
-                        }
+                    let new_parent = &solar_system.bodies[new_parent_idx];
+                    if let Some((new_orbit, new_ta, new_retro)) = self.calculate_orbit_from_state(
+                        new_pos, new_vel, new_parent.mass,
+                    ) {
+                        cumulative_time += intersect_time;
+                        current_orbit = new_orbit;
+                        current_parent_idx = new_parent_idx;
+                        current_ta = new_ta;
+                        current_retrograde = new_retro;
+                        soi_crossings += 1;
+                        continue;
                     }
-                    None => {
-                        segments.push(PatchedConicSegment {
-                            orbit: current_orbit,
-                            parent_idx: current_parent_idx,
-                            retrograde: current_retrograde,
-                            start_true_anomaly: self.mean_to_true_anomaly(&current_orbit, current_mean_anomaly),
-                            end_true_anomaly: None,
-                            start_time: cumulative_time,
-                            end_time: None,
-                        });
-                        break;
-                    }
+                    break;
+                }
+                None => {
+                    segments.push(PatchedConicSegment {
+                        orbit: current_orbit,
+                        parent_idx: current_parent_idx,
+                        retrograde: current_retrograde,
+                        start_true_anomaly: current_ta,
+                        end_true_anomaly: None,
+                        start_time: cumulative_time,
+                        end_time: None,
+                    });
+                    break;
                 }
             }
-
-            if segments.is_empty() {
-                None
-            } else {
-                Some(PatchedTrajectory { segments })
-            }
-        } else {
-            None
         }
+
+        segments
     }
 
     /// Find the next SOI intersection along the orbit

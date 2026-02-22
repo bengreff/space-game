@@ -1877,76 +1877,83 @@ impl FlightVessel {
                     if dec_data.ejection_force > self.last_decouple_force {
                         self.last_decouple_force = dec_data.ejection_force;
                     }
-                    let dec_x = self.parts[part_idx].local_position[0];
-                    let decoupler_bottom = self.parts[part_idx].local_position[1]
-                        - def.hitbox_height() / 2.0;
-                    let decoupler_top = self.parts[part_idx].local_position[1]
-                        + def.hitbox_height() / 2.0;
-                    let dec_half_w = def.width() / 2.0;
 
                     // Mark the decoupler itself as decoupled
                     self.parts[part_idx].decoupled = true;
 
-                    // Mark all parts whose top edge is at or below the decoupler bottom
-                    for i in 0..self.parts.len() {
-                        if i == part_idx || self.parts[i].decoupled {
-                            continue;
+                    if !dec_data.is_radial {
+                        // Stack decoupler: Y-based decoupling + adapter/fairing logic
+                        let dec_x = self.parts[part_idx].local_position[0];
+                        let decoupler_bottom = self.parts[part_idx].local_position[1]
+                            - def.hitbox_height() / 2.0;
+                        let decoupler_top = self.parts[part_idx].local_position[1]
+                            + def.hitbox_height() / 2.0;
+                        let dec_half_w = def.width() / 2.0;
+
+                        // Mark all parts whose top edge is at or below the decoupler bottom
+                        for i in 0..self.parts.len() {
+                            if i == part_idx || self.parts[i].decoupled {
+                                continue;
+                            }
+                            let other_def = part_defs.get(&self.parts[i].definition_id);
+                            let other_top = if let Some(od) = other_def {
+                                self.parts[i].local_position[1] + od.hitbox_height() / 2.0
+                            } else {
+                                self.parts[i].local_position[1] + self.parts[i].hitbox_half_extents[1]
+                            };
+                            if other_top <= decoupler_bottom + 0.01 {
+                                self.parts[i].decoupled = true;
+                            }
                         }
-                        let other_def = part_defs.get(&self.parts[i].definition_id);
-                        let other_top = if let Some(od) = other_def {
-                            self.parts[i].local_position[1] + od.hitbox_height() / 2.0
-                        } else {
-                            self.parts[i].local_position[1] + self.parts[i].hitbox_half_extents[1]
-                        };
-                        if other_top <= decoupler_bottom + 0.01 {
-                            self.parts[i].decoupled = true;
+
+                        // Also decouple parts beside the adapter/fairing.
+                        // The adapter zone spans from the visual ring top to the
+                        // tank/pod bottom above. (The ring is shorter than the hitbox;
+                        // the gap between ring top and hitbox top is the adapter space.)
+                        let ring_top = self.parts[part_idx].local_position[1]
+                            - def.hitbox_height() / 2.0 + def.height();
+
+                        // Find the closest aligned tank/pod above to get fairing width
+                        let mut adapter_top = decoupler_top;
+                        let mut tank_half_w = dec_half_w;
+                        let mut best_dist = f64::MAX;
+                        for j in 0..self.parts.len() {
+                            if self.parts[j].decoupled || self.parts[j].destroyed { continue; }
+                            let Some(jdef) = part_defs.get(&self.parts[j].definition_id) else { continue };
+                            if jdef.tank.is_none() && jdef.pod.is_none() { continue; }
+                            if (self.parts[j].local_position[0] - dec_x).abs() > 0.01 { continue; }
+                            let j_bottom = self.parts[j].local_position[1] - jdef.hitbox_height() / 2.0;
+                            if j_bottom < ring_top - 0.01 { continue; }
+                            let dist = j_bottom - ring_top;
+                            if dist < best_dist {
+                                best_dist = dist;
+                                adapter_top = j_bottom;
+                                tank_half_w = jdef.width() / 2.0;
+                            }
+                        }
+
+                        // Decouple parts beside the fairing. A part qualifies if its
+                        // center Y is in the adapter zone and it's off the center axis
+                        // but within reach of the fairing edge.
+                        let max_half_w = dec_half_w.max(tank_half_w);
+                        let margin = crate::parts::GRID_SQUARE_SIZE;
+                        for j in 0..self.parts.len() {
+                            if j == part_idx || self.parts[j].decoupled || self.parts[j].destroyed {
+                                continue;
+                            }
+                            let jy = self.parts[j].local_position[1];
+                            let jx = self.parts[j].local_position[0];
+                            if jy < ring_top - 0.01 || jy > adapter_top + 0.01 { continue; }
+                            let dx = (jx - dec_x).abs();
+                            // Off center axis, but close enough to be on the fairing
+                            if dx > 0.1 && dx < max_half_w + margin {
+                                self.parts[j].decoupled = true;
+                            }
                         }
                     }
-
-                    // Also decouple parts beside the adapter/fairing.
-                    // The adapter zone spans from the visual ring top to the
-                    // tank/pod bottom above. (The ring is shorter than the hitbox;
-                    // the gap between ring top and hitbox top is the adapter space.)
-                    let ring_top = self.parts[part_idx].local_position[1]
-                        - def.hitbox_height() / 2.0 + def.height();
-
-                    // Find the closest aligned tank/pod above to get fairing width
-                    let mut adapter_top = decoupler_top;
-                    let mut tank_half_w = dec_half_w;
-                    let mut best_dist = f64::MAX;
-                    for j in 0..self.parts.len() {
-                        if self.parts[j].decoupled || self.parts[j].destroyed { continue; }
-                        let Some(jdef) = part_defs.get(&self.parts[j].definition_id) else { continue };
-                        if jdef.tank.is_none() && jdef.pod.is_none() { continue; }
-                        if (self.parts[j].local_position[0] - dec_x).abs() > 0.01 { continue; }
-                        let j_bottom = self.parts[j].local_position[1] - jdef.hitbox_height() / 2.0;
-                        if j_bottom < ring_top - 0.01 { continue; }
-                        let dist = j_bottom - ring_top;
-                        if dist < best_dist {
-                            best_dist = dist;
-                            adapter_top = j_bottom;
-                            tank_half_w = jdef.width() / 2.0;
-                        }
-                    }
-
-                    // Decouple parts beside the fairing. A part qualifies if its
-                    // center Y is in the adapter zone and it's off the center axis
-                    // but within reach of the fairing edge.
-                    let max_half_w = dec_half_w.max(tank_half_w);
-                    let margin = crate::parts::GRID_SQUARE_SIZE;
-                    for j in 0..self.parts.len() {
-                        if j == part_idx || self.parts[j].decoupled || self.parts[j].destroyed {
-                            continue;
-                        }
-                        let jy = self.parts[j].local_position[1];
-                        let jx = self.parts[j].local_position[0];
-                        if jy < ring_top - 0.01 || jy > adapter_top + 0.01 { continue; }
-                        let dx = (jx - dec_x).abs();
-                        // Off center axis, but close enough to be on the fairing
-                        if dx > 0.1 && dx < max_half_w + margin {
-                            self.parts[j].decoupled = true;
-                        }
-                    }
+                    // Radial decouplers: only mark self as decoupled (done above).
+                    // The BFS in decouple_disconnected() handles disconnecting
+                    // parts that are only reachable through the decoupled radial.
                 }
             }
         }

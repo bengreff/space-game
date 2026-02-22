@@ -70,5 +70,42 @@
                 ejection_force: 60.0,
             )),
         ),
+        (
+            id: "decoupler_xl",
+            name: "TD-100 Decoupler",
+            description: "Extra-large stack decoupler for super-heavy vehicles.",
+            category: Structural,
+            mass: 0.4,
+            cost: 1200,
+            size: XL,
+            shape: Rectangle,
+            grid_width: 13.0,
+            grid_height: 0.5,
+            hitbox_height: Some(1),
+            decoupler: Some((
+                ejection_force: 100.0,
+            )),
+        ),
+
+        // === RADIAL DECOUPLERS ===
+        // Separates horizontally instead of vertically.
+        // Used for side-mounted boosters.
+
+        (
+            id: "decoupler_radial",
+            name: "TT-38K Radial Decoupler",
+            description: "Radial decoupler for side-mounted boosters.",
+            category: Structural,
+            mass: 0.025,
+            cost: 200,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 2.0,
+            decoupler: Some((
+                ejection_force: 10.0,
+                is_radial: true,
+            )),
+        ),
     ],
 )

@@ -4,13 +4,14 @@ use std::fs;
 use std::path::Path;
 
 /// Size categories for parts (width in grid squares)
-/// Tiny=1, Small=3, Medium=5, Large=9
+/// Tiny=1, Small=3, Medium=5, Large=9, XL=13
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PartSize {
     Tiny,   // 1 grid square wide
     Small,  // 3 grid squares wide
     Medium, // 5 grid squares wide
     Large,  // 9 grid squares wide
+    XL,     // 13 grid squares wide
 }
 
 impl PartSize {
@@ -21,6 +22,7 @@ impl PartSize {
             PartSize::Small => 3,
             PartSize::Medium => 5,
             PartSize::Large => 9,
+            PartSize::XL => 13,
         }
     }
 
@@ -31,12 +33,13 @@ impl PartSize {
             PartSize::Small => "Small",
             PartSize::Medium => "Medium",
             PartSize::Large => "Large",
+            PartSize::XL => "XL",
         }
     }
 
     /// All sizes in order
     pub fn all() -> &'static [PartSize] {
-        &[PartSize::Tiny, PartSize::Small, PartSize::Medium, PartSize::Large]
+        &[PartSize::Tiny, PartSize::Small, PartSize::Medium, PartSize::Large, PartSize::XL]
     }
 }
 
@@ -204,6 +207,8 @@ impl TankData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecouplerData {
     pub ejection_force: f64,  // Force in kN when decoupling
+    #[serde(default)]
+    pub is_radial: bool,      // Radial decoupler (separates sideways, not by Y position)
 }
 
 /// Pod-specific data (for command modules)
@@ -457,5 +462,6 @@ mod tests {
         assert_eq!(PartSize::Small.grid_width(), 3);
         assert_eq!(PartSize::Medium.grid_width(), 5);
         assert_eq!(PartSize::Large.grid_width(), 9);
+        assert_eq!(PartSize::XL.grid_width(), 13);
     }
 }

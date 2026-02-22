@@ -924,6 +924,7 @@ pub fn generate_pod_details(
 }
 
 /// Generate decoupler ring details (dark horizontal band on bottom half of hitbox)
+/// For radial decouplers, renders as a simple dark rectangle instead.
 pub fn generate_decoupler_details(
     vertices: &mut Vec<Vertex>,
     def: &PartDefinition,
@@ -931,6 +932,20 @@ pub fn generate_decoupler_details(
     y: f32,
     alpha: f32,
 ) {
+    // Radial decoupler: simple dark rectangle filling the part bounds
+    if def.decoupler.as_ref().map(|d| d.is_radial).unwrap_or(false) {
+        let color = [0.1, 0.1, 0.1, alpha];
+        let half_w = (def.width() / 2.0) as f32;
+        let half_h = (def.height() / 2.0) as f32;
+        vertices.push(Vertex::new([x - half_w, y - half_h], color));
+        vertices.push(Vertex::new([x + half_w, y - half_h], color));
+        vertices.push(Vertex::new([x + half_w, y + half_h], color));
+        vertices.push(Vertex::new([x - half_w, y - half_h], color));
+        vertices.push(Vertex::new([x + half_w, y + half_h], color));
+        vertices.push(Vertex::new([x - half_w, y + half_h], color));
+        return;
+    }
+
     let half_w = (def.width() / 2.0) as f32;
     let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
     let visual_h = (def.height()) as f32;
@@ -1203,6 +1218,10 @@ fn generate_decoupler_adapter(
     part_defs: &PartDefinitions,
     alpha: f32,
 ) {
+    // No adapter for radial decouplers
+    if decoupler_def.decoupler.as_ref().map(|d| d.is_radial).unwrap_or(false) {
+        return;
+    }
     let decoupler_hitbox_half_h = (decoupler_def.hitbox_height() / 2.0) as f32;
     let decoupler_visual_h = decoupler_def.height() as f32;
     let decoupler_half_w = (decoupler_def.width() / 2.0) as f32;
@@ -1326,6 +1345,10 @@ pub fn generate_flight_decoupler_adapter(
     part_defs: &PartDefinitions,
     alpha: f32,
 ) {
+    // No adapter for radial decouplers
+    if decoupler_def.decoupler.as_ref().map(|d| d.is_radial).unwrap_or(false) {
+        return;
+    }
     let decoupler_hitbox_half_h = (decoupler_def.hitbox_height() / 2.0) as f32;
     let decoupler_visual_h = decoupler_def.height() as f32;
     let decoupler_half_w = (decoupler_def.width() / 2.0) as f32;

@@ -17,7 +17,10 @@ Inactive vessels are stored in `FlightState.inactive_vessels: Vec<TrackedVessel>
 ## Debris Creation
 
 ### Requirement: Decoupling creates debris
-When `activate_next_stage()` or manual decouple marks parts as `decoupled = true`, `extract_decoupled_parts()` is called to split them into a new `FlightVessel`. The debris vessel is wrapped in a `TrackedVessel` and added to `inactive_vessels`. Decoupling has three phases: (1) Y-position-based: all parts whose top edge is at or below the decoupler's bottom edge are decoupled. (2) Fairing-side: parts beside the adapter/fairing zone are decoupled — this catches RCS blocks or other parts side-mounted on the fairing. The adapter zone spans from the decoupler's visual ring top (`center - hitbox_half_h + visual_height`) to the tank/pod bottom above. A part qualifies if its center Y is within this zone, its center X is off the center axis (`> 0.1m`), and within reach of the fairing (`< max(dec_half_w, tank_half_w) + GRID_SQUARE_SIZE`). (3) Connectivity-based: `decouple_disconnected()` runs a BFS from the vessel root to catch any remaining disconnected parts.
+When `activate_next_stage()` or manual decouple marks parts as `decoupled = true`, `extract_decoupled_parts()` is called to split them into a new `FlightVessel`. The debris vessel is wrapped in a `TrackedVessel` and added to `inactive_vessels`. Stack decoupling has three phases: (1) Y-position-based: all parts whose top edge is at or below the decoupler's bottom edge are decoupled. (2) Fairing-side: parts beside the adapter/fairing zone are decoupled — this catches RCS blocks or other parts side-mounted on the fairing. The adapter zone spans from the decoupler's visual ring top (`center - hitbox_half_h + visual_height`) to the tank/pod bottom above. A part qualifies if its center Y is within this zone, its center X is off the center axis (`> 0.1m`), and within reach of the fairing (`< max(dec_half_w, tank_half_w) + GRID_SQUARE_SIZE`). (3) Connectivity-based: `decouple_disconnected()` runs a BFS from the vessel root to catch any remaining disconnected parts.
+
+### Requirement: Radial decoupler staging
+Radial decouplers (`is_radial: true`) skip Y-position-based and fairing-side decoupling. Only the decoupler itself is marked `decoupled = true`. The BFS connectivity check (`decouple_disconnected()`) then handles disconnecting all parts that were only reachable through the radial decoupler.
 
 ### Requirement: Debris naming
 Debris vessels are auto-named "Debris {N}" where N is a monotonically increasing counter (`debris_counter`).
@@ -33,7 +36,7 @@ After `extract_decoupled_parts()` clones decoupled parts into a debris vessel, t
 - Position offset by the decoupled parts' center of mass relative to the active vessel
 
 ### Requirement: Ejection force
-When a decoupler fires, its `ejection_force` (kN, from `DecouplerData`) is applied as a separation impulse to the debris vessel. The impulse pushes debris in the opposite direction of the vessel heading (away from the upper stage). The velocity change is `dv = (force_N * 0.1s) / mass_kg`, applied to the debris ship's `rel_velocity` before it goes on rails. Thermal breakup debris receives no ejection force (0 kN).
+When a decoupler fires, its `ejection_force` (kN, from `DecouplerData`) is applied as a separation impulse to the debris vessel. The impulse direction is determined by the debris COM offset from the parent vessel: the offset is rotated from local to world coordinates and normalized. This naturally pushes stack-decoupled debris downward (COM offset is below the vessel center) and radial-decoupled debris sideways (COM offset is to the side). If the COM offset magnitude is less than 0.01, the fallback direction is opposite the vessel heading. The velocity change is `dv = (force_N * 0.1s) / mass_kg`, applied to the debris ship's `rel_velocity` before it goes on rails. Thermal breakup debris receives no ejection force (0 kN).
 
 ### Requirement: Active vessel recentering
 After debris extraction, the active vessel recenters its parts on its new COM and adjusts the ship's world position accordingly.

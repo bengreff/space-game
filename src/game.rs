@@ -189,16 +189,27 @@ impl FlightState {
         debris_ship.color = [1.0, 1.0, 1.0, 1.0]; // Same as active vessels
 
         // Apply separation impulse: F*dt/m, using a 0.1s impulse duration
-        // Direction: opposite to vessel heading (push debris downward)
+        // Direction: use COM offset to determine push direction.
+        // For stack decouplers the offset is mostly vertical (pushes down),
+        // for radial decouplers the offset is mostly horizontal (pushes sideways).
         if ejection_force_kn > 0.0 && debris_vessel.total_mass > 0.0 {
             let impulse_duration = 0.1; // seconds
             let force_newtons = ejection_force_kn * 1000.0;
             let mass_kg = debris_vessel.total_mass * 1000.0;
             let dv = force_newtons * impulse_duration / mass_kg;
-            // Heading is [cos(rotation), sin(rotation)]; push debris opposite
-            let sep_dir = self.ship.rotation + std::f64::consts::PI;
-            debris_ship.rel_velocity[0] += dv * sep_dir.cos();
-            debris_ship.rel_velocity[1] += dv * sep_dir.sin();
+
+            // Rotate COM offset from local to world coordinates
+            let dir_mag = (world_offset_x.powi(2) + world_offset_y.powi(2)).sqrt();
+            if dir_mag > 0.01 {
+                // Push debris along the COM offset direction (away from vessel center)
+                debris_ship.rel_velocity[0] += dv * world_offset_x / dir_mag;
+                debris_ship.rel_velocity[1] += dv * world_offset_y / dir_mag;
+            } else {
+                // Fallback: opposite to vessel heading
+                let sep_dir = self.ship.rotation + std::f64::consts::PI;
+                debris_ship.rel_velocity[0] += dv * sep_dir.cos();
+                debris_ship.rel_velocity[1] += dv * sep_dir.sin();
+            }
         }
 
         // Put debris on rails immediately
