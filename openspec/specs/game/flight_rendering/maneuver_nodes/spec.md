@@ -102,8 +102,65 @@ During a burn with autopilot in ManeuverNode mode, `apply_burn_to_maneuver` SHAL
 - prograde_contribution = `dot(burn_dir, prograde_unit) * delta_v_magnitude`
 - radial_contribution = `dot(burn_dir, radial_unit) * delta_v_magnitude`
 
-#### Scenario: Remaining delta-v reduction
-- Remaining prograde > 0 and contribution > 0: reduce toward 0
-- Remaining prograde < 0 and contribution < 0: increase toward 0
-- Burn direction not matching sign: component not affected
-- Same rules for radial_out independently
+#### Scenario: Remaining delta-v tracking
+- Burn contribution projected onto prograde/radial axes is subtracted from remaining delta-v
+- Correct-direction burns reduce remaining delta-v toward zero
+- Wrong-direction burns increase remaining delta-v (moving further from target)
+- Components can cross zero and flip sign if the ship overshoots
+
+## Time-to-Node
+
+### Requirement: Maneuver node epoch
+
+Each ManeuverNode SHALL store an `epoch: f64` — the absolute simulation time at which the ship will reach the node. This is computed at node creation and when dragging.
+
+#### Scenario: Epoch computation
+- Uses the trajectory segment's own `start_true_anomaly` and `start_time` — both the segment start TA and the node TA are in the same orbit frame, avoiding arg_peri mismatch issues
+- Convert segment `start_true_anomaly` and node TA to mean anomalies on the segment's orbit
+- Compute delta MA from segment start to node position, accounting for orbit direction
+- `epoch = simulation_time + segment.start_time + delta_ma / mean_motion`
+- Epoch is absolute simulation time; supports nodes at any distance along the trajectory
+
+### Requirement: Time-to-node countdown
+
+The maneuver panel SHALL display a countdown to the first maneuver node, computed live each frame from the ship's current orbit to prevent drift.
+
+#### Scenario: Live time-to-node computation
+- Compute node's inertial angle: `node.true_anomaly + node.argument_of_periapsis` (fixed in space)
+- Project onto ship's current orbit: `node_ta = (inertial_angle - ship_orbit.arg_peri) mod TAU`
+- Convert both ship MA and node TA→MA using the **same** orbit parameters (errors cancel even for circular orbits with jittering arg_peri)
+- `time_one_pass = delta_ma / mean_motion` — time to reach node on current orbit (0 to 1 period)
+- Use stored epoch to determine full orbit count: `full_orbits = round((epoch_remaining - time_one_pass) / period)` when epoch is more than 1.5 passes away
+- `time_to_node = time_one_pass + full_orbits * period`
+- This is drift-free because it's recomputed from live state each frame, not accumulated
+
+#### Scenario: Burn time estimation
+- `burn_time = remaining_dv / (thrust_kN * 1000 / (mass_tonnes * 1000))`
+- Only displayed when burn_time > 0.5 seconds and vessel has thrust
+
+#### Scenario: Panel display
+- Below "Remaining Δv": show `T- {formatted_duration}` and `Burn: {formatted_duration}`
+- Duration formatted as `Xd Xh Xm Xs` (omitting leading zero components)
+
+## Warp-to-Node
+
+### Requirement: Warp-to-node auto-warp
+
+A "Warp to Node" button in the maneuver panel SHALL engage automatic time warp that scales down as the node approaches.
+
+#### Scenario: Button visibility
+- "Warp to Node" shown when time_to_node > 10 seconds and auto-warp is not active
+- "Cancel Warp" shown when auto-warp is active
+
+#### Scenario: Auto-warp level selection
+- Minimum auto-warp: 100x (WARP_LEVELS index 5)
+- Find highest warp level (≥100x) where `effective_time / warp_level >= 5.0` real seconds
+- `effective_time = time_to_node - burn_time / 2`
+- Recalculated each frame, progressively stepping down warp
+
+#### Scenario: Auto-warp termination
+- Stop when `effective_time <= 0`: set warp to 1x, deactivate auto-warp
+- Stop when `effective_time / 100x < 2.0` real seconds: even minimum on-rails warp would overshoot, drop to 1x
+- Cancel if node is deleted (first node specifically)
+- Cancel if time_to_node becomes unavailable (e.g., SOI change, node epoch in the past)
+- Cancel if user manually clicks a warp button

@@ -13,7 +13,7 @@ use sunscatter::editor::{
 };
 use egui;
 use sunscatter::game::{Game, GameMode};
-use sunscatter::render::{RenderState, MainMenuAction, PauseAction, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, StagedPartInfo, Vertex};
+use sunscatter::render::{RenderState, MainMenuAction, PauseAction, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, SelectedTarget, StagedPartInfo, TargetPopup, Vertex};
 use sunscatter::ship::{AutopilotTarget, ShipState, VesselPhysicsData, SHIP_SIZE, MAX_THRUST_ACCELERATION, AMBIENT_TEMPERATURE, RAILS_WARP_THRESHOLD};
 use sunscatter::parts::default_heat_tolerance;
 
@@ -282,7 +282,10 @@ fn render_flight_frame(
     // --- Simulation (skipped when paused) ---
     let vessel_physics = if !game.paused {
         // Force warp to 1x if ship is below landing altitude at on-rails warp speeds (>10x)
-        if game.flight.ship.below_landing_altitude(&game.solar_system) {
+        // Only when flying — landed ships can warp at any speed (update_landed is analytical)
+        if game.flight.ship.below_landing_altitude(&game.solar_system)
+            && matches!(game.flight.ship.state, ShipState::Flying)
+        {
             let warp = WARP_LEVELS[game.warp_index];
             if warp > RAILS_WARP_THRESHOLD {
                 game.warp_index = 0;
@@ -298,8 +301,13 @@ fn render_flight_frame(
         let autopilot_target = render_state.get_autopilot_target();
         let autopilot_active = autopilot_target != AutopilotTarget::Off && !game.flight.ship.on_rails;
         let autopilot_target_angle = if autopilot_active {
-            let maneuver_node = render_state.get_selected_maneuver_node();
-            game.flight.ship.autopilot_target_angle(autopilot_target, maneuver_node)
+            if autopilot_target == AutopilotTarget::Target {
+                // Target angle is precomputed by the render loop
+                render_state.selected_target_angle
+            } else {
+                let maneuver_node = render_state.get_selected_maneuver_node();
+                game.flight.ship.autopilot_target_angle(autopilot_target, maneuver_node)
+            }
         } else {
             None
         };
@@ -372,7 +380,12 @@ fn render_flight_frame(
 
             // Always update engine states and consume fuel (updates active flags even at 0 throttle)
             let effective_dt = dt * time_warp;
-            vessel.consume_fuel(effective_dt, atmo_pressure, &game.part_definitions);
+            if !render_state.debug_infinite_fuel {
+                vessel.consume_fuel(effective_dt, atmo_pressure, &game.part_definitions);
+            } else {
+                // Still update engine states without draining fuel
+                vessel.update_engine_states(&game.part_definitions);
+            }
 
             // Consume RCS fuel when rotating (manual or autopilot), only if RCS enabled
             let rcs_direction = if rcs_enabled {
@@ -613,8 +626,12 @@ fn render_flight_frame(
         let autopilot_target = render_state.get_autopilot_target();
         let autopilot_active = autopilot_target != AutopilotTarget::Off && !game.flight.ship.on_rails;
         if autopilot_active {
-            let maneuver_node = render_state.get_selected_maneuver_node();
-            let autopilot_target_angle = game.flight.ship.autopilot_target_angle(autopilot_target, maneuver_node);
+            let autopilot_target_angle = if autopilot_target == AutopilotTarget::Target {
+                render_state.selected_target_angle
+            } else {
+                let maneuver_node = render_state.get_selected_maneuver_node();
+                game.flight.ship.autopilot_target_angle(autopilot_target, maneuver_node)
+            };
             if let Some(target_angle) = autopilot_target_angle {
                 let vessel_physics = game.flight.vessel.as_ref().map(|v| VesselPhysicsData {
                     total_mass: v.total_mass,
@@ -852,6 +869,7 @@ fn render_flight_frame(
                     parent_mass,
                     parent_idx: seg.parent_idx,
                     render_scale: SCALE * BODY_SCALE,
+                    start_time: seg.start_time,
                 }
             }).collect::<Vec<_>>()
         })
@@ -1122,7 +1140,8 @@ fn render_flight_frame(
         heat_flux: game.flight.ship.heat_flux,
         rcs_direction: rcs_direction_for_render,
         rcs_translate: rcs_translate_for_render,
-        below_landing_altitude: game.flight.ship.below_landing_altitude(&game.solar_system),
+        below_landing_altitude: game.flight.ship.below_landing_altitude(&game.solar_system)
+            && matches!(game.flight.ship.state, ShipState::Flying),
         velocity_direction: {
             let vx = game.flight.ship.rel_velocity[0];
             let vy = game.flight.ship.rel_velocity[1];
@@ -1180,6 +1199,37 @@ fn render_flight_frame(
 
     render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions), &background_vessels);
 
+    // Update simulation time for node epoch computation
+    render_state.simulation_time = game.simulation_time;
+
+    // Compute target angle for navigation target
+    if let Some(target) = render_state.selected_target {
+        let ship_abs = game.flight.ship.absolute_position(&game.solar_system);
+        let target_abs = match target {
+            SelectedTarget::Body(idx) => {
+                game.solar_system.body_position(idx)
+            }
+            SelectedTarget::Vessel(id) => {
+                if let Some(v) = game.flight.inactive_vessels.iter().find(|v| v.id == id) {
+                    v.ship.absolute_position(&game.solar_system)
+                } else {
+                    // Target vessel no longer exists; clear target
+                    render_state.selected_target = None;
+                    render_state.selected_target_name.clear();
+                    render_state.selected_target_angle = None;
+                    [0.0, 0.0]
+                }
+            }
+        };
+        if render_state.selected_target.is_some() {
+            let dx = target_abs[0] - ship_abs[0];
+            let dy = target_abs[1] - ship_abs[1];
+            render_state.selected_target_angle = Some(dy.atan2(dx));
+        }
+    } else {
+        render_state.selected_target_angle = None;
+    }
+
     // Calculate predicted trajectories for maneuver nodes
     let mut predicted_trajectories: Vec<Vec<OrbitSegmentData>> = Vec::new();
     for node in render_state.get_maneuver_nodes() {
@@ -1209,7 +1259,7 @@ fn render_flight_frame(
         ];
 
         if let Some(pred_traj) = game.flight.ship.calculate_predicted_trajectory(
-            pos, new_vel, parent_idx, &game.solar_system
+            pos, new_vel, parent_idx, &game.solar_system, node.epoch
         ) {
             let segments: Vec<OrbitSegmentData> = pred_traj.segments.iter().enumerate().map(|(i, seg)| {
                 let parent_pos = scaled_positions[seg.parent_idx];
@@ -1232,12 +1282,220 @@ fn render_flight_frame(
                     parent_mass,
                     parent_idx: seg.parent_idx,
                     render_scale: SCALE * BODY_SCALE,
+                    start_time: seg.start_time,
                 }
             }).collect();
             predicted_trajectories.push(segments);
         }
     }
     render_state.set_predicted_trajectories(predicted_trajectories);
+
+    // --- Transfer planner computation ---
+    if render_state.transfer_planner_open {
+        use sunscatter::ship::transfer;
+
+        // Update target lists
+        let soi = game.flight.ship.soi_body;
+        render_state.transfer_hohmann_targets = transfer::hohmann_targets(soi, &game.solar_system.bodies);
+        render_state.transfer_interplanetary_targets = transfer::lambert_targets(soi, &game.solar_system.bodies);
+
+        // Auto-select navigation target in planner if no target chosen yet
+        if render_state.transfer_selected_target.is_none() {
+            if let Some(SelectedTarget::Body(idx)) = render_state.selected_target {
+                if render_state.transfer_hohmann_targets.iter().any(|(i, _)| *i == idx) {
+                    render_state.transfer_selected_target = Some(idx);
+                    render_state.transfer_planner_mode = 0;
+                } else if render_state.transfer_interplanetary_targets.iter().any(|(i, _)| *i == idx) {
+                    render_state.transfer_selected_target = Some(idx);
+                    render_state.transfer_planner_mode = 1;
+                }
+            }
+        }
+
+        // Validate selected target
+        let targets = if render_state.transfer_planner_mode == 0 {
+            &render_state.transfer_hohmann_targets
+        } else {
+            &render_state.transfer_interplanetary_targets
+        };
+        if let Some(sel) = render_state.transfer_selected_target {
+            if !targets.iter().any(|(i, _)| *i == sel) {
+                render_state.transfer_selected_target = None;
+            }
+        }
+
+        // Compute transfer if target selected and ship has an orbit
+        render_state.transfer_display = if let (Some(target_idx), Some(ship_orbit)) =
+            (render_state.transfer_selected_target, game.flight.ship.get_cached_orbit())
+        {
+            let parent_mass = game.solar_system.bodies[ship_orbit.parent_idx].mass;
+            if render_state.transfer_planner_mode == 0 {
+                // Hohmann mode
+                if let Some(target_orbit) = game.solar_system.bodies[target_idx].orbit.as_ref() {
+                    transfer::compute_hohmann(
+                        &ship_orbit.orbit,
+                        ship_orbit.retrograde,
+                        ship_orbit.mean_anomaly,
+                        target_orbit,
+                        parent_mass,
+                        game.solar_system.time,
+                    ).map(|h| {
+                        let target_name = game.solar_system.bodies[target_idx].name.clone();
+                        transfer::TransferDisplay {
+                            mode: 0,
+                            target_name,
+                            departure_dv: h.departure_delta_v.abs(),
+                            arrival_dv: h.arrival_delta_v,
+                            transfer_time: h.transfer_time,
+                            current_phase_angle: h.current_phase_angle.to_degrees(),
+                            required_phase_angle: h.required_phase_angle.to_degrees(),
+                            time_to_window: h.time_to_window,
+                            departure_position_angle: h.departure_position_angle,
+                            prograde_dv: h.departure_delta_v,
+                            radial_dv: 0.0,
+                            valid: true,
+                        }
+                    })
+                } else {
+                    None
+                }
+            } else {
+                // Lambert mode
+                let defaults = transfer::hohmann_optimal_times(
+                    soi, target_idx, game.solar_system.time, &game.solar_system.bodies,
+                );
+                if let Some((default_dep, default_arr)) = defaults {
+                    let dep_time = default_dep + render_state.transfer_departure_offset;
+                    let arr_time = default_arr + render_state.transfer_arrival_offset;
+                    transfer::compute_interplanetary(
+                        &ship_orbit.orbit,
+                        ship_orbit.retrograde,
+                        ship_orbit.mean_anomaly,
+                        soi,
+                        target_idx,
+                        dep_time,
+                        arr_time,
+                        game.solar_system.time,
+                        &game.solar_system.bodies,
+                    ).map(|ip| {
+                        let target_name = game.solar_system.bodies[target_idx].name.clone();
+                        transfer::TransferDisplay {
+                            mode: 1,
+                            target_name,
+                            departure_dv: ip.ejection_delta_v,
+                            arrival_dv: ip.arrival_v_infinity,
+                            transfer_time: ip.transfer_time,
+                            current_phase_angle: ip.current_phase_angle.to_degrees(),
+                            required_phase_angle: ip.required_phase_angle.to_degrees(),
+                            time_to_window: ip.time_to_window,
+                            departure_position_angle: ip.departure_position_angle,
+                            prograde_dv: ip.ejection_delta_v,
+                            radial_dv: 0.0,
+                            valid: true,
+                        }
+                    })
+                } else {
+                    None
+                }
+            }
+        } else {
+            None
+        };
+    }
+
+    // Compute time-to-node and burn time for the first maneuver node.
+    // Computed live each frame from the ship's current orbit to avoid drift
+    // over many orbits (numerical integration period != Keplerian period).
+    render_state.time_to_node = None;
+    render_state.burn_time = None;
+    if let Some(first_node) = render_state.maneuver_nodes.first() {
+        if let Some(ship_orbit) = game.flight.ship.get_cached_orbit() {
+            if first_node.parent_idx == ship_orbit.parent_idx && ship_orbit.orbit.eccentricity < 1.0 {
+                // Node's fixed inertial position angle
+                let node_inertial = first_node.true_anomaly + first_node.argument_of_periapsis;
+                // Project node onto ship's current orbit (same arg_peri for both → errors cancel)
+                let node_ta = (node_inertial - ship_orbit.orbit.argument_of_periapsis)
+                    .rem_euclid(std::f64::consts::TAU);
+                let node_ma = game.flight.ship.true_to_mean_anomaly(&ship_orbit.orbit, node_ta);
+                let ship_ma = ship_orbit.mean_anomaly;
+
+                let delta_ma = if ship_orbit.retrograde {
+                    (ship_ma - node_ma).rem_euclid(std::f64::consts::TAU)
+                } else {
+                    (node_ma - ship_ma).rem_euclid(std::f64::consts::TAU)
+                };
+
+                let parent_mass = game.solar_system.bodies[ship_orbit.parent_idx].mass;
+                let mean_motion = ship_orbit.orbit.mean_motion(parent_mass);
+                if mean_motion > 0.0 {
+                    // Time to reach node on current orbit (0 to 1 period)
+                    let time_one_pass = delta_ma / mean_motion;
+                    let orbital_period = std::f64::consts::TAU / mean_motion;
+
+                    // Use epoch to determine how many full orbits remain.
+                    // The epoch gives the intended arrival time; we count how many
+                    // complete orbits fit between now and the epoch, then add
+                    // the within-orbit time for a drift-free countdown.
+                    let epoch_remaining = first_node.epoch - game.simulation_time;
+                    let full_orbits = if epoch_remaining > time_one_pass + orbital_period * 0.5 {
+                        ((epoch_remaining - time_one_pass) / orbital_period).round() as u64
+                    } else {
+                        0
+                    };
+
+                    let ttn = time_one_pass + full_orbits as f64 * orbital_period;
+                    if ttn > 0.0 {
+                        render_state.time_to_node = Some(ttn);
+                    }
+                }
+            }
+        }
+
+        // Compute burn time: dv / acceleration
+        if let (Some(thrust_kn), Some(mass_tonnes)) = (render_state.vessel_thrust_kn, render_state.vessel_total_mass) {
+            if thrust_kn > 0.0 && mass_tonnes > 0.0 {
+                let accel = (thrust_kn * 1000.0) / (mass_tonnes * 1000.0); // m/s^2
+                let remaining_dv = first_node.total_remaining_delta_v();
+                render_state.burn_time = Some(remaining_dv / accel);
+            }
+        }
+    }
+    // Cancel warp-to-node if there are no nodes or no time computed
+    if render_state.time_to_node.is_none() && render_state.warp_to_node {
+        render_state.warp_to_node = false;
+        game.warp_index = 0;
+    }
+
+    // Auto-warp-to-node logic
+    if render_state.warp_to_node {
+        if let Some(ttn) = render_state.time_to_node {
+            let burn_half = render_state.burn_time.unwrap_or(0.0) / 2.0;
+            let effective_time = ttn - burn_half;
+
+            if effective_time <= 0.0 {
+                // Past the burn start point — stop warping
+                render_state.warp_to_node = false;
+                game.warp_index = 0;
+            } else if effective_time / WARP_LEVELS[5] < 2.0 {
+                // Even minimum on-rails warp (100x) would arrive in < 2 real seconds
+                // Drop to 1x and stop auto-warp
+                render_state.warp_to_node = false;
+                game.warp_index = 0;
+            } else {
+                // Find the highest warp level where we won't overshoot
+                // (effective_time / warp_level >= 2.0 real seconds remaining)
+                // Minimum auto-warp: index 5 (100x)
+                let mut best_index = 5; // 100x minimum
+                for i in (5..WARP_LEVELS.len()).rev() {
+                    if effective_time / WARP_LEVELS[i] >= 2.0 {
+                        best_index = i;
+                        break;
+                    }
+                }
+                game.warp_index = best_index;
+            }
+        }
+    }
 
     let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
     let date_str = sunscatter::game::format_date(game.simulation_time);
@@ -1255,9 +1513,14 @@ fn render_flight_frame(
         _ => false,
     };
 
+    let pre_render_warp_index = game.warp_index;
     match render_state.render(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, can_exit_flight, can_recover) {
         Ok((new_warp_index, pause_action)) => {
             game.warp_index = new_warp_index;
+            // If user manually changed warp (clicked a button), cancel auto-warp
+            if render_state.warp_to_node && new_warp_index != pre_render_warp_index {
+                render_state.warp_to_node = false;
+            }
             match pause_action {
                 PauseAction::MainMenu => {
                     // Save active vessel to inactive list before leaving flight
@@ -1284,6 +1547,20 @@ fn render_flight_frame(
             std::process::exit(1);
         }
         Err(e) => eprintln!("Render error: {:?}", e),
+    }
+
+    // Process transfer planner node creation request
+    // The position_angle is an inertial angle; convert to true anomaly using
+    // the trajectory segment's arg_peri (not the ship orbit's, which is ill-defined
+    // for near-circular parking orbits).
+    if let Some((position_angle, prograde, radial, time_to_window)) = render_state.transfer_node_request.take() {
+        if let Some(segment) = render_state.current_trajectory.first() {
+            let ta = sunscatter::ship::transfer::normalize_angle(position_angle - segment.argument_of_periapsis);
+            let dv = sunscatter::render::ManeuverDeltaV { prograde, radial_out: radial };
+            let epoch = game.simulation_time + time_to_window;
+            render_state.create_maneuver_node_with_epoch(ta, 0, dv, epoch);
+        }
+        render_state.transfer_planner_open = false;
     }
 
     // Process engine toggle request from part info popup
@@ -1341,6 +1618,27 @@ fn render_flight_frame(
         }
         handle_post_decouple(game);
         render_state.selected_flight_part = None;
+    }
+
+    // Process debug teleport to LEO
+    if render_state.debug_teleport_leo {
+        render_state.debug_teleport_leo = false;
+        let earth_idx = sunscatter::game::LAUNCHPAD_BODY_INDEX;
+        let earth = &game.solar_system.bodies[earth_idx];
+        let leo_alt = 4.0e5; // 400 km
+        let r = earth.radius + leo_alt;
+        let mu = sunscatter::bodies::G * earth.mass;
+        let v_orb = (mu / r).sqrt();
+        // Place at +Y, moving -X (counterclockwise, matching solar system convention)
+        game.flight.ship.rel_position = [0.0, r];
+        game.flight.ship.rel_velocity = [-v_orb, 0.0];
+        game.flight.ship.soi_body = earth_idx;
+        game.flight.ship.state = ShipState::Flying;
+        game.flight.ship.on_rails = false;
+        if let Some(ref mut vessel) = game.flight.vessel {
+            vessel.rel_position = game.flight.ship.rel_position;
+            vessel.rel_velocity = game.flight.ship.rel_velocity;
+        }
     }
 
     // Process staging reorder request from flight staging panel
@@ -1948,7 +2246,6 @@ fn handle_flight_mouse_input(
             // Check if clicking on a flight part (highest priority when zoomed in)
             if let Some(cache_idx) = render_state.flight_part_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
                 render_state.selected_flight_part = Some(cache_idx);
-                // Don't start camera drag
             }
             // Check if clicking on a maneuver node
             else if let Some(node_id) = render_state.maneuver_node_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
@@ -1957,14 +2254,50 @@ fn handle_flight_mouse_input(
                 render_state.pending_orbit_click = None;
                 render_state.selected_flight_part = None;
             } else {
-                render_state.camera.is_dragging = true;
                 render_state.selected_flight_part = None;
             }
+
+            // Helper: single-click target/orbit detection
+            let single_click = |game: &Game, render_state: &mut RenderState, mouse_pos: [f32; 2]| {
+                // Check body click → show target popup
+                if let Some(body_idx) = render_state.body_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
+                    let name = game.solar_system.bodies[body_idx].name.clone();
+                    render_state.target_popup = Some(TargetPopup {
+                        target: SelectedTarget::Body(body_idx),
+                        name,
+                    });
+                    render_state.pending_orbit_click = None;
+                }
+                // Check background vessel click → show target popup
+                else if let Some(vessel_id) = render_state.background_vessel_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
+                    // Find vessel name from tracking data
+                    let name = game.flight.inactive_vessels.iter()
+                        .find(|v| v.id == vessel_id)
+                        .map(|v| v.name.clone())
+                        .unwrap_or_else(|| format!("Vessel {}", vessel_id));
+                    render_state.target_popup = Some(TargetPopup {
+                        target: SelectedTarget::Vessel(vessel_id),
+                        name,
+                    });
+                    render_state.pending_orbit_click = None;
+                }
+                // Check orbit click → pending maneuver node
+                else if render_state.dragging_maneuver_node.is_none() {
+                    render_state.target_popup = None;
+                    if let Some(orbit_pos) = render_state.orbit_click_position(mouse_pos[0], mouse_pos[1]) {
+                        render_state.pending_orbit_click = Some(orbit_pos);
+                        render_state.selected_maneuver_node = None;
+                    } else {
+                        render_state.pending_orbit_click = None;
+                    }
+                }
+            };
 
             // Check for double-click on body or vessel
             if let Some(last_time) = *last_click_time {
                 if now.duration_since(last_time) < DOUBLE_CLICK_TIME && dist < DOUBLE_CLICK_DIST {
-                    // Check vessel icons first (higher priority)
+                    // Double-click: focus camera on body or switch to vessel
+                    render_state.target_popup = None;
                     if let Some(vessel_id) = render_state.background_vessel_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
                         switch_to_next_vessel_by_id(game, render_state, vessel_id);
                     } else if let Some(body_idx) = render_state.body_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
@@ -1973,28 +2306,17 @@ fn handle_flight_mouse_input(
                         println!("Focused on: {}", game.solar_system.bodies[body_idx].name);
                     }
                     *last_click_time = None;
-                } else if render_state.dragging_maneuver_node.is_none() {
-                    if let Some(orbit_pos) = render_state.orbit_click_position(mouse_pos[0], mouse_pos[1]) {
-                        render_state.pending_orbit_click = Some(orbit_pos);
-                        render_state.selected_maneuver_node = None;
-                    } else {
-                        render_state.pending_orbit_click = None;
-                    }
+                } else {
+                    single_click(game, render_state, mouse_pos);
                     *last_click_time = Some(now);
                     *last_click_pos = mouse_pos;
                 }
-            } else if render_state.dragging_maneuver_node.is_none() {
-                if let Some(orbit_pos) = render_state.orbit_click_position(mouse_pos[0], mouse_pos[1]) {
-                    render_state.pending_orbit_click = Some(orbit_pos);
-                    render_state.selected_maneuver_node = None;
-                } else {
-                    render_state.pending_orbit_click = None;
-                }
+            } else {
+                single_click(game, render_state, mouse_pos);
                 *last_click_time = Some(now);
                 *last_click_pos = mouse_pos;
             }
         } else {
-            render_state.camera.is_dragging = false;
             render_state.stop_dragging_node();
         }
     }
@@ -2065,11 +2387,6 @@ fn handle_flight_cursor_moved(
 ) {
     if render_state.dragging_maneuver_node.is_some() {
         render_state.update_dragged_node(x, y);
-    } else if render_state.camera.is_dragging && !egui_consumed {
-        let dx = x - render_state.camera.last_mouse_pos[0];
-        let dy = y - render_state.camera.last_mouse_pos[1];
-        let scale = 2.0 / render_state.size.height as f32;
-        render_state.camera.pan(dx * scale, dy * scale);
     }
 
     render_state.camera.last_mouse_pos = [x, y];

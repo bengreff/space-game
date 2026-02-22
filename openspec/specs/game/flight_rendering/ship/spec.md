@@ -158,20 +158,19 @@ egui text labels "Ap" and "Pe" SHALL be rendered at each marker's screen positio
 
 ## Prograde Direction Arrow
 
-### Requirement: Prograde arrow in ship view
+### Requirement: Prograde arrow at screen edge in ship view
 
-When zoomed into the ship (`!needs_indicator`, i.e. ship_pixels >= 5.0) and velocity > 0.1 m/s, a green chevron arrow SHALL be drawn pointing in the prograde (velocity) direction.
+When zoomed into the ship (`!needs_indicator`, i.e. ship_pixels >= 5.0) and velocity > 0.1 m/s, a small white filled triangle SHALL be drawn at the viewport edge pointing in the prograde (velocity) direction.
 
 #### Scenario: Arrow geometry
-- Color: `[0.3, 1.0, 0.3, 0.7]` (green, semi-transparent)
-- Position: offset from ship center by `size * 1.5` in the prograde direction
-- Size: `size * 0.4` arm length, `size * 0.04` arm thickness
-- Two quad arms forming a chevron (">") pointing in velocity direction
-- Arms spread at ~0.5 radians (~29 degrees) from the prograde axis
+- Color: `[1.0, 1.0, 1.0, 0.85]` (white, slightly transparent)
+- Fixed screen size: 16px arrow length, 10px base width (divided by `pixels_per_world_unit` for world coords)
+- Filled triangle: tip at edge point, two base corners behind tip perpendicular to velocity
 
-#### Scenario: Arrow direction
+#### Scenario: Arrow positioning
+- Arrow tip is positioned at the screen edge in the velocity direction
+- A ray is cast from the ship center along the velocity unit vector, clamped to the viewport boundary with 25px margin
 - Direction is based on `velocity_direction` (normalized velocity unit vector), independent of ship rotation
-- Arrow is drawn in world space and scales naturally with zoom
 
 #### Scenario: Arrow not shown
 - **WHEN** `needs_indicator` is true (map view) **THEN** no prograde arrow is drawn

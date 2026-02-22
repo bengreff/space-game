@@ -2,6 +2,7 @@
 
 use super::state::RenderState;
 use super::types::{ManeuverDeltaV, ManeuverNode, HYPERBOLIC_RENDER_MARGIN, HYPERBOLIC_SKIP_MARGIN};
+use crate::bodies::G;
 use crate::ship::AutopilotTarget;
 
 impl RenderState {
@@ -176,6 +177,52 @@ impl RenderState {
         best_match.map(|(ta, idx, _)| (ta, idx))
     }
 
+    /// Convert true anomaly to mean anomaly for an elliptical orbit.
+    fn ta_to_ma(ta: f64, e: f64) -> f64 {
+        let cos_nu = ta.cos();
+        let sin_nu = ta.sin();
+        let ea = (sin_nu * (1.0 - e * e).sqrt()).atan2(e + cos_nu);
+        (ea - e * ea.sin()).rem_euclid(std::f64::consts::TAU)
+    }
+
+    /// Compute the epoch (absolute simulation time) for a node on a given orbit segment.
+    /// Uses the segment's own start_true_anomaly and start_time to compute the
+    /// time delta from segment start to node position. Both TAs are in the same
+    /// orbit frame, so no arg_peri mismatch is possible.
+    fn compute_node_epoch(
+        &self,
+        node_ta: f64,
+        segment: &super::types::OrbitSegmentData,
+    ) -> f64 {
+        let e = segment.eccentricity;
+        if e >= 1.0 {
+            // Hyperbolic — no good time estimate
+            return self.simulation_time;
+        }
+
+        // Convert segment start TA and node TA to mean anomalies (same orbit frame)
+        let start_ma = Self::ta_to_ma(segment.start_true_anomaly, e);
+        let node_ma = Self::ta_to_ma(node_ta, e);
+
+        // Delta mean anomaly from segment start to node, accounting for orbit direction
+        let delta_ma = if segment.retrograde {
+            (start_ma - node_ma).rem_euclid(std::f64::consts::TAU)
+        } else {
+            (node_ma - start_ma).rem_euclid(std::f64::consts::TAU)
+        };
+
+        // Unscale semi_major_axis back to meters for mean_motion
+        let a_meters = segment.semi_major_axis / segment.render_scale;
+        let mu = G * segment.parent_mass;
+        let mean_motion = (mu / a_meters.powi(3)).sqrt();
+
+        if mean_motion > 0.0 {
+            self.simulation_time + segment.start_time + delta_ma / mean_motion
+        } else {
+            self.simulation_time
+        }
+    }
+
     /// Create a new maneuver node at the specified orbit position
     pub fn create_maneuver_node(&mut self, true_anomaly: f64, segment_idx: usize) -> u64 {
         let id = self.next_node_id;
@@ -183,6 +230,7 @@ impl RenderState {
 
         // Get segment data - store the orbit parameters
         if let Some(segment) = self.current_trajectory.get(segment_idx) {
+            let epoch = self.compute_node_epoch(true_anomaly, segment);
             self.maneuver_nodes.push(ManeuverNode {
                 id,
                 semi_major_axis: segment.semi_major_axis,
@@ -195,6 +243,7 @@ impl RenderState {
                 parent_idx: segment.parent_idx,
                 parent_mass: segment.parent_mass,
                 render_scale: segment.render_scale,
+                epoch,
                 delta_v: ManeuverDeltaV::default(),
                 remaining_delta_v: ManeuverDeltaV::default(),
             });
@@ -203,6 +252,66 @@ impl RenderState {
         self.pending_orbit_click = None;
         self.selected_maneuver_node = Some(id);
         id
+    }
+
+    /// Create a maneuver node with pre-filled delta-v values
+    pub fn create_maneuver_node_with_dv(&mut self, true_anomaly: f64, segment_idx: usize, dv: ManeuverDeltaV) -> Option<u64> {
+        // Validate segment exists
+        let _ = self.current_trajectory.get(segment_idx)?;
+        let id = self.next_node_id;
+        self.next_node_id += 1;
+
+        let segment = &self.current_trajectory[segment_idx];
+        let epoch = self.compute_node_epoch(true_anomaly, segment);
+        self.maneuver_nodes.push(ManeuverNode {
+            id,
+            semi_major_axis: segment.semi_major_axis,
+            eccentricity: segment.eccentricity,
+            argument_of_periapsis: segment.argument_of_periapsis,
+            parent_x: segment.parent_x,
+            parent_y: segment.parent_y,
+            retrograde: segment.retrograde,
+            true_anomaly,
+            parent_idx: segment.parent_idx,
+            parent_mass: segment.parent_mass,
+            render_scale: segment.render_scale,
+            epoch,
+            delta_v: dv.clone(),
+            remaining_delta_v: dv,
+        });
+
+        self.pending_orbit_click = None;
+        self.selected_maneuver_node = Some(id);
+        Some(id)
+    }
+
+    /// Create a maneuver node with pre-filled delta-v and an explicit epoch (absolute simulation time)
+    pub fn create_maneuver_node_with_epoch(&mut self, true_anomaly: f64, segment_idx: usize, dv: ManeuverDeltaV, epoch: f64) -> Option<u64> {
+        let _ = self.current_trajectory.get(segment_idx)?;
+        let id = self.next_node_id;
+        self.next_node_id += 1;
+
+        let segment = &self.current_trajectory[segment_idx];
+        self.maneuver_nodes.push(ManeuverNode {
+            id,
+            semi_major_axis: segment.semi_major_axis,
+            eccentricity: segment.eccentricity,
+            argument_of_periapsis: segment.argument_of_periapsis,
+            parent_x: segment.parent_x,
+            parent_y: segment.parent_y,
+            retrograde: segment.retrograde,
+            true_anomaly,
+            parent_idx: segment.parent_idx,
+            parent_mass: segment.parent_mass,
+            render_scale: segment.render_scale,
+            epoch,
+            delta_v: dv.clone(),
+            remaining_delta_v: dv,
+        });
+
+        self.pending_orbit_click = None;
+        self.selected_maneuver_node = Some(id);
+        Some(id)
     }
 
     /// Delete a maneuver node by ID
@@ -255,8 +364,15 @@ impl RenderState {
 
         // Find closest true_anomaly on the node's stored orbit
         if let Some(new_ta) = self.find_closest_ta_on_orbit(screen_x, screen_y, node_orbit) {
+            // Recompute epoch using the current trajectory's first segment
+            let new_epoch = if let Some(segment) = self.current_trajectory.first() {
+                self.compute_node_epoch(new_ta, segment)
+            } else {
+                return;
+            };
             if let Some(node) = self.maneuver_nodes.iter_mut().find(|n| n.id == node_id) {
                 node.true_anomaly = new_ta;
+                node.epoch = new_epoch;
             }
         }
     }
@@ -462,23 +578,14 @@ impl RenderState {
                 let burn_prograde = burn_direction[0] * prograde[0] + burn_direction[1] * prograde[1];
                 let burn_radial = burn_direction[0] * radial[0] + burn_direction[1] * radial[1];
 
-                // Calculate how much delta-v to subtract from each component
-                // Only subtract if burning in the correct direction (positive projection)
+                // Project burn onto maneuver coordinate system
                 let prograde_contribution = burn_prograde * delta_v_magnitude;
                 let radial_contribution = burn_radial * delta_v_magnitude;
 
-                // Reduce the node's remaining delta-v, but don't go past zero or flip sign
-                if node.remaining_delta_v.prograde > 0.0 && prograde_contribution > 0.0 {
-                    node.remaining_delta_v.prograde = (node.remaining_delta_v.prograde - prograde_contribution).max(0.0);
-                } else if node.remaining_delta_v.prograde < 0.0 && prograde_contribution < 0.0 {
-                    node.remaining_delta_v.prograde = (node.remaining_delta_v.prograde - prograde_contribution).min(0.0);
-                }
-
-                if node.remaining_delta_v.radial_out > 0.0 && radial_contribution > 0.0 {
-                    node.remaining_delta_v.radial_out = (node.remaining_delta_v.radial_out - radial_contribution).max(0.0);
-                } else if node.remaining_delta_v.radial_out < 0.0 && radial_contribution < 0.0 {
-                    node.remaining_delta_v.radial_out = (node.remaining_delta_v.radial_out - radial_contribution).min(0.0);
-                }
+                // Apply burn to remaining delta-v. Correct-direction burns reduce it
+                // toward zero; wrong-direction burns increase it (moving further from target).
+                node.remaining_delta_v.prograde -= prograde_contribution;
+                node.remaining_delta_v.radial_out -= radial_contribution;
             }
         }
     }

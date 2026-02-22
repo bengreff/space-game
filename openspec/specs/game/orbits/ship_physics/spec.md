@@ -165,7 +165,15 @@ The ship SHALL enter on-rails mode when ALL of the following are true:
 
 ### Requirement: Warp reset below landing altitude
 
-When the ship is below landing altitude and the current warp level exceeds `RAILS_WARP_THRESHOLD`, warp SHALL be automatically reset to 1x (warp index 0). This prevents high time warp in dangerous proximity to a body's surface.
+When the ship is **flying** and below landing altitude and the current warp level exceeds `RAILS_WARP_THRESHOLD`, warp SHALL be automatically reset to 1x (warp index 0). This prevents high time warp in dangerous proximity to a body's surface. Landed ships are exempt — the `update_landed` function is analytical (pins ship to surface via `surface_angle * body_radius`) and works correctly at any timestep, so landed ships MAY use any warp level including on-rails speeds (100x+).
+
+#### Scenario: Landed ship at high warp
+- **WHEN** the ship is in `Landed` state and warp is set to 100x or higher
+- **THEN** warp SHALL NOT be reset — the ship stays on the surface, time advances at the selected rate
+
+#### Scenario: Flying ship below landing altitude at high warp
+- **WHEN** the ship is in `Flying` state and below landing altitude and warp > RAILS_WARP_THRESHOLD
+- **THEN** warp SHALL be reset to 1x (warp index 0)
 
 ### Requirement: On-rails mode propagation
 

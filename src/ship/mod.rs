@@ -4,6 +4,7 @@ use crate::render::ManeuverNode;
 mod orbit;
 mod patched_conics;
 mod soi;
+pub mod transfer;
 
 /// Autopilot target direction for ship rotation
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -15,6 +16,7 @@ pub enum AutopilotTarget {
     RadialIn,
     RadialOut,
     ManeuverNode,
+    Target,
 }
 
 /// Ship size in meters (physics space) - fallback when no vessel loaded
@@ -953,6 +955,11 @@ impl Ship {
         }
     }
 
+    /// Get the cached orbit data (for transfer planner etc.)
+    pub fn get_cached_orbit(&self) -> Option<&ShipOrbit> {
+        self.cached_orbit.as_ref()
+    }
+
     /// Get the current orbit for rendering (uses cached orbit if on rails)
     pub fn get_render_orbit(&self) -> Option<(Orbit, usize)> {
         if matches!(self.state, ShipState::Landed { .. }) {
@@ -977,13 +984,15 @@ impl Ship {
     }
 
     /// Calculate a predicted trajectory from a given state (for maneuver node predictions)
-    /// Returns segments similar to patched conics trajectory
+    /// Returns segments similar to patched conics trajectory.
+    /// `epoch` is the absolute simulation time at which this state occurs (for correct body positions).
     pub fn calculate_predicted_trajectory(
         &self,
         pos: [f64; 2],
         vel: [f64; 2],
         parent_idx: usize,
         solar_system: &SolarSystem,
+        epoch: f64,
     ) -> Option<PatchedTrajectory> {
         let parent = &solar_system.bodies[parent_idx];
 
@@ -1021,6 +1030,7 @@ impl Ship {
             // Continue to parent body after SOI exit
             if let Some(grandparent_idx) = parent.parent {
                 let exit_mean_anomaly = self.true_to_mean_anomaly(&orbit, exit_true_anomaly);
+                let start_mean_anomaly = self.true_to_mean_anomaly(&orbit, true_anomaly);
 
                 let exit_pos = orbit.position_from_mean_anomaly(exit_mean_anomaly, parent.mass);
                 let exit_vel = orbit.velocity_from_mean_anomaly_with_direction(
@@ -1029,11 +1039,22 @@ impl Ship {
                     retrograde,
                 );
 
+                // Compute time from burn to SOI exit for correct body positions
+                let mu = G * parent.mass;
+                let a_abs = orbit.semi_major_axis.abs();
+                let n = (mu / a_abs.powi(3)).sqrt();
+                let escape_time = if n > 0.0 {
+                    (exit_mean_anomaly - start_mean_anomaly).abs() / n
+                } else {
+                    0.0
+                };
+                let exit_absolute_time = epoch + escape_time;
+
                 let (new_pos, new_vel, _) = self.convert_to_parent_frame(
                     exit_pos, exit_vel,
                     parent_idx,
                     grandparent_idx,
-                    solar_system.time,
+                    exit_absolute_time,
                     solar_system,
                 );
 
@@ -1096,7 +1117,7 @@ impl Ship {
             mean_anomaly,
             retrograde,
             solar_system,
-            solar_system.time,
+            epoch,
         );
 
         match intersection {
@@ -1119,7 +1140,7 @@ impl Ship {
                     retrograde,
                 );
 
-                let absolute_intersect_time = solar_system.time + intersect_time;
+                let absolute_intersect_time = epoch + intersect_time;
                 let (new_pos, new_vel, _) = if entry {
                     self.convert_to_child_frame(
                         int_pos, int_vel,
@@ -1230,6 +1251,8 @@ impl Ship {
                     None
                 }
             }
+            // Target angle is computed externally by main.rs
+            AutopilotTarget::Target => None,
         }
     }
 

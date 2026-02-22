@@ -219,7 +219,7 @@ impl Ship {
     }
 
     /// Convert true anomaly to mean anomaly
-    pub(crate) fn true_to_mean_anomaly(&self, orbit: &Orbit, true_anomaly: f64) -> f64 {
+    pub fn true_to_mean_anomaly(&self, orbit: &Orbit, true_anomaly: f64) -> f64 {
         let e = orbit.eccentricity;
 
         if e < 1.0 {

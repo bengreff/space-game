@@ -105,7 +105,14 @@ When on-rails and a SOI transition is detected:
 
 ### Requirement: Predicted trajectory for maneuver nodes
 
-The system SHALL support calculating a predicted trajectory from arbitrary state vectors (`pos`, `vel`, `parent_idx`) for maneuver node predictions. This uses the same patched conics logic: orbit calculation, hyperbolic exit detection, SOI intersection finding, and frame conversion, returning a `PatchedTrajectory` with up to two segments.
+The system SHALL support calculating a predicted trajectory from arbitrary state vectors (`pos`, `vel`, `parent_idx`, `epoch`) for maneuver node predictions. This uses the same patched conics logic: orbit calculation, hyperbolic exit detection, SOI intersection finding, and frame conversion, returning a `PatchedTrajectory` with up to two segments.
+
+#### Scenario: Epoch-aware body positions
+- The `epoch` parameter specifies when the maneuver occurs (absolute simulation time)
+- SOI frame conversions SHALL use `epoch + transit_time` for body positions, NOT current `solar_system.time`
+- For hyperbolic escape: transit time = time from burn point to SOI exit on the escape hyperbola
+- For elliptical SOI intersections: transit time = `intersect_time` from SOI intersection finder
+- This ensures interplanetary trajectory predictions show the correct heliocentric orbit based on where bodies will be when the maneuver actually happens
 
 #### Scenario: Maneuver node predicts SOI escape
 - **WHEN** a maneuver node creates a hyperbolic orbit relative to the current body

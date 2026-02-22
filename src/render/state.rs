@@ -12,6 +12,27 @@ use super::types::{
     HYPERBOLIC_RENDER_MARGIN, HYPERBOLIC_SKIP_MARGIN,
 };
 
+/// Format seconds into a human-readable duration string (e.g., "1d 2h 3m 4s")
+fn format_duration(seconds: f64) -> String {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return "---".to_string();
+    }
+    let total = seconds as u64;
+    let d = total / 86400;
+    let h = (total % 86400) / 3600;
+    let m = (total % 3600) / 60;
+    let s = total % 60;
+    if d > 0 {
+        format!("{}d {}h {}m {}s", d, h, m, s)
+    } else if h > 0 {
+        format!("{}h {}m {}s", h, m, s)
+    } else if m > 0 {
+        format!("{}m {}s", m, s)
+    } else {
+        format!("{}s", s)
+    }
+}
+
 /// Main render state holding all wgpu resources
 pub struct RenderState {
     pub surface: wgpu::Surface<'static>,
@@ -71,10 +92,15 @@ pub struct RenderState {
     pub decouple_request: Option<usize>,  // part_index to manually decouple
     pub ap_markers: Vec<([f64; 2], f64)>, // Apoapsis markers: (world pos relative to camera, altitude)
     pub pe_markers: Vec<([f64; 2], f64)>, // Periapsis markers: (world pos relative to camera, altitude)
+    // Simulation time (updated each frame from main.rs)
+    pub simulation_time: f64,
     // Maneuver node state
     pub pending_orbit_click: Option<(f64, usize)>,  // (true_anomaly, segment_idx) - awaiting node creation
     pub selected_maneuver_node: Option<u64>,        // ID of selected node
     pub maneuver_nodes: Vec<ManeuverNode>,
+    pub time_to_node: Option<f64>,      // seconds until first maneuver node
+    pub burn_time: Option<f64>,         // estimated burn duration (seconds)
+    pub warp_to_node: bool,             // auto-warp to node active
     pub next_node_id: u64,
     pub maneuver_node_screen_positions: Vec<(u64, [f32; 2])>, // (node_id, screen_pos) for click detection
     pub current_trajectory: Vec<super::types::OrbitSegmentData>, // Stored for click detection
@@ -86,8 +112,27 @@ pub struct RenderState {
     pub tracked_vessel: Option<u64>,
     // Autopilot state
     pub autopilot_target: AutopilotTarget,
+    // Navigation target state
+    pub selected_target: Option<super::types::SelectedTarget>,
+    pub selected_target_name: String,
+    pub selected_target_angle: Option<f64>,
+    pub target_popup: Option<super::types::TargetPopup>,
     // RCS toggle (off by default)
     pub rcs_enabled: bool,
+    // Transfer planner state
+    pub transfer_planner_open: bool,
+    pub transfer_planner_mode: u8,              // 0 = Hohmann, 1 = Lambert
+    pub transfer_selected_target: Option<usize>,
+    pub transfer_departure_offset: f64,         // seconds, Lambert mode
+    pub transfer_arrival_offset: f64,           // seconds, Lambert mode
+    pub transfer_display: Option<crate::ship::transfer::TransferDisplay>,
+    pub transfer_hohmann_targets: Vec<(usize, String)>,
+    pub transfer_interplanetary_targets: Vec<(usize, String)>,
+    pub transfer_node_request: Option<(f64, f64, f64, f64)>, // (position_angle, prograde_dv, radial_dv, time_to_window)
+    // Debug menu
+    pub debug_menu_open: bool,
+    pub debug_infinite_fuel: bool,
+    pub debug_teleport_leo: bool,  // Request flag, consumed by main.rs
     // Body textures
     pub body_texture_bind_group: wgpu::BindGroup,
     pub body_texture_map: BodyTextureMap,
@@ -386,9 +431,13 @@ impl RenderState {
             decouple_request: None,
             ap_markers: Vec::new(),
             pe_markers: Vec::new(),
+            simulation_time: 0.0,
             pending_orbit_click: None,
             selected_maneuver_node: None,
             maneuver_nodes: Vec::new(),
+            time_to_node: None,
+            burn_time: None,
+            warp_to_node: false,
             next_node_id: 1,
             maneuver_node_screen_positions: Vec::new(),
             current_trajectory: Vec::new(),
@@ -397,7 +446,23 @@ impl RenderState {
             background_vessel_screen_positions: Vec::new(),
             tracked_vessel: None,
             autopilot_target: AutopilotTarget::Off,
+            selected_target: None,
+            selected_target_name: String::new(),
+            selected_target_angle: None,
+            target_popup: None,
             rcs_enabled: false,
+            transfer_planner_open: false,
+            transfer_planner_mode: 0,
+            transfer_selected_target: None,
+            transfer_departure_offset: 0.0,
+            transfer_arrival_offset: 0.0,
+            transfer_display: None,
+            transfer_hohmann_targets: Vec::new(),
+            transfer_interplanetary_targets: Vec::new(),
+            transfer_node_request: None,
+            debug_menu_open: false,
+            debug_infinite_fuel: false,
+            debug_teleport_leo: false,
             body_texture_bind_group,
             body_texture_map,
             egui_ctx,
@@ -534,6 +599,9 @@ impl RenderState {
         let pending_orbit_click = self.pending_orbit_click;
         let selected_maneuver_node = self.selected_maneuver_node;
         let maneuver_nodes = self.maneuver_nodes.clone();
+        let time_to_node = self.time_to_node;
+        let burn_time = self.burn_time;
+        let warp_to_node_active = self.warp_to_node;
         let current_trajectory = self.current_trajectory.clone();
         let current_autopilot = self.autopilot_target;
         let vessel_stages = self.vessel_stages.clone();
@@ -544,6 +612,8 @@ impl RenderState {
         let mut create_node_at: Option<(f64, usize)> = None;
         let mut delete_node_id: Option<u64> = None;
         let mut close_maneuver_panel = false;
+        let mut start_warp_to_node = false;
+        let mut cancel_warp_to_node = false;
         let mut prograde_delta: f64 = 0.0;
         let mut radial_delta: f64 = 0.0;
         let mut new_autopilot_target = current_autopilot;
@@ -759,6 +829,37 @@ impl RenderState {
                                 } else {
                                     AutopilotTarget::ManeuverNode
                                 };
+                            }
+                        }
+
+                        // Target button (only if a target is selected)
+                        if self.selected_target.is_some() {
+                            if autopilot_btn(ui, "TGT", AutopilotTarget::Target, new_autopilot_target) {
+                                new_autopilot_target = if new_autopilot_target == AutopilotTarget::Target {
+                                    AutopilotTarget::Off
+                                } else {
+                                    AutopilotTarget::Target
+                                };
+                            }
+                        }
+
+                        // Target name display
+                        if self.selected_target.is_some() {
+                            ui.add_space(5.0);
+                            ui.label(egui::RichText::new(format!("→ {}", self.selected_target_name))
+                                .size(11.0)
+                                .color(egui::Color32::from_rgb(130, 190, 255)));
+                            // Clear target button
+                            let x_btn = egui::Button::new(egui::RichText::new("x").size(10.0).color(egui::Color32::GRAY))
+                                .fill(egui::Color32::TRANSPARENT)
+                                .min_size(egui::vec2(16.0, 16.0));
+                            if ui.add(x_btn).clicked() {
+                                self.selected_target = None;
+                                self.selected_target_name.clear();
+                                self.selected_target_angle = None;
+                                if new_autopilot_target == AutopilotTarget::Target {
+                                    new_autopilot_target = AutopilotTarget::Off;
+                                }
                             }
                         }
 
@@ -995,6 +1096,69 @@ impl RenderState {
                                 .color(egui::Color32::WHITE));
                         }
                     }
+
+                    // XFER button anchored at bottom
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                        ui.add_space(10.0);
+                        let xfer_active = self.transfer_planner_open;
+                        let xfer_btn_color = if xfer_active {
+                            egui::Color32::from_rgb(80, 120, 180)
+                        } else {
+                            egui::Color32::from_rgb(60, 60, 70)
+                        };
+                        let xfer_text_color = if xfer_active {
+                            egui::Color32::WHITE
+                        } else {
+                            egui::Color32::LIGHT_GRAY
+                        };
+
+                        // Ellipse icon + XFER label as button
+                        let btn_size = egui::vec2(40.0, 32.0);
+                        let (rect, response) = ui.allocate_exact_size(btn_size, egui::Sense::click());
+
+                        // Draw button background
+                        let painter = ui.painter();
+                        painter.rect_filled(rect, 4.0, xfer_btn_color);
+
+                        // Draw ellipse icon (orbit shape) using line segments
+                        let cx = rect.center().x;
+                        let cy = rect.center().y - 4.0;
+                        let rx = 10.0_f32;
+                        let ry = 6.0_f32;
+                        let n = 24;
+                        let ellipse_points: Vec<egui::Pos2> = (0..=n).map(|i| {
+                            let angle = std::f32::consts::TAU * i as f32 / n as f32;
+                            egui::pos2(cx + rx * angle.cos(), cy + ry * angle.sin())
+                        }).collect();
+                        painter.add(egui::Shape::line(ellipse_points, egui::Stroke::new(1.5, xfer_text_color)));
+
+                        // Draw "XFER" label below icon
+                        painter.text(
+                            egui::pos2(rect.center().x, rect.max.y - 6.0),
+                            egui::Align2::CENTER_CENTER,
+                            "XFER",
+                            egui::FontId::proportional(8.0),
+                            xfer_text_color,
+                        );
+
+                        if response.clicked() {
+                            self.transfer_planner_open = !self.transfer_planner_open;
+                        }
+
+                        // Debug menu button (above XFER)
+                        ui.add_space(5.0);
+                        let dbg_color = if self.debug_menu_open {
+                            egui::Color32::from_rgb(180, 80, 80)
+                        } else {
+                            egui::Color32::from_rgb(60, 60, 70)
+                        };
+                        let dbg_btn = egui::Button::new(
+                            egui::RichText::new("DBG").size(9.0).color(egui::Color32::LIGHT_GRAY)
+                        ).fill(dbg_color).min_size(egui::vec2(40.0, 20.0));
+                        if ui.add(dbg_btn).clicked() {
+                            self.debug_menu_open = !self.debug_menu_open;
+                        }
+                    });
                 });
 
             // Only draw label for hovered body
@@ -1184,6 +1348,79 @@ impl RenderState {
                 }
             }
 
+            // Draw "Select as Target" popup if a body/vessel was single-clicked
+            if let Some(ref popup) = self.target_popup {
+                let popup_target = popup.target;
+                let popup_name = popup.name.clone();
+
+                // Compute screen position dynamically from the target's world position
+                // (world_to_screen inlined to avoid borrow conflict with egui closure)
+                // Output in egui logical points (divided by scale_factor)
+                let cam_x = self.camera.position[0] as f32;
+                let cam_y = self.camera.position[1] as f32;
+                let cam_zoom = self.camera.zoom;
+                let cam_rot = self.camera.rotation;
+                let cam_aspect = self.camera.aspect_ratio;
+                let scr_w = self.size.width as f32;
+                let scr_h = self.size.height as f32;
+                let w2s = |wx: f32, wy: f32| -> (f32, f32) {
+                    let rel_x = wx - cam_x;
+                    let rel_y = wy - cam_y;
+                    let cos_r = cam_rot.cos();
+                    let sin_r = cam_rot.sin();
+                    let rx = rel_x * cos_r - rel_y * sin_r;
+                    let ry = rel_x * sin_r + rel_y * cos_r;
+                    let nx = rx * cam_zoom / cam_aspect;
+                    let ny = ry * cam_zoom;
+                    (
+                        (nx + 1.0) * 0.5 * scr_w / scale_factor,
+                        (1.0 - ny) * 0.5 * scr_h / scale_factor,
+                    )
+                };
+                let points_per_world_unit = cam_zoom * scr_h / 2.0 / scale_factor;
+
+                let screen_pos = match popup.target {
+                    super::types::SelectedTarget::Body(idx) => {
+                        if let Some(body) = self.bodies.get(idx) {
+                            let (sx, sy) = w2s(body.x as f32, body.y as f32);
+                            let visual_radius = if body.indicator_radius > 0.0 {
+                                body.indicator_radius as f32 * points_per_world_unit
+                            } else {
+                                body.radius as f32 * points_per_world_unit
+                            };
+                            let offset_below = visual_radius.max(8.0) + 6.0;
+                            Some((sx, sy + offset_below))
+                        } else {
+                            None
+                        }
+                    }
+                    super::types::SelectedTarget::Vessel(id) => {
+                        self.background_vessel_screen_positions.iter()
+                            .find(|&&(vid, _)| vid == id)
+                            .map(|&(_, pos)| (pos[0] / scale_factor, pos[1] / scale_factor + 14.0))
+                    }
+                };
+
+                if let Some((popup_x, popup_y)) = screen_pos {
+                    egui::Area::new(egui::Id::new("target_select_popup"))
+                        .fixed_pos(egui::pos2(popup_x, popup_y))
+                        .pivot(egui::Align2::CENTER_TOP)
+                        .show(ctx, |ui| {
+                            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                                ui.label(egui::RichText::new(&popup_name).strong());
+                                if ui.button("Set as Target").clicked() {
+                                    self.selected_target = Some(popup_target);
+                                    self.selected_target_name = popup_name.clone();
+                                    self.target_popup = None;
+                                }
+                            });
+                        });
+                } else {
+                    // Target not visible on screen, clear popup
+                    self.target_popup = None;
+                }
+            }
+
             // Right panel - Staging (always visible when vessel has stages)
             if !vessel_stages.is_empty() {
                 egui::SidePanel::right("flight_staging_panel")
@@ -1361,6 +1598,27 @@ impl RenderState {
 
                             // Remaining delta-v display
                             ui.label(format!("Remaining Δv: {:.1} m/s", remaining_dv));
+
+                            // Time-to-node and burn time
+                            if let Some(ttn) = time_to_node {
+                                ui.label(format!("T- {}", format_duration(ttn)));
+                                if let Some(bt) = burn_time {
+                                    if bt > 0.5 {
+                                        ui.label(format!("Burn: {}", format_duration(bt)));
+                                    }
+                                }
+                                ui.add_space(4.0);
+                                if warp_to_node_active {
+                                    if ui.button("Cancel Warp").clicked() {
+                                        cancel_warp_to_node = true;
+                                        new_warp_index = 0;
+                                    }
+                                } else if ttn > 10.0 {
+                                    if ui.button("Warp to Node").clicked() {
+                                        start_warp_to_node = true;
+                                    }
+                                }
+                            }
                             ui.separator();
 
                             // Prograde/Retrograde slider (show remaining values)
@@ -1574,6 +1832,197 @@ impl RenderState {
                 }
             }
 
+            // Transfer planner window
+            if self.transfer_planner_open {
+                let mut close_planner = false;
+                egui::Area::new(egui::Id::new("transfer_planner"))
+                    .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                    .order(egui::Order::Middle)
+                    .show(ctx, |ui| {
+                        egui::Frame::none()
+                            .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 35, 240))
+                            .inner_margin(egui::Margin::same(12.0))
+                            .rounding(egui::Rounding::same(6.0))
+                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 80)))
+                            .show(ui, |ui| {
+                                ui.set_min_width(280.0);
+                                ui.set_max_width(320.0);
+
+                                // Title bar with close button
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new("Transfer Planner").size(14.0).color(egui::Color32::WHITE).strong());
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.small_button("X").clicked() {
+                                            close_planner = true;
+                                        }
+                                    });
+                                });
+                                ui.separator();
+
+                                // Mode selector
+                                ui.horizontal(|ui| {
+                                    ui.selectable_value(&mut self.transfer_planner_mode, 0, "Hohmann");
+                                    ui.selectable_value(&mut self.transfer_planner_mode, 1, "Lambert");
+                                });
+                                ui.add_space(4.0);
+
+                                // Target dropdown
+                                let targets = if self.transfer_planner_mode == 0 {
+                                    &self.transfer_hohmann_targets
+                                } else {
+                                    &self.transfer_interplanetary_targets
+                                };
+
+                                if targets.is_empty() {
+                                    ui.label(egui::RichText::new("No valid targets").size(11.0).color(egui::Color32::from_rgb(200, 150, 100)));
+                                } else {
+                                    let current_name = self.transfer_selected_target
+                                        .and_then(|idx| targets.iter().find(|(i, _)| *i == idx).map(|(_, n)| n.as_str()))
+                                        .unwrap_or("Select target...");
+                                    egui::ComboBox::from_label("")
+                                        .selected_text(current_name)
+                                        .show_ui(ui, |ui| {
+                                            for (idx, name) in targets {
+                                                let selected = self.transfer_selected_target == Some(*idx);
+                                                if ui.selectable_label(selected, name).clicked() {
+                                                    self.transfer_selected_target = Some(*idx);
+                                                    // Reset Lambert offsets when changing target
+                                                    self.transfer_departure_offset = 0.0;
+                                                    self.transfer_arrival_offset = 0.0;
+                                                }
+                                            }
+                                        });
+                                }
+
+                                ui.add_space(6.0);
+
+                                // Lambert mode sliders
+                                if self.transfer_planner_mode == 1 {
+                                    ui.label(egui::RichText::new("Departure offset").size(10.0).color(egui::Color32::GRAY));
+                                    ui.add(egui::Slider::new(&mut self.transfer_departure_offset, -6.3e7..=6.3e7)
+                                        .text("s")
+                                        .logarithmic(true)
+                                        .clamp_to_range(true));
+                                    ui.label(egui::RichText::new("Transfer time offset").size(10.0).color(egui::Color32::GRAY));
+                                    ui.add(egui::Slider::new(&mut self.transfer_arrival_offset, -6.3e7..=6.3e7)
+                                        .text("s")
+                                        .logarithmic(true)
+                                        .clamp_to_range(true));
+                                    ui.add_space(4.0);
+                                }
+
+                                // Display results
+                                if let Some(ref display) = self.transfer_display {
+                                    if display.valid {
+                                        ui.separator();
+                                        let fmt_dv = |dv: f64| -> String {
+                                            if dv >= 1000.0 { format!("{:.2} km/s", dv / 1000.0) }
+                                            else { format!("{:.1} m/s", dv) }
+                                        };
+                                        let fmt_time = |t: f64| -> String {
+                                            if t >= 86400.0 * 365.25 {
+                                                format!("{:.1}y", t / (86400.0 * 365.25))
+                                            } else if t >= 86400.0 {
+                                                format!("{:.1}d", t / 86400.0)
+                                            } else if t >= 3600.0 {
+                                                format!("{:.1}h", t / 3600.0)
+                                            } else {
+                                                format!("{:.0}s", t)
+                                            }
+                                        };
+
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Departure dv:").size(11.0).color(egui::Color32::GRAY));
+                                            ui.label(egui::RichText::new(fmt_dv(display.departure_dv)).size(11.0).color(egui::Color32::WHITE));
+                                        });
+                                        if display.mode == 0 {
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new("Arrival dv:").size(11.0).color(egui::Color32::GRAY));
+                                                ui.label(egui::RichText::new(fmt_dv(display.arrival_dv)).size(11.0).color(egui::Color32::WHITE));
+                                            });
+                                        } else {
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new("Arrival v_inf:").size(11.0).color(egui::Color32::GRAY));
+                                                ui.label(egui::RichText::new(fmt_dv(display.arrival_dv)).size(11.0).color(egui::Color32::WHITE));
+                                            });
+                                        }
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Transfer time:").size(11.0).color(egui::Color32::GRAY));
+                                            ui.label(egui::RichText::new(fmt_time(display.transfer_time)).size(11.0).color(egui::Color32::WHITE));
+                                        });
+
+                                        // Phase angle display
+                                        let phase_diff = (display.current_phase_angle - display.required_phase_angle).abs();
+                                        let phase_color = if phase_diff < 5.0 {
+                                            egui::Color32::from_rgb(100, 220, 100)
+                                        } else if phase_diff < 20.0 {
+                                            egui::Color32::from_rgb(220, 220, 100)
+                                        } else {
+                                            egui::Color32::from_rgb(200, 200, 200)
+                                        };
+                                        ui.horizontal(|ui| {
+                                            ui.label(egui::RichText::new("Phase angle:").size(11.0).color(egui::Color32::GRAY));
+                                            ui.label(egui::RichText::new(format!("{:.1}", display.current_phase_angle)).size(11.0).color(phase_color));
+                                            ui.label(egui::RichText::new(format!("/ {:.1}", display.required_phase_angle)).size(11.0).color(egui::Color32::GRAY));
+                                        });
+                                        if display.time_to_window > 60.0 {
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new("Window in:").size(11.0).color(egui::Color32::GRAY));
+                                                ui.label(egui::RichText::new(fmt_time(display.time_to_window)).size(11.0).color(egui::Color32::WHITE));
+                                            });
+                                        }
+
+                                        ui.add_space(6.0);
+                                        let create_btn = egui::Button::new(
+                                            egui::RichText::new("Create Node").size(12.0).color(egui::Color32::WHITE)
+                                        ).fill(egui::Color32::from_rgb(60, 120, 60));
+                                        if ui.add(create_btn).clicked() {
+                                            self.transfer_node_request = Some((
+                                                display.departure_position_angle,
+                                                display.prograde_dv,
+                                                display.radial_dv,
+                                                display.time_to_window,
+                                            ));
+                                            close_planner = true;
+                                        }
+                                    } else {
+                                        ui.label(egui::RichText::new("No valid transfer found").size(11.0).color(egui::Color32::from_rgb(220, 100, 100)));
+                                    }
+                                }
+                            });
+                    });
+                if close_planner {
+                    self.transfer_planner_open = false;
+                }
+            }
+
+            // Debug menu window
+            if self.debug_menu_open {
+                egui::Window::new("Debug")
+                    .collapsible(false)
+                    .resizable(false)
+                    .default_pos(egui::pos2(60.0, 200.0))
+                    .show(ctx, |ui| {
+                        // Infinite fuel toggle
+                        let fuel_label = if self.debug_infinite_fuel { "Infinite Fuel: ON" } else { "Infinite Fuel: OFF" };
+                        let fuel_color = if self.debug_infinite_fuel {
+                            egui::Color32::from_rgb(60, 130, 60)
+                        } else {
+                            egui::Color32::from_rgb(80, 80, 90)
+                        };
+                        if ui.add(egui::Button::new(fuel_label).fill(fuel_color).min_size(egui::vec2(160.0, 24.0))).clicked() {
+                            self.debug_infinite_fuel = !self.debug_infinite_fuel;
+                        }
+
+                        ui.add_space(4.0);
+
+                        // Teleport to LEO
+                        if ui.add(egui::Button::new("Set Orbit (LEO)").min_size(egui::vec2(160.0, 24.0))).clicked() {
+                            self.debug_teleport_leo = true;
+                        }
+                    });
+            }
+
             // Pause overlay (drawn on top of everything)
             if paused {
                 egui::Area::new(egui::Id::new("pause_overlay"))
@@ -1620,10 +2069,20 @@ impl RenderState {
             self.create_maneuver_node(ta, seg_idx);
         }
         if let Some(node_id) = delete_node_id {
+            // Cancel warp-to-node if the first node is being deleted
+            if self.maneuver_nodes.first().map(|n| n.id) == Some(node_id) {
+                self.warp_to_node = false;
+            }
             self.delete_maneuver_node(node_id);
         }
         if close_maneuver_panel {
             self.selected_maneuver_node = None;
+        }
+        if start_warp_to_node {
+            self.warp_to_node = true;
+        }
+        if cancel_warp_to_node {
+            self.warp_to_node = false;
         }
         // Update autopilot target
         self.autopilot_target = new_autopilot_target;
@@ -2876,14 +3335,12 @@ impl RenderState {
                 }
             }
 
-            // Draw prograde direction arrow in ship view (when zoomed in enough to see parts)
+            // Draw prograde direction arrow at screen edge in ship view
             if !needs_indicator {
                 let vdir = ship_data.velocity_direction;
                 let has_velocity = vdir[0] != 0.0 || vdir[1] != 0.0;
                 if has_velocity {
-                    let prograde_color = [0.3_f32, 1.0, 0.3, 0.7];
-                    let arrow_offset = size * 1.5;
-                    let arrow_size = size * 0.4;
+                    let arrow_color = [1.0_f32, 1.0, 1.0, 0.85];
                     let vdx = vdir[0] as f32;
                     let vdy = vdir[1] as f32;
 
@@ -2894,60 +3351,98 @@ impl RenderState {
                     let vmag = (vdx_s * vdx_s + vdy_s * vdy_s).sqrt();
                     let (vdx_n, vdy_n) = if vmag > 0.0 { (vdx_s / vmag, vdy_s / vmag) } else { (0.0, 1.0) };
 
-                    // Arrow tip position
-                    let tip_x = rel_x + vdx_n * arrow_offset;
-                    let tip_y = rel_y + vdy_n * arrow_offset;
+                    // Asymmetric margins to keep arrow inside the flight viewport (outside GUI panels)
+                    let margin_left = 60.0_f32;   // throttle panel (50px) + buffer
+                    let margin_right = 160.0_f32;  // staging panel (150px) + buffer
+                    let margin_top = 40.0_f32;     // time warp panel + buffer
+                    let margin_bottom = 80.0_f32;  // flight info panel + buffer
+
+                    let screen_w = self.size.width as f32;
+                    let screen_h = self.size.height as f32;
+                    // Bounds relative to screen center
+                    let bound_left = -(screen_w / 2.0 - margin_left);
+                    let bound_right = screen_w / 2.0 - margin_right;
+                    let bound_bottom = -(screen_h / 2.0 - margin_bottom);
+                    let bound_top = screen_h / 2.0 - margin_top;
+
+                    // Ship position in screen pixels relative to screen center
+                    let ship_scr_x = rel_x * pixels_per_world_unit;
+                    let ship_scr_y = rel_y * pixels_per_world_unit;
+
+                    // Direction in screen pixels
+                    let dir_scr_x = vdx_n * pixels_per_world_unit;
+                    let dir_scr_y = vdy_n * pixels_per_world_unit;
+
+                    // Ray-cast: find t where ship_scr + t*dir_scr hits the bounded viewport edge
+                    let mut t = f32::MAX;
+                    if dir_scr_x.abs() > 1e-6 {
+                        let tx = if dir_scr_x > 0.0 { (bound_right - ship_scr_x) / dir_scr_x } else { (bound_left - ship_scr_x) / dir_scr_x };
+                        if tx > 0.0 { t = t.min(tx); }
+                    }
+                    if dir_scr_y.abs() > 1e-6 {
+                        let ty = if dir_scr_y > 0.0 { (bound_top - ship_scr_y) / dir_scr_y } else { (bound_bottom - ship_scr_y) / dir_scr_y };
+                        if ty > 0.0 { t = t.min(ty); }
+                    }
+                    if t == f32::MAX { t = 1.0; }
+
+                    // Arrow tip in world-rendering coords
+                    let tip_x = rel_x + vdx_n * t;
+                    let tip_y = rel_y + vdy_n * t;
+
+                    // Fixed screen-size arrow: 80px head, 25px half-width (5x original)
+                    let arrow_len = 80.0 / pixels_per_world_unit;
+                    let half_width = 25.0 / pixels_per_world_unit;
+
+                    // Stem dimensions: extends from arrow base toward the ship
+                    let stem_length = 120.0 / pixels_per_world_unit;
+                    let stem_half_width = 6.0 / pixels_per_world_unit;
 
                     // Perpendicular direction
                     let perp_x = -vdy_n;
                     let perp_y = vdx_n;
 
-                    // Chevron arms: two quads forming ">" shape
-                    let arm_len = arrow_size;
-                    let arm_half_thickness = arrow_size * 0.1;
-                    let arm_angle = 0.5_f32; // ~30 degrees spread
+                    // Arrow base center (where head meets stem)
+                    let base_cx = tip_x - vdx_n * arrow_len;
+                    let base_cy = tip_y - vdy_n * arrow_len;
 
-                    // Left arm direction (tip backward-left)
-                    let left_dx = -vdx_n * arm_angle.cos() + perp_x * arm_angle.sin();
-                    let left_dy = -vdy_n * arm_angle.cos() + perp_y * arm_angle.sin();
-                    // Right arm direction (tip backward-right)
-                    let right_dx = -vdx_n * arm_angle.cos() - perp_x * arm_angle.sin();
-                    let right_dy = -vdy_n * arm_angle.cos() - perp_y * arm_angle.sin();
-
-                    // Draw left arm as quad
+                    // Filled triangle head: tip + two base corners
                     let base_index = all_vertices.len() as u32;
-                    let tail_x = tip_x + left_dx * arm_len;
-                    let tail_y = tip_y + left_dy * arm_len;
-                    // Perpendicular to the arm direction
-                    let arm_perp_x = -left_dy;
-                    let arm_perp_y = left_dx;
-                    all_vertices.push(Vertex::new([tip_x - arm_perp_x * arm_half_thickness, tip_y - arm_perp_y * arm_half_thickness], prograde_color));
-                    all_vertices.push(Vertex::new([tip_x + arm_perp_x * arm_half_thickness, tip_y + arm_perp_y * arm_half_thickness], prograde_color));
-                    all_vertices.push(Vertex::new([tail_x + arm_perp_x * arm_half_thickness, tail_y + arm_perp_y * arm_half_thickness], prograde_color));
-                    all_vertices.push(Vertex::new([tail_x - arm_perp_x * arm_half_thickness, tail_y - arm_perp_y * arm_half_thickness], prograde_color));
+                    all_vertices.push(Vertex::new([tip_x, tip_y], arrow_color));
+                    all_vertices.push(Vertex::new([
+                        base_cx + perp_x * half_width,
+                        base_cy + perp_y * half_width,
+                    ], arrow_color));
+                    all_vertices.push(Vertex::new([
+                        base_cx - perp_x * half_width,
+                        base_cy - perp_y * half_width,
+                    ], arrow_color));
                     all_indices.push(base_index);
                     all_indices.push(base_index + 1);
                     all_indices.push(base_index + 2);
-                    all_indices.push(base_index);
-                    all_indices.push(base_index + 2);
-                    all_indices.push(base_index + 3);
 
-                    // Draw right arm as quad
-                    let base_index = all_vertices.len() as u32;
-                    let tail_x = tip_x + right_dx * arm_len;
-                    let tail_y = tip_y + right_dy * arm_len;
-                    let arm_perp_x = -right_dy;
-                    let arm_perp_y = right_dx;
-                    all_vertices.push(Vertex::new([tip_x - arm_perp_x * arm_half_thickness, tip_y - arm_perp_y * arm_half_thickness], prograde_color));
-                    all_vertices.push(Vertex::new([tip_x + arm_perp_x * arm_half_thickness, tip_y + arm_perp_y * arm_half_thickness], prograde_color));
-                    all_vertices.push(Vertex::new([tail_x + arm_perp_x * arm_half_thickness, tail_y + arm_perp_y * arm_half_thickness], prograde_color));
-                    all_vertices.push(Vertex::new([tail_x - arm_perp_x * arm_half_thickness, tail_y - arm_perp_y * arm_half_thickness], prograde_color));
-                    all_indices.push(base_index);
-                    all_indices.push(base_index + 1);
-                    all_indices.push(base_index + 2);
-                    all_indices.push(base_index);
-                    all_indices.push(base_index + 2);
-                    all_indices.push(base_index + 3);
+                    // Stem: rectangle from arrow base toward the ship (two triangles)
+                    let stem_end_x = base_cx - vdx_n * stem_length;
+                    let stem_end_y = base_cy - vdy_n * stem_length;
+
+                    let si = all_vertices.len() as u32;
+                    // Four corners of the stem rectangle
+                    all_vertices.push(Vertex::new([
+                        base_cx + perp_x * stem_half_width,
+                        base_cy + perp_y * stem_half_width,
+                    ], arrow_color)); // si+0: base left
+                    all_vertices.push(Vertex::new([
+                        base_cx - perp_x * stem_half_width,
+                        base_cy - perp_y * stem_half_width,
+                    ], arrow_color)); // si+1: base right
+                    all_vertices.push(Vertex::new([
+                        stem_end_x - perp_x * stem_half_width,
+                        stem_end_y - perp_y * stem_half_width,
+                    ], arrow_color)); // si+2: end right
+                    all_vertices.push(Vertex::new([
+                        stem_end_x + perp_x * stem_half_width,
+                        stem_end_y + perp_y * stem_half_width,
+                    ], arrow_color)); // si+3: end left
+                    all_indices.extend_from_slice(&[si, si + 1, si + 2, si, si + 2, si + 3]);
                 }
             }
 

@@ -202,6 +202,7 @@ pub struct OrbitSegmentData {
     pub parent_mass: f64,       // kg - for velocity calculations
     pub parent_idx: usize,      // Index of parent body
     pub render_scale: f64,
+    pub start_time: f64,        // Relative seconds from trajectory start to this segment
 }
 
 /// Delta-V components for a maneuver node
@@ -228,6 +229,8 @@ pub struct ManeuverNode {
     pub parent_idx: usize,
     pub parent_mass: f64,
     pub render_scale: f64,
+    // Absolute simulation time at which the node occurs
+    pub epoch: f64,
     // Delta-v (original - used for trajectory prediction)
     pub delta_v: ManeuverDeltaV,
     // Remaining delta-v (counts down during burns, displayed in UI)
@@ -346,6 +349,19 @@ pub enum MainMenuAction {
     None,
     Editor,
     TrackingStation,
+}
+
+/// A selected navigation target (body or vessel)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectedTarget {
+    Body(usize),
+    Vessel(u64),
+}
+
+/// Popup shown when single-clicking a body or vessel
+pub struct TargetPopup {
+    pub target: SelectedTarget,
+    pub name: String,
 }
 
 /// Action returned from the pause overlay UI
