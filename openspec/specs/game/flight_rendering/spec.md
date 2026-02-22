@@ -5,7 +5,7 @@ Rendering planets, the ship in flight, the HUD, and maneuver nodes. Uses wgpu fo
 ## Capabilities
 
 - [Camera](camera/spec.md) - Flight camera behavior, zoom levels, body tracking, ship view vs map view
-- [Bodies](bodies/spec.md) - Planet/moon rendering, atmosphere, surface, orbit lines, scenery
+- [Bodies](bodies/spec.md) - Planet/moon rendering, atmosphere, surface, orbit lines, launchpad
 - [Ship](ship/spec.md) - Ship triangle indicator, part-based rendering, exhaust plumes
 - [HUD](hud/spec.md) - Flight HUD panels (velocity, altitude, orbit info, fuel, time warp, staging)
 - [Maneuver Nodes](maneuver_nodes/spec.md) - Maneuver node creation, dragging, burning, delta-v display
@@ -26,6 +26,10 @@ Vertex buffer holds up to 500,000 vertices. Index buffer holds up to 1,500,000 u
 
 The camera uniform struct is `{ position: [f32; 2], zoom: f32, aspect_ratio: f32 }` (16 bytes, repr(C), Pod/Zeroable). It is bound to the vertex shader at binding 0 in bind group 0, updated each frame before rendering.
 
+### Requirement: Body texture bind group
+
+A `texture_2d_array` and sampler are bound at group 1 (binding 0 = texture, binding 1 = sampler). The texture array holds body textures loaded from `data/textures/bodies/`. A dummy 1-layer texture is created when no textures exist, ensuring the bind group is always valid. The bind group is set at all render pass sites.
+
 ### Requirement: World scale constant
 
 All positions are scaled by `SCALE = 1e-9` and `BODY_SCALE = 1.0`, so the effective render scale is `1e-9` world units per meter. Ship world position = `absolute_position * SCALE * BODY_SCALE`.
@@ -38,7 +42,7 @@ Geometry is drawn in the following back-to-front order within a single MSAA rend
 3. Ship orbit/trajectory lines (patched conics)
 4. Predicted trajectory lines (green, from maneuver nodes)
 5. Celestial bodies (filled circles)
-6. Trees and launchpad (ship view only)
+6. Launchpad (ship view only)
 7. Ship (part-based rendering or triangle, at actual world scale)
 8. Ship indicator triangle (map view only, fixed screen size)
 

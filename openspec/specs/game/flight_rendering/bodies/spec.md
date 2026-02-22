@@ -1,6 +1,6 @@
 # Body Rendering
 
-Planet/moon rendering, atmosphere, surface details, orbit lines, and scenery (trees, launchpad).
+Planet/moon rendering, atmosphere, surface details, orbit lines, and launchpad.
 
 ## Body Circle Rendering
 
@@ -18,6 +18,31 @@ Each celestial body is rendered as a filled circle using a triangle fan. The num
 - **AND** calculate visible half-angle as `asin(min(viewport_diagonal / distance_to_body, 1.0))`, minimum `0.005 * TAU`
 - **AND** center the arc on the angle from body center to camera
 - **AND** use f64 precision for arc edge vertex computation
+
+### Requirement: Body texture support
+
+Bodies MAY have PNG textures loaded from `data/textures/bodies/<name>.png` (lowercase body name). Textures are loaded at startup, resized to 1024x1024, and stored in a `texture_2d_array` bound at `@group(1)`.
+
+#### Scenario: Textured body rendering
+- **WHEN** a body has a loaded texture
+- **THEN** vertices use `Vertex::textured()` with UV coordinates mapping the circle to `[0,1]x[0,1]`
+- **AND** center vertex UV = `(0.5, 0.5)`, edge vertex at angle θ: UV = `(0.5 + 0.5·cos(θ), 0.5 - 0.5·sin(θ))`
+- **AND** the texture array layer index is stored in `color.a`
+- **AND** the fragment shader samples the texture when `uv.x + uv.y > 0`
+
+#### Scenario: Disc edge bleeding
+- **WHEN** a texture is loaded
+- **THEN** edge colors are bled outward before GPU upload: every pixel within 4px of or beyond the disc edge is replaced with the color sampled from 5px inside the disc at the same radial angle
+- **AND** this prevents bilinear filtering from blending valid edge colors with the black pixels outside the polar projection disc
+
+#### Scenario: No texture fallback
+- **WHEN** no texture file exists for a body
+- **THEN** the body renders as a flat-colored circle (unchanged behavior)
+- **AND** a 1-layer dummy texture is always created to keep the bind group valid
+
+#### Scenario: Arc mode texturing
+- **WHEN** body is in arc rendering mode (zoomed in)
+- **THEN** UV coordinates use the same formula based on the body-centric angle
 
 ### Requirement: Body minimum visibility threshold
 
@@ -82,31 +107,7 @@ Orbit lines for celestial bodies SHALL be drawn as thick lines (dual-vertex stri
 - **WHEN** a moon body's on-screen diameter >= 100 pixels
 - **THEN** its orbit line is hidden
 
-## Scenery
-
-### Requirement: Trees rendered on body surface in ship view
-
-Trees SHALL be rendered as procedural scenery on the nearest body's surface when in ship view. Up to 750 trees centered around the camera's angular position.
-
-#### Scenario: Tree spacing
-- Trees spaced approximately every 33 meters along surface (angular step = `33.0 / radius` radians)
-
-#### Scenario: Tree position jitter
-- Deterministic hash of tree index produces three values (hash1, hash2, hash3) in [0, 1)
-- Angular position = `N * angle_step + (hash1 - 0.5) * angle_step * 0.8`
-
-#### Scenario: Tree dimensions
-- Base: trunk_width = 1.0m, trunk_height = 7.0m, canopy_radius = 3.0m
-- size_factor = `0.5 + hash2` (0.5 to 1.5)
-- trunk_width scaled by `0.7 + hash3 * 0.6`
-- Canopy is 8-segment filled circle at top of trunk
-
-#### Scenario: Tree colors
-- Trunk: `[0.35 + hash2*0.2, 0.20 + hash3*0.15, 0.08, 1.0]`
-- Canopy: `[0.10 + hash3*0.1, 0.40 + hash1*0.3, 0.10 + hash2*0.1, 1.0]`
-
-#### Scenario: Launchpad exclusion zone
-- On Earth (body index 3), trees SHALL NOT be drawn within angular distance `(LAUNCHPAD_BOTTOM_WIDTH * 0.5 / radius) + angle_step` of `LAUNCHPAD_SURFACE_ANGLE` (PI/2)
+## Launchpad
 
 ### Requirement: Launchpad rendered on Earth in ship view
 

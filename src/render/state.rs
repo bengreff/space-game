@@ -5,6 +5,7 @@ use egui_wgpu::ScreenDescriptor;
 
 use crate::ship::{AutopilotTarget, RAILS_WARP_THRESHOLD};
 use super::camera::Camera;
+use super::textures::BodyTextureMap;
 use super::types::{
     BodyData, MainMenuAction, ManeuverNode, OrbitRenderData, PauseAction, ShipOrbitData, ShipRenderData,
     TrackingStationAction, TrackingVesselData, Vertex,
@@ -87,6 +88,9 @@ pub struct RenderState {
     pub autopilot_target: AutopilotTarget,
     // RCS toggle (off by default)
     pub rcs_enabled: bool,
+    // Body textures
+    pub body_texture_bind_group: wgpu::BindGroup,
+    pub body_texture_map: BodyTextureMap,
     // Egui state
     pub egui_ctx: egui::Context,
     pub egui_state: egui_winit::State,
@@ -95,7 +99,7 @@ pub struct RenderState {
 
 impl RenderState {
     /// Create a new render state from a window
-    pub async fn new(window: Arc<Window>) -> Self {
+    pub async fn new(window: Arc<Window>, body_names: &[String]) -> Self {
         let size = window.inner_size();
 
         // Create wgpu instance
@@ -186,6 +190,48 @@ impl RenderState {
             label: Some("camera_bind_group"),
         });
 
+        // Load body textures
+        let (body_texture_view, body_sampler, body_texture_map) =
+            super::textures::load_body_textures(&device, &queue, body_names);
+
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+                label: Some("texture_bind_group_layout"),
+            });
+
+        let body_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&body_texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&body_sampler),
+                },
+            ],
+            label: Some("body_texture_bind_group"),
+        });
+
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
@@ -196,7 +242,7 @@ impl RenderState {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&camera_bind_group_layout],
+                bind_group_layouts: &[&camera_bind_group_layout, &texture_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -352,6 +398,8 @@ impl RenderState {
             tracked_vessel: None,
             autopilot_target: AutopilotTarget::Off,
             rcs_enabled: false,
+            body_texture_bind_group,
+            body_texture_map,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -1680,6 +1728,7 @@ impl RenderState {
 
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
@@ -1724,7 +1773,7 @@ impl RenderState {
     /// scale: world units per meter (e.g., 1e-9 means 1 billion meters = 1 world unit)
     pub fn update_bodies_with_orbits(
         &mut self,
-        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3])],
+        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)],
         orbits: &[Option<OrbitRenderData>],
         scale: f64,
     ) {
@@ -1787,18 +1836,12 @@ impl RenderState {
                     // Outer vertex
                     let rel_outer_x = (px + nx - cam_x) as f32;
                     let rel_outer_y = (py + ny - cam_y) as f32;
-                    all_vertices.push(Vertex {
-                        position: [rel_outer_x, rel_outer_y],
-                        color: orbit.color,
-                    });
+                    all_vertices.push(Vertex::new([rel_outer_x, rel_outer_y], orbit.color));
 
                     // Inner vertex
                     let rel_inner_x = (px - nx - cam_x) as f32;
                     let rel_inner_y = (py - ny - cam_y) as f32;
-                    all_vertices.push(Vertex {
-                        position: [rel_inner_x, rel_inner_y],
-                        color: [orbit.color[0] * 0.5, orbit.color[1] * 0.5, orbit.color[2] * 0.5, orbit.color[3] * 0.7],
-                    });
+                    all_vertices.push(Vertex::new([rel_inner_x, rel_inner_y], [orbit.color[0] * 0.5, orbit.color[1] * 0.5, orbit.color[2] * 0.5, orbit.color[3] * 0.7]));
                 }
 
                 // Create indices for orbit ring
@@ -1832,7 +1875,7 @@ impl RenderState {
     /// Update geometry with bodies, orbits, and optionally a ship
     pub fn update_bodies_orbits_and_ship(
         &mut self,
-        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3])],
+        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)],
         orbits: &[Option<OrbitRenderData>],
         ship: Option<&ShipRenderData>,
         scale: f64,
@@ -1844,7 +1887,7 @@ impl RenderState {
     /// Update geometry with bodies, orbits, optionally a ship, and background vessels
     pub fn update_bodies_orbits_ship_and_vessels(
         &mut self,
-        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3])],
+        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)],
         orbits: &[Option<OrbitRenderData>],
         ship: Option<&ShipRenderData>,
         scale: f64,
@@ -1946,17 +1989,11 @@ impl RenderState {
 
                     let rel_outer_x = (px + nx - cam_x) as f32;
                     let rel_outer_y = (py + ny - cam_y) as f32;
-                    all_vertices.push(Vertex {
-                        position: [rel_outer_x, rel_outer_y],
-                        color: orbit.color,
-                    });
+                    all_vertices.push(Vertex::new([rel_outer_x, rel_outer_y], orbit.color));
 
                     let rel_inner_x = (px - nx - cam_x) as f32;
                     let rel_inner_y = (py - ny - cam_y) as f32;
-                    all_vertices.push(Vertex {
-                        position: [rel_inner_x, rel_inner_y],
-                        color: [orbit.color[0] * 0.5, orbit.color[1] * 0.5, orbit.color[2] * 0.5, orbit.color[3] * 0.7],
-                    });
+                    all_vertices.push(Vertex::new([rel_inner_x, rel_inner_y], [orbit.color[0] * 0.5, orbit.color[1] * 0.5, orbit.color[2] * 0.5, orbit.color[3] * 0.7]));
                 }
 
                 for i in 0..segments {
@@ -2085,17 +2122,11 @@ impl RenderState {
 
                                 let rel_outer_x = (px + nx - cam_x) as f32;
                                 let rel_outer_y = (py + ny - cam_y) as f32;
-                                all_vertices.push(Vertex {
-                                    position: [rel_outer_x, rel_outer_y],
-                                    color: segment.color,
-                                });
+                                all_vertices.push(Vertex::new([rel_outer_x, rel_outer_y], segment.color));
 
                                 let rel_inner_x = (px - nx - cam_x) as f32;
                                 let rel_inner_y = (py - ny - cam_y) as f32;
-                                all_vertices.push(Vertex {
-                                    position: [rel_inner_x, rel_inner_y],
-                                    color: [segment.color[0] * 0.5, segment.color[1] * 0.5, segment.color[2] * 0.5, segment.color[3] * 0.7],
-                                });
+                                all_vertices.push(Vertex::new([rel_inner_x, rel_inner_y], [segment.color[0] * 0.5, segment.color[1] * 0.5, segment.color[2] * 0.5, segment.color[3] * 0.7]));
                             }
 
                             let num_line_segments = (all_vertices.len() as u32 - base_index) / 2;
@@ -2140,19 +2171,13 @@ impl RenderState {
                             let pe_color = [0.3, 0.8, 1.0, alpha];
 
                             let pe_base = all_vertices.len() as u32;
-                            all_vertices.push(Vertex {
-                                position: [(pe_x - cam_x) as f32, (pe_y - cam_y) as f32],
-                                color: pe_color,
-                            });
+                            all_vertices.push(Vertex::new([(pe_x - cam_x) as f32, (pe_y - cam_y) as f32], pe_color));
                             for i in 0..marker_segments {
                                 let angle = (i as f64 / marker_segments as f64) * std::f64::consts::TAU;
-                                all_vertices.push(Vertex {
-                                    position: [
+                                all_vertices.push(Vertex::new([
                                         (pe_x + marker_radius * angle.cos() - cam_x) as f32,
                                         (pe_y + marker_radius * angle.sin() - cam_y) as f32,
-                                    ],
-                                    color: pe_color,
-                                });
+                                    ], pe_color));
                             }
                             for i in 0..marker_segments {
                                 all_indices.push(pe_base);
@@ -2247,17 +2272,11 @@ impl RenderState {
 
                         let rel_outer_x = (px + nx - cam_x) as f32;
                         let rel_outer_y = (py + ny - cam_y) as f32;
-                        all_vertices.push(Vertex {
-                            position: [rel_outer_x, rel_outer_y],
-                            color: segment.color,
-                        });
+                        all_vertices.push(Vertex::new([rel_outer_x, rel_outer_y], segment.color));
 
                         let rel_inner_x = (px - nx - cam_x) as f32;
                         let rel_inner_y = (py - ny - cam_y) as f32;
-                        all_vertices.push(Vertex {
-                            position: [rel_inner_x, rel_inner_y],
-                            color: [segment.color[0] * 0.5, segment.color[1] * 0.5, segment.color[2] * 0.5, segment.color[3] * 0.7],
-                        });
+                        all_vertices.push(Vertex::new([rel_inner_x, rel_inner_y], [segment.color[0] * 0.5, segment.color[1] * 0.5, segment.color[2] * 0.5, segment.color[3] * 0.7]));
                     }
 
                     // For full orbits, wrap around to connect last segment to first
@@ -2339,19 +2358,13 @@ impl RenderState {
                         let pe_color = [0.3, 0.8, 1.0, alpha];
 
                         let pe_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex {
-                            position: [(pe_x - cam_x) as f32, (pe_y - cam_y) as f32],
-                            color: pe_color,
-                        });
+                        all_vertices.push(Vertex::new([(pe_x - cam_x) as f32, (pe_y - cam_y) as f32], pe_color));
                         for i in 0..marker_segments {
                             let angle = (i as f64 / marker_segments as f64) * std::f64::consts::TAU;
-                            all_vertices.push(Vertex {
-                                position: [
+                            all_vertices.push(Vertex::new([
                                     (pe_x + marker_radius * angle.cos() - cam_x) as f32,
                                     (pe_y + marker_radius * angle.sin() - cam_y) as f32,
-                                ],
-                                color: pe_color,
-                            });
+                                ], pe_color));
                         }
                         for i in 0..marker_segments {
                             all_indices.push(pe_base);
@@ -2373,19 +2386,13 @@ impl RenderState {
                         let ap_color = [1.0, 0.6, 0.2, alpha];
 
                         let ap_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex {
-                            position: [(ap_x - cam_x) as f32, (ap_y - cam_y) as f32],
-                            color: ap_color,
-                        });
+                        all_vertices.push(Vertex::new([(ap_x - cam_x) as f32, (ap_y - cam_y) as f32], ap_color));
                         for i in 0..marker_segments {
                             let angle = (i as f64 / marker_segments as f64) * std::f64::consts::TAU;
-                            all_vertices.push(Vertex {
-                                position: [
+                            all_vertices.push(Vertex::new([
                                     (ap_x + marker_radius * angle.cos() - cam_x) as f32,
                                     (ap_y + marker_radius * angle.sin() - cam_y) as f32,
-                                ],
-                                color: ap_color,
-                            });
+                                ], ap_color));
                         }
                         for i in 0..marker_segments {
                             all_indices.push(ap_base);
@@ -2471,22 +2478,10 @@ impl RenderState {
                         let nx_perp = -dy / len * line_width;
                         let ny_perp = dx / len * line_width;
 
-                        all_vertices.push(Vertex {
-                            position: [(px + nx_perp - cam_x) as f32, (py + ny_perp - cam_y) as f32],
-                            color: seg_color,
-                        });
-                        all_vertices.push(Vertex {
-                            position: [(px - nx_perp - cam_x) as f32, (py - ny_perp - cam_y) as f32],
-                            color: seg_color,
-                        });
-                        all_vertices.push(Vertex {
-                            position: [(nx + nx_perp - cam_x) as f32, (ny + ny_perp - cam_y) as f32],
-                            color: seg_color,
-                        });
-                        all_vertices.push(Vertex {
-                            position: [(nx - nx_perp - cam_x) as f32, (ny - ny_perp - cam_y) as f32],
-                            color: seg_color,
-                        });
+                        all_vertices.push(Vertex::new([(px + nx_perp - cam_x) as f32, (py + ny_perp - cam_y) as f32], seg_color));
+                        all_vertices.push(Vertex::new([(px - nx_perp - cam_x) as f32, (py - ny_perp - cam_y) as f32], seg_color));
+                        all_vertices.push(Vertex::new([(nx + nx_perp - cam_x) as f32, (ny + ny_perp - cam_y) as f32], seg_color));
+                        all_vertices.push(Vertex::new([(nx - nx_perp - cam_x) as f32, (ny - ny_perp - cam_y) as f32], seg_color));
 
                         all_indices.push(base_index);
                         all_indices.push(base_index + 2);
@@ -2515,19 +2510,13 @@ impl RenderState {
                         let pe_color = [0.2, 0.7, 0.9, marker_alpha];
 
                         let pe_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex {
-                            position: [(pe_x - cam_x) as f32, (pe_y - cam_y) as f32],
-                            color: pe_color,
-                        });
+                        all_vertices.push(Vertex::new([(pe_x - cam_x) as f32, (pe_y - cam_y) as f32], pe_color));
                         for j in 0..marker_segments {
                             let angle = (j as f64 / marker_segments as f64) * std::f64::consts::TAU;
-                            all_vertices.push(Vertex {
-                                position: [
+                            all_vertices.push(Vertex::new([
                                     (pe_x + marker_radius * angle.cos() - cam_x) as f32,
                                     (pe_y + marker_radius * angle.sin() - cam_y) as f32,
-                                ],
-                                color: pe_color,
-                            });
+                                ], pe_color));
                         }
                         for j in 0..marker_segments {
                             all_indices.push(pe_base);
@@ -2592,22 +2581,10 @@ impl RenderState {
                                 let nx_perp = -dy / len * line_width;
                                 let ny_perp = dx / len * line_width;
 
-                                all_vertices.push(Vertex {
-                                    position: [(prev_x + nx_perp - cam_x) as f32, (prev_y + ny_perp - cam_y) as f32],
-                                    color: seg_color,
-                                });
-                                all_vertices.push(Vertex {
-                                    position: [(prev_x - nx_perp - cam_x) as f32, (prev_y - ny_perp - cam_y) as f32],
-                                    color: seg_color,
-                                });
-                                all_vertices.push(Vertex {
-                                    position: [(px + nx_perp - cam_x) as f32, (py + ny_perp - cam_y) as f32],
-                                    color: seg_color,
-                                });
-                                all_vertices.push(Vertex {
-                                    position: [(px - nx_perp - cam_x) as f32, (py - ny_perp - cam_y) as f32],
-                                    color: seg_color,
-                                });
+                                all_vertices.push(Vertex::new([(prev_x + nx_perp - cam_x) as f32, (prev_y + ny_perp - cam_y) as f32], seg_color));
+                                all_vertices.push(Vertex::new([(prev_x - nx_perp - cam_x) as f32, (prev_y - ny_perp - cam_y) as f32], seg_color));
+                                all_vertices.push(Vertex::new([(px + nx_perp - cam_x) as f32, (py + ny_perp - cam_y) as f32], seg_color));
+                                all_vertices.push(Vertex::new([(px - nx_perp - cam_x) as f32, (py - ny_perp - cam_y) as f32], seg_color));
 
                                 all_indices.push(base_index);
                                 all_indices.push(base_index + 2);
@@ -2661,19 +2638,13 @@ impl RenderState {
                         let pe_color = [0.2, 0.7, 0.9, marker_alpha];
 
                         let pe_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex {
-                            position: [(pe_x - cam_x) as f32, (pe_y - cam_y) as f32],
-                            color: pe_color,
-                        });
+                        all_vertices.push(Vertex::new([(pe_x - cam_x) as f32, (pe_y - cam_y) as f32], pe_color));
                         for j in 0..marker_segments {
                             let angle = (j as f64 / marker_segments as f64) * std::f64::consts::TAU;
-                            all_vertices.push(Vertex {
-                                position: [
+                            all_vertices.push(Vertex::new([
                                     (pe_x + marker_radius * angle.cos() - cam_x) as f32,
                                     (pe_y + marker_radius * angle.sin() - cam_y) as f32,
-                                ],
-                                color: pe_color,
-                            });
+                                ], pe_color));
                         }
                         for j in 0..marker_segments {
                             all_indices.push(pe_base);
@@ -2696,19 +2667,13 @@ impl RenderState {
                         let ap_color = [0.9, 0.5, 0.1, marker_alpha];
 
                         let ap_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex {
-                            position: [(ap_x - cam_x) as f32, (ap_y - cam_y) as f32],
-                            color: ap_color,
-                        });
+                        all_vertices.push(Vertex::new([(ap_x - cam_x) as f32, (ap_y - cam_y) as f32], ap_color));
                         for j in 0..marker_segments {
                             let angle = (j as f64 / marker_segments as f64) * std::f64::consts::TAU;
-                            all_vertices.push(Vertex {
-                                position: [
+                            all_vertices.push(Vertex::new([
                                     (ap_x + marker_radius * angle.cos() - cam_x) as f32,
                                     (ap_y + marker_radius * angle.sin() - cam_y) as f32,
-                                ],
-                                color: ap_color,
-                            });
+                                ], ap_color));
                         }
                         for j in 0..marker_segments {
                             all_indices.push(ap_base);
@@ -2728,9 +2693,9 @@ impl RenderState {
         // Draw bodies
         self.add_body_vertices(&mut all_vertices, &mut all_indices, bodies, scale);
 
-        // Draw trees on body surface (ship view only)
+        // Draw launchpad on body surface (ship view only)
         if let Some(ship_data) = ship {
-            self.add_tree_vertices(&mut all_vertices, &mut all_indices, bodies, scale, ship_data);
+            self.add_launchpad_vertices(&mut all_vertices, &mut all_indices, bodies, scale, ship_data);
         }
 
         // Draw ship on top of everything
@@ -2827,28 +2792,9 @@ impl RenderState {
                                 // Rotate around origin by vessel rotation
                                 let rx = vx * cos_r - vy * sin_r;
                                 let ry = vx * sin_r + vy * cos_r;
-                                // Apply per-part heat tinting
-                                let color = if part_data.heat_fraction > 0.01 {
-                                    let h = part_data.heat_fraction;
-                                    let r = vert.color[0] + (1.0 - vert.color[0]) * h;
-                                    let g = if h < 0.5 {
-                                        vert.color[1] + (0.6 - vert.color[1]) * h * 2.0
-                                    } else {
-                                        0.6 + (1.0 - 0.6) * (h - 0.5) * 2.0
-                                    };
-                                    let b = if h < 0.5 {
-                                        vert.color[2] * (1.0 - h * 2.0)
-                                    } else {
-                                        (h - 0.5) * 2.0
-                                    };
-                                    [r, g, b, vert.color[3]]
-                                } else {
-                                    vert.color
-                                };
-                                all_vertices.push(Vertex {
-                                    position: [part_center_x + rx, part_center_y + ry],
-                                    color,
-                                });
+                                // Apply per-part heat tinting (blackbody glow)
+                                let color = apply_heat_tint(vert.color, part_data.temperature);
+                                all_vertices.push(Vertex::new([part_center_x + rx, part_center_y + ry], color));
                             }
 
                             // Part vertices are triangle lists (every 3 verts = 1 triangle)
@@ -2887,10 +2833,7 @@ impl RenderState {
                                     let vy = vert.position[1] * render_scale;
                                     let rx = vx * cos_r - vy * sin_r;
                                     let ry = vx * sin_r + vy * cos_r;
-                                    all_vertices.push(Vertex {
-                                        position: [rel_x + rx, rel_y + ry],
-                                        color: vert.color,
-                                    });
+                                    all_vertices.push(Vertex::new([rel_x + rx, rel_y + ry], vert.color));
                                 }
                                 let num_verts = adapter_verts.len() as u32;
                                 for i in (0..num_verts).step_by(3) {
@@ -2908,33 +2851,24 @@ impl RenderState {
                     let base_index = all_vertices.len() as u32;
 
                     // Apply heat tinting to ship color
-                    let tri_color = apply_heat_tint(ship_data.color, ship_data.heat_fraction);
+                    let tri_color = apply_heat_tint(ship_data.color, ship_data.temperature);
 
                     let nose_angle = rotation;
                     let back_left_angle = rotation + std::f32::consts::PI * 0.8;
                     let back_right_angle = rotation - std::f32::consts::PI * 0.8;
 
-                    all_vertices.push(Vertex {
-                        position: [
+                    all_vertices.push(Vertex::new([
                             rel_x + size * nose_angle.cos(),
                             rel_y + size * nose_angle.sin(),
-                        ],
-                        color: tri_color,
-                    });
-                    all_vertices.push(Vertex {
-                        position: [
+                        ], tri_color));
+                    all_vertices.push(Vertex::new([
                             rel_x + size * 0.6 * back_left_angle.cos(),
                             rel_y + size * 0.6 * back_left_angle.sin(),
-                        ],
-                        color: tri_color,
-                    });
-                    all_vertices.push(Vertex {
-                        position: [
+                        ], tri_color));
+                    all_vertices.push(Vertex::new([
                             rel_x + size * 0.6 * back_right_angle.cos(),
                             rel_y + size * 0.6 * back_right_angle.sin(),
-                        ],
-                        color: tri_color,
-                    });
+                        ], tri_color));
 
                     all_indices.push(base_index);
                     all_indices.push(base_index + 1);
@@ -2987,10 +2921,10 @@ impl RenderState {
                     // Perpendicular to the arm direction
                     let arm_perp_x = -left_dy;
                     let arm_perp_y = left_dx;
-                    all_vertices.push(Vertex { position: [tip_x - arm_perp_x * arm_half_thickness, tip_y - arm_perp_y * arm_half_thickness], color: prograde_color });
-                    all_vertices.push(Vertex { position: [tip_x + arm_perp_x * arm_half_thickness, tip_y + arm_perp_y * arm_half_thickness], color: prograde_color });
-                    all_vertices.push(Vertex { position: [tail_x + arm_perp_x * arm_half_thickness, tail_y + arm_perp_y * arm_half_thickness], color: prograde_color });
-                    all_vertices.push(Vertex { position: [tail_x - arm_perp_x * arm_half_thickness, tail_y - arm_perp_y * arm_half_thickness], color: prograde_color });
+                    all_vertices.push(Vertex::new([tip_x - arm_perp_x * arm_half_thickness, tip_y - arm_perp_y * arm_half_thickness], prograde_color));
+                    all_vertices.push(Vertex::new([tip_x + arm_perp_x * arm_half_thickness, tip_y + arm_perp_y * arm_half_thickness], prograde_color));
+                    all_vertices.push(Vertex::new([tail_x + arm_perp_x * arm_half_thickness, tail_y + arm_perp_y * arm_half_thickness], prograde_color));
+                    all_vertices.push(Vertex::new([tail_x - arm_perp_x * arm_half_thickness, tail_y - arm_perp_y * arm_half_thickness], prograde_color));
                     all_indices.push(base_index);
                     all_indices.push(base_index + 1);
                     all_indices.push(base_index + 2);
@@ -3004,10 +2938,10 @@ impl RenderState {
                     let tail_y = tip_y + right_dy * arm_len;
                     let arm_perp_x = -right_dy;
                     let arm_perp_y = right_dx;
-                    all_vertices.push(Vertex { position: [tip_x - arm_perp_x * arm_half_thickness, tip_y - arm_perp_y * arm_half_thickness], color: prograde_color });
-                    all_vertices.push(Vertex { position: [tip_x + arm_perp_x * arm_half_thickness, tip_y + arm_perp_y * arm_half_thickness], color: prograde_color });
-                    all_vertices.push(Vertex { position: [tail_x + arm_perp_x * arm_half_thickness, tail_y + arm_perp_y * arm_half_thickness], color: prograde_color });
-                    all_vertices.push(Vertex { position: [tail_x - arm_perp_x * arm_half_thickness, tail_y - arm_perp_y * arm_half_thickness], color: prograde_color });
+                    all_vertices.push(Vertex::new([tip_x - arm_perp_x * arm_half_thickness, tip_y - arm_perp_y * arm_half_thickness], prograde_color));
+                    all_vertices.push(Vertex::new([tip_x + arm_perp_x * arm_half_thickness, tip_y + arm_perp_y * arm_half_thickness], prograde_color));
+                    all_vertices.push(Vertex::new([tail_x + arm_perp_x * arm_half_thickness, tail_y + arm_perp_y * arm_half_thickness], prograde_color));
+                    all_vertices.push(Vertex::new([tail_x - arm_perp_x * arm_half_thickness, tail_y - arm_perp_y * arm_half_thickness], prograde_color));
                     all_indices.push(base_index);
                     all_indices.push(base_index + 1);
                     all_indices.push(base_index + 2);
@@ -3031,32 +2965,23 @@ impl RenderState {
                 let back_right_angle = rotation - std::f32::consts::PI * 0.8;
 
                 // Apply heat tinting to indicator color
-                let indicator_color = apply_heat_tint(ship_data.color, ship_data.heat_fraction);
+                let indicator_color = apply_heat_tint(ship_data.color, ship_data.temperature);
 
                 // Outer triangle (indicator)
-                all_vertices.push(Vertex {
-                    position: [
+                all_vertices.push(Vertex::new([
                         rel_x + indicator_size * nose_angle.cos(),
                         rel_y + indicator_size * nose_angle.sin(),
-                    ],
-                    color: indicator_color,
-                });
+                    ], indicator_color));
 
-                all_vertices.push(Vertex {
-                    position: [
+                all_vertices.push(Vertex::new([
                         rel_x + indicator_size * 0.6 * back_left_angle.cos(),
                         rel_y + indicator_size * 0.6 * back_left_angle.sin(),
-                    ],
-                    color: indicator_color,
-                });
+                    ], indicator_color));
 
-                all_vertices.push(Vertex {
-                    position: [
+                all_vertices.push(Vertex::new([
                         rel_x + indicator_size * 0.6 * back_right_angle.cos(),
                         rel_y + indicator_size * 0.6 * back_right_angle.sin(),
-                    ],
-                    color: indicator_color,
-                });
+                    ], indicator_color));
 
                 // Inner triangle (darker, for outline effect)
                 let inner_size = indicator_size * 0.6;
@@ -3067,29 +2992,20 @@ impl RenderState {
                     indicator_color[3],
                 ];
 
-                all_vertices.push(Vertex {
-                    position: [
+                all_vertices.push(Vertex::new([
                         rel_x + inner_size * nose_angle.cos(),
                         rel_y + inner_size * nose_angle.sin(),
-                    ],
-                    color: inner_color,
-                });
+                    ], inner_color));
 
-                all_vertices.push(Vertex {
-                    position: [
+                all_vertices.push(Vertex::new([
                         rel_x + inner_size * 0.6 * back_left_angle.cos(),
                         rel_y + inner_size * 0.6 * back_left_angle.sin(),
-                    ],
-                    color: inner_color,
-                });
+                    ], inner_color));
 
-                all_vertices.push(Vertex {
-                    position: [
+                all_vertices.push(Vertex::new([
                         rel_x + inner_size * 0.6 * back_right_angle.cos(),
                         rel_y + inner_size * 0.6 * back_right_angle.sin(),
-                    ],
-                    color: inner_color,
-                });
+                    ], inner_color));
 
                 // Outer triangle
                 all_indices.push(base_index);
@@ -3161,10 +3077,7 @@ impl RenderState {
                                 let vy = vert.position[1] * scale_factor;
                                 let rx = vx * cos_r - vy * sin_r;
                                 let ry = vx * sin_r + vy * cos_r;
-                                all_vertices.push(Vertex {
-                                    position: [part_center_x + rx, part_center_y + ry],
-                                    color: vert.color,
-                                });
+                                all_vertices.push(Vertex::new([part_center_x + rx, part_center_y + ry], vert.color));
                             }
                             let num_part_verts = part_verts.len() as u32;
                             for i in (0..num_part_verts).step_by(3) {
@@ -3197,10 +3110,7 @@ impl RenderState {
                                     let vy = vert.position[1] * render_scale;
                                     let rx = vx * cos_r - vy * sin_r;
                                     let ry = vx * sin_r + vy * cos_r;
-                                    all_vertices.push(Vertex {
-                                        position: [rel_x + rx, rel_y + ry],
-                                        color: vert.color,
-                                    });
+                                    all_vertices.push(Vertex::new([rel_x + rx, rel_y + ry], vert.color));
                                 }
                                 let num_verts = adapter_verts.len() as u32;
                                 for i in (0..num_verts).step_by(3) {
@@ -3285,12 +3195,12 @@ impl RenderState {
                             let ny = dx / len * line_width;
 
                             let base = all_vertices.len() as u32;
-                            all_vertices.push(Vertex { position: [(px + nx - cam_x) as f32, (py + ny - cam_y) as f32], color: orbit.color });
-                            all_vertices.push(Vertex { position: [(px - nx - cam_x) as f32, (py - ny - cam_y) as f32], color: orbit.color });
+                            all_vertices.push(Vertex::new([(px + nx - cam_x) as f32, (py + ny - cam_y) as f32], orbit.color));
+                            all_vertices.push(Vertex::new([(px - nx - cam_x) as f32, (py - ny - cam_y) as f32], orbit.color));
                             let next_px = center_x + next_rx;
                             let next_py = center_y + next_ry;
-                            all_vertices.push(Vertex { position: [(next_px - nx - cam_x) as f32, (next_py - ny - cam_y) as f32], color: orbit.color });
-                            all_vertices.push(Vertex { position: [(next_px + nx - cam_x) as f32, (next_py + ny - cam_y) as f32], color: orbit.color });
+                            all_vertices.push(Vertex::new([(next_px - nx - cam_x) as f32, (next_py - ny - cam_y) as f32], orbit.color));
+                            all_vertices.push(Vertex::new([(next_px + nx - cam_x) as f32, (next_py + ny - cam_y) as f32], orbit.color));
                             all_indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
                         }
                     }
@@ -3310,7 +3220,7 @@ impl RenderState {
         &self,
         all_vertices: &mut Vec<Vertex>,
         all_indices: &mut Vec<u32>,
-        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3])],
+        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)],
         scale: f64,
     ) {
         let cam_x = self.camera.position[0];
@@ -3319,7 +3229,7 @@ impl RenderState {
 
         // Atmosphere uses alpha channel to encode t (0=surface, 1=edge).
         // Fragment shader applies exp(-8*t) for non-linear falloff.
-        for &(bx, by, radius, _, atmo_height, atmo_color) in bodies {
+        for &(bx, by, radius, _, atmo_height, atmo_color, _) in bodies {
             if atmo_height <= 0.0 {
                 continue;
             }
@@ -3351,14 +3261,8 @@ impl RenderState {
                     let cos_a = angle.cos();
                     let sin_a = angle.sin();
 
-                    all_vertices.push(Vertex {
-                        position: [(cx + r_inner * cos_a - cam_x) as f32, (cy + r_inner * sin_a - cam_y) as f32],
-                        color: inner_color,
-                    });
-                    all_vertices.push(Vertex {
-                        position: [(cx + r_outer * cos_a - cam_x) as f32, (cy + r_outer * sin_a - cam_y) as f32],
-                        color: outer_color,
-                    });
+                    all_vertices.push(Vertex::new([(cx + r_inner * cos_a - cam_x) as f32, (cy + r_inner * sin_a - cam_y) as f32], inner_color));
+                    all_vertices.push(Vertex::new([(cx + r_outer * cos_a - cam_x) as f32, (cy + r_outer * sin_a - cam_y) as f32], outer_color));
                 }
 
                 for i in 0..segments {
@@ -3401,14 +3305,8 @@ impl RenderState {
                     let cos_a = angle.cos();
                     let sin_a = angle.sin();
 
-                    all_vertices.push(Vertex {
-                        position: [(cx + r_inner * cos_a - cam_x) as f32, (cy + r_inner * sin_a - cam_y) as f32],
-                        color: inner_color,
-                    });
-                    all_vertices.push(Vertex {
-                        position: [(cx + r_outer * cos_a - cam_x) as f32, (cy + r_outer * sin_a - cam_y) as f32],
-                        color: outer_color,
-                    });
+                    all_vertices.push(Vertex::new([(cx + r_inner * cos_a - cam_x) as f32, (cy + r_inner * sin_a - cam_y) as f32], inner_color));
+                    all_vertices.push(Vertex::new([(cx + r_outer * cos_a - cam_x) as f32, (cy + r_outer * sin_a - cam_y) as f32], outer_color));
                 }
 
                 for i in 0..arc_segments {
@@ -3433,7 +3331,7 @@ impl RenderState {
         &mut self,
         all_vertices: &mut Vec<Vertex>,
         all_indices: &mut Vec<u32>,
-        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3])],
+        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)],
         scale: f64,
     ) {
         // Store body data for hit testing
@@ -3448,7 +3346,7 @@ impl RenderState {
         let cam_x = self.camera.position[0];
         let cam_y = self.camera.position[1];
 
-        for (x, y, radius, color, _atmo_height, _atmo_color) in bodies {
+        for (x, y, radius, color, _atmo_height, _atmo_color, body_idx) in bodies {
             let rel_x = ((*x * scale) - cam_x) as f32;
             let rel_y = ((*y * scale) - cam_y) as f32;
             let r = (*radius * scale) as f32;
@@ -3474,6 +3372,7 @@ impl RenderState {
             if body_is_visible {
                 let base_index = all_vertices.len() as u32;
                 let draw_r = r;
+                let texture_layer = self.body_texture_map.layer_for_body(*body_idx);
 
                 let draw_pixel_radius = draw_r * pixels_per_world_unit;
                 let circumference_pixels = 2.0 * std::f32::consts::PI * draw_pixel_radius;
@@ -3483,17 +3382,24 @@ impl RenderState {
                     // Full circle: polygon triangle fan
                     let segments = raw_segments.clamp(64, 4096) & !1;
 
-                    all_vertices.push(Vertex {
-                        position: [rel_x, rel_y],
-                        color: *color,
-                    });
-
-                    for i in 0..segments {
-                        let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
-                        all_vertices.push(Vertex {
-                            position: [rel_x + draw_r * angle.cos(), rel_y + draw_r * angle.sin()],
-                            color: *color,
-                        });
+                    if let Some(layer) = texture_layer {
+                        all_vertices.push(Vertex::textured([rel_x, rel_y], [0.5, 0.5], layer));
+                        for i in 0..segments {
+                            let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
+                            let u = 0.5 + 0.5 * angle.cos();
+                            let v = 0.5 - 0.5 * angle.sin();
+                            all_vertices.push(Vertex::textured(
+                                [rel_x + draw_r * angle.cos(), rel_y + draw_r * angle.sin()],
+                                [u, v],
+                                layer,
+                            ));
+                        }
+                    } else {
+                        all_vertices.push(Vertex::new([rel_x, rel_y], *color));
+                        for i in 0..segments {
+                            let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
+                            all_vertices.push(Vertex::new([rel_x + draw_r * angle.cos(), rel_y + draw_r * angle.sin()], *color));
+                        }
                     }
 
                     for i in 0..segments {
@@ -3526,22 +3432,33 @@ impl RenderState {
                     // At least 1% of circumference (0.5% each side)
                     let arc_half = visible_half.max(0.005 * std::f64::consts::TAU);
 
-                    // Center vertex (body center)
-                    all_vertices.push(Vertex {
-                        position: [rel_x, rel_y],
-                        color: *color,
-                    });
+                    if let Some(layer) = texture_layer {
+                        // Center vertex with UV center
+                        all_vertices.push(Vertex::textured([rel_x, rel_y], [0.5, 0.5], layer));
 
-                    // Arc edge vertices computed in f64 for precision
-                    for i in 0..=arc_segments {
-                        let t = i as f64 / arc_segments as f64;
-                        let angle = cam_angle - arc_half + t * 2.0 * arc_half;
-                        let vx = cx + r_f64 * angle.cos();
-                        let vy = cy + r_f64 * angle.sin();
-                        all_vertices.push(Vertex {
-                            position: [(vx - cam_x) as f32, (vy - cam_y) as f32],
-                            color: *color,
-                        });
+                        for i in 0..=arc_segments {
+                            let t = i as f64 / arc_segments as f64;
+                            let angle = cam_angle - arc_half + t * 2.0 * arc_half;
+                            let vx = cx + r_f64 * angle.cos();
+                            let vy = cy + r_f64 * angle.sin();
+                            let u = 0.5 + 0.5 * (angle.cos() as f32);
+                            let v = 0.5 - 0.5 * (angle.sin() as f32);
+                            all_vertices.push(Vertex::textured(
+                                [(vx - cam_x) as f32, (vy - cam_y) as f32],
+                                [u, v],
+                                layer,
+                            ));
+                        }
+                    } else {
+                        all_vertices.push(Vertex::new([rel_x, rel_y], *color));
+
+                        for i in 0..=arc_segments {
+                            let t = i as f64 / arc_segments as f64;
+                            let angle = cam_angle - arc_half + t * 2.0 * arc_half;
+                            let vx = cx + r_f64 * angle.cos();
+                            let vy = cy + r_f64 * angle.sin();
+                            all_vertices.push(Vertex::new([(vx - cam_x) as f32, (vy - cam_y) as f32], *color));
+                        }
                     }
 
                     // Triangle fan
@@ -3564,14 +3481,8 @@ impl RenderState {
                     let cos_a = angle.cos();
                     let sin_a = angle.sin();
 
-                    all_vertices.push(Vertex {
-                        position: [rel_x + ring_outer * cos_a, rel_y + ring_outer * sin_a],
-                        color: *color,
-                    });
-                    all_vertices.push(Vertex {
-                        position: [rel_x + ring_inner * cos_a, rel_y + ring_inner * sin_a],
-                        color: [color[0] * 0.3, color[1] * 0.3, color[2] * 0.3, color[3] * 0.5],
-                    });
+                    all_vertices.push(Vertex::new([rel_x + ring_outer * cos_a, rel_y + ring_outer * sin_a], *color));
+                    all_vertices.push(Vertex::new([rel_x + ring_inner * cos_a, rel_y + ring_inner * sin_a], [color[0] * 0.3, color[1] * 0.3, color[2] * 0.3, color[3] * 0.5]));
                 }
 
                 for i in 0..ring_segments {
@@ -3592,12 +3503,12 @@ impl RenderState {
         }
     }
 
-    /// Draw trees and launchpad along the surface of the nearest body when in ship view.
-    fn add_tree_vertices(
+    /// Draw the launchpad on Earth's surface when in ship view.
+    fn add_launchpad_vertices(
         &self,
         all_vertices: &mut Vec<Vertex>,
         all_indices: &mut Vec<u32>,
-        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3])],
+        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)],
         scale: f64,
         ship: &ShipRenderData,
     ) {
@@ -3606,263 +3517,65 @@ impl RenderState {
         let pixels_per_world_unit = self.camera.zoom * self.size.height as f32 / 2.0;
         let ship_pixels = ship.size as f32 * pixels_per_world_unit * 2.0;
 
-        // Only draw trees in ship view (ship triangle indicator not needed)
+        // Only draw launchpad in ship view
         if ship_pixels < 5.0 {
             return;
         }
 
+        // Find the launchpad body
+        let Some((bx, by, radius, _, _, _, _)) = bodies.get(LAUNCHPAD_BODY_INDEX) else { return };
+
         let cam_x = self.camera.position[0];
         let cam_y = self.camera.position[1];
-
-        // Ship position is already in world units
-        let ship_wx = ship.x;
-        let ship_wy = ship.y;
-
-        // Find nearest body by altitude
-        let mut nearest_idx = None;
-        let mut nearest_alt = f64::MAX;
-        for (i, (bx, by, radius, _, _, _)) in bodies.iter().enumerate() {
-            let bwx = bx * scale;
-            let bwy = by * scale;
-            let dist = ((ship_wx - bwx).powi(2) + (ship_wy - bwy).powi(2)).sqrt();
-            let alt = dist - radius * scale;
-            if alt < nearest_alt {
-                nearest_alt = alt;
-                nearest_idx = Some(i);
-            }
-        }
-
-        let Some(idx) = nearest_idx else { return };
-        let (bx, by, radius, _, _, _) = bodies[idx];
-        let cx = bx * scale; // body center in world units
+        let cx = bx * scale;
         let cy = by * scale;
-        let r = radius * scale; // body radius in world units
+        let r = radius * scale;
 
-        // Angle from body center to camera
-        let dx = cam_x - cx;
-        let dy = cam_y - cy;
-        let cam_angle = dy.atan2(dx);
+        let lp_angle = LAUNCHPAD_SURFACE_ANGLE;
+        let lp_height = LAUNCHPAD_HEIGHT * scale;
+        let lp_top_half = (LAUNCHPAD_TOP_WIDTH * 0.5) * scale;
+        let lp_bot_half = (LAUNCHPAD_BOTTOM_WIDTH * 0.5) * scale;
 
-        // Launchpad exclusion zone (skip trees where launchpad is)
-        let launchpad_on_this_body = idx == LAUNCHPAD_BODY_INDEX;
-        let launchpad_half_angle = if launchpad_on_this_body {
-            (LAUNCHPAD_BOTTOM_WIDTH * 0.5) / radius // angular half-width in radians
-        } else {
-            0.0
-        };
+        // Surface point at launchpad center
+        let sx = cx + r * lp_angle.cos();
+        let sy = cy + r * lp_angle.sin();
 
-        // Tree spacing: one tree every ~33 meters (750 trees over same distance)
-        let tree_spacing_meters = 33.0;
-        let angle_step = tree_spacing_meters / radius; // radians per tree
+        // Radial outward and tangent directions
+        let rad_x = lp_angle.cos();
+        let rad_y = lp_angle.sin();
+        let tan_x = -rad_y;
+        let tan_y = rad_x;
 
-        // Find range of tree indices within the visible arc, centered on camera
-        let max_trees = 750i64;
-        let cam_n = (cam_angle / angle_step).round() as i64;
-        let n_start = cam_n - max_trees / 2;
-        let n_end = cam_n + max_trees / 2;
+        // 4 corners: bottom-left, bottom-right, top-left, top-right
+        let bl_x = sx - lp_bot_half * tan_x;
+        let bl_y = sy - lp_bot_half * tan_y;
+        let br_x = sx + lp_bot_half * tan_x;
+        let br_y = sy + lp_bot_half * tan_y;
+        let tl_x = sx - lp_top_half * tan_x + lp_height * rad_x;
+        let tl_y = sy - lp_top_half * tan_y + lp_height * rad_y;
+        let tr_x = sx + lp_top_half * tan_x + lp_height * rad_x;
+        let tr_y = sy + lp_top_half * tan_y + lp_height * rad_y;
 
-        // Base tree dimensions in world units (varied per tree)
-        let base_trunk_width = 1.0 * scale;
-        let base_trunk_height = 7.0 * scale;
-        let base_canopy_radius = 3.0 * scale;
+        let lp_color: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
+        let base = all_vertices.len() as u32;
 
-        let canopy_segments = 8u32;
+        all_vertices.push(Vertex::new([(bl_x - cam_x) as f32, (bl_y - cam_y) as f32], lp_color));
+        all_vertices.push(Vertex::new([(br_x - cam_x) as f32, (br_y - cam_y) as f32], lp_color));
+        all_vertices.push(Vertex::new([(tl_x - cam_x) as f32, (tl_y - cam_y) as f32], lp_color));
+        all_vertices.push(Vertex::new([(tr_x - cam_x) as f32, (tr_y - cam_y) as f32], lp_color));
 
-        // Integer hash function with good avalanche properties
-        let hash_u64 = |mut x: u64| -> u64 {
-            x = x.wrapping_mul(0x517cc1b727220a95);
-            x ^= x >> 32;
-            x = x.wrapping_mul(0x6c62272e07bb0142);
-            x ^= x >> 32;
-            x
-        };
-
-        for n in n_start..=n_end {
-            // Three independent hash values from the tree index
-            let h = hash_u64(n as u64);
-            let hash1 = (h & 0xFFFF) as f64 / 65536.0;
-            let hash2 = ((h >> 16) & 0xFFFF) as f64 / 65536.0;
-            let hash3 = ((h >> 32) & 0xFFFF) as f64 / 65536.0;
-
-            // Position offset: up to ±40% of spacing
-            let offset = (hash1 - 0.5) * angle_step * 0.8;
-            let angle = n as f64 * angle_step + offset;
-
-            // Size variation: 0.5x to 1.5x
-            let size_factor = 0.5 + hash2;
-            let trunk_width = base_trunk_width * (0.7 + hash3 * 0.6);
-            let trunk_height = base_trunk_height * size_factor;
-            let canopy_radius = base_canopy_radius * size_factor;
-            let canopy_center_height = trunk_height;
-
-            // Color variation per tree
-            let trunk_color: [f32; 4] = [
-                0.35 + hash2 as f32 * 0.2,
-                0.20 + hash3 as f32 * 0.15,
-                0.08,
-                1.0,
-            ];
-            let canopy_color: [f32; 4] = [
-                0.10 + hash3 as f32 * 0.1,
-                0.40 + hash1 as f32 * 0.3,
-                0.10 + hash2 as f32 * 0.1,
-                1.0,
-            ];
-
-            // Skip trees in the launchpad zone
-            if launchpad_on_this_body {
-                let diff = angle - LAUNCHPAD_SURFACE_ANGLE;
-                // Normalize to [-PI, PI]
-                let diff = diff - (diff / std::f64::consts::TAU).round() * std::f64::consts::TAU;
-                if diff.abs() < launchpad_half_angle + angle_step {
-                    continue;
-                }
-            }
-
-            // Surface point
-            let sx = cx + r * angle.cos();
-            let sy = cy + r * angle.sin();
-
-            // Radial outward direction (unit vector from body center through surface point)
-            let rad_x = angle.cos();
-            let rad_y = angle.sin();
-
-            // Tangent direction (perpendicular, 90° CCW from radial)
-            let tan_x = -rad_y;
-            let tan_y = rad_x;
-
-            // Trunk: quad from surface point, width along tangent, height along radial
-            let half_w = trunk_width * 0.5;
-
-            // 4 corners of trunk quad
-            let t_bl_x = sx - half_w * tan_x;
-            let t_bl_y = sy - half_w * tan_y;
-            let t_br_x = sx + half_w * tan_x;
-            let t_br_y = sy + half_w * tan_y;
-            let t_tl_x = sx - half_w * tan_x + trunk_height * rad_x;
-            let t_tl_y = sy - half_w * tan_y + trunk_height * rad_y;
-            let t_tr_x = sx + half_w * tan_x + trunk_height * rad_x;
-            let t_tr_y = sy + half_w * tan_y + trunk_height * rad_y;
-
-            let base = all_vertices.len() as u32;
-
-            // Trunk vertices (4)
-            all_vertices.push(Vertex {
-                position: [(t_bl_x - cam_x) as f32, (t_bl_y - cam_y) as f32],
-                color: trunk_color,
-            });
-            all_vertices.push(Vertex {
-                position: [(t_br_x - cam_x) as f32, (t_br_y - cam_y) as f32],
-                color: trunk_color,
-            });
-            all_vertices.push(Vertex {
-                position: [(t_tl_x - cam_x) as f32, (t_tl_y - cam_y) as f32],
-                color: trunk_color,
-            });
-            all_vertices.push(Vertex {
-                position: [(t_tr_x - cam_x) as f32, (t_tr_y - cam_y) as f32],
-                color: trunk_color,
-            });
-
-            // Trunk indices (2 triangles)
-            all_indices.push(base);
-            all_indices.push(base + 1);
-            all_indices.push(base + 2);
-            all_indices.push(base + 1);
-            all_indices.push(base + 3);
-            all_indices.push(base + 2);
-
-            // Canopy: circle centered at top of trunk
-            let canopy_cx = sx + canopy_center_height * rad_x;
-            let canopy_cy = sy + canopy_center_height * rad_y;
-
-            let canopy_base = all_vertices.len() as u32;
-
-            // Center vertex
-            all_vertices.push(Vertex {
-                position: [(canopy_cx - cam_x) as f32, (canopy_cy - cam_y) as f32],
-                color: canopy_color,
-            });
-
-            // Edge vertices
-            for i in 0..canopy_segments {
-                let a = (i as f64 / canopy_segments as f64) * std::f64::consts::TAU;
-                let vx = canopy_cx + canopy_radius * a.cos();
-                let vy = canopy_cy + canopy_radius * a.sin();
-                all_vertices.push(Vertex {
-                    position: [(vx - cam_x) as f32, (vy - cam_y) as f32],
-                    color: canopy_color,
-                });
-            }
-
-            // Canopy indices (triangle fan)
-            for i in 0..canopy_segments {
-                all_indices.push(canopy_base);
-                all_indices.push(canopy_base + 1 + i);
-                all_indices.push(canopy_base + 1 + (i + 1) % canopy_segments);
-            }
-        }
-
-        // Draw launchpad if on the correct body
-        if launchpad_on_this_body {
-            let lp_angle = LAUNCHPAD_SURFACE_ANGLE;
-            let lp_height = LAUNCHPAD_HEIGHT * scale;
-            let lp_top_half = (LAUNCHPAD_TOP_WIDTH * 0.5) * scale;
-            let lp_bot_half = (LAUNCHPAD_BOTTOM_WIDTH * 0.5) * scale;
-
-            // Surface point at launchpad center
-            let sx = cx + r * lp_angle.cos();
-            let sy = cy + r * lp_angle.sin();
-
-            // Radial outward and tangent directions
-            let rad_x = lp_angle.cos();
-            let rad_y = lp_angle.sin();
-            let tan_x = -rad_y;
-            let tan_y = rad_x;
-
-            // 4 corners: bottom-left, bottom-right, top-left, top-right
-            let bl_x = sx - lp_bot_half * tan_x;
-            let bl_y = sy - lp_bot_half * tan_y;
-            let br_x = sx + lp_bot_half * tan_x;
-            let br_y = sy + lp_bot_half * tan_y;
-            let tl_x = sx - lp_top_half * tan_x + lp_height * rad_x;
-            let tl_y = sy - lp_top_half * tan_y + lp_height * rad_y;
-            let tr_x = sx + lp_top_half * tan_x + lp_height * rad_x;
-            let tr_y = sy + lp_top_half * tan_y + lp_height * rad_y;
-
-            let lp_color: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
-            let base = all_vertices.len() as u32;
-
-            all_vertices.push(Vertex {
-                position: [(bl_x - cam_x) as f32, (bl_y - cam_y) as f32],
-                color: lp_color,
-            });
-            all_vertices.push(Vertex {
-                position: [(br_x - cam_x) as f32, (br_y - cam_y) as f32],
-                color: lp_color,
-            });
-            all_vertices.push(Vertex {
-                position: [(tl_x - cam_x) as f32, (tl_y - cam_y) as f32],
-                color: lp_color,
-            });
-            all_vertices.push(Vertex {
-                position: [(tr_x - cam_x) as f32, (tr_y - cam_y) as f32],
-                color: lp_color,
-            });
-
-            // Two triangles for the trapezoid
-            all_indices.push(base);
-            all_indices.push(base + 1);
-            all_indices.push(base + 2);
-            all_indices.push(base + 1);
-            all_indices.push(base + 3);
-            all_indices.push(base + 2);
-        }
+        // Two triangles for the trapezoid
+        all_indices.push(base);
+        all_indices.push(base + 1);
+        all_indices.push(base + 2);
+        all_indices.push(base + 1);
+        all_indices.push(base + 3);
+        all_indices.push(base + 2);
     }
 
     /// Update geometry with multiple bodies (legacy method without orbits)
     /// scale: world units per meter (e.g., 1e-9 means 1 billion meters = 1 world unit)
-    pub fn update_bodies(&mut self, bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3])], scale: f64) {
+    pub fn update_bodies(&mut self, bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)], scale: f64) {
         let mut all_vertices = Vec::new();
         let mut all_indices = Vec::new();
 
@@ -3879,7 +3592,7 @@ impl RenderState {
         let cam_x = self.camera.position[0];
         let cam_y = self.camera.position[1];
 
-        for (x, y, radius, color, _atmo_height, _atmo_color) in bodies {
+        for (x, y, radius, color, _atmo_height, _atmo_color, body_idx) in bodies {
             // Calculate position relative to camera in f64 first, then convert to f32
             // This preserves precision for small bodies far from origin
             let rel_x = ((*x * scale) - cam_x) as f32;
@@ -3912,25 +3625,33 @@ impl RenderState {
             if body_is_visible {
                 let base_index = all_vertices.len() as u32;
                 let draw_r = r;
+                let texture_layer = self.body_texture_map.layer_for_body(*body_idx);
                 let draw_pixel_radius = draw_r * pixels_per_world_unit;
                 let circumference_pixels = 2.0 * std::f32::consts::PI * draw_pixel_radius;
                 let raw_segments = (circumference_pixels / 3.0) as u32;
 
                 if raw_segments <= 16384 {
                     // Full circle - planet small enough on screen
-                    let segments = 4u32;
+                    let segments = if texture_layer.is_some() { 64u32.max(raw_segments.min(256)) } else { 4u32 };
 
-                    all_vertices.push(Vertex {
-                        position: [rel_x, rel_y],
-                        color: *color,
-                    });
-
-                    for i in 0..segments {
-                        let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
-                        all_vertices.push(Vertex {
-                            position: [rel_x + draw_r * angle.cos(), rel_y + draw_r * angle.sin()],
-                            color: *color,
-                        });
+                    if let Some(layer) = texture_layer {
+                        all_vertices.push(Vertex::textured([rel_x, rel_y], [0.5, 0.5], layer));
+                        for i in 0..segments {
+                            let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
+                            let u = 0.5 + 0.5 * angle.cos();
+                            let v = 0.5 - 0.5 * angle.sin();
+                            all_vertices.push(Vertex::textured(
+                                [rel_x + draw_r * angle.cos(), rel_y + draw_r * angle.sin()],
+                                [u, v],
+                                layer,
+                            ));
+                        }
+                    } else {
+                        all_vertices.push(Vertex::new([rel_x, rel_y], *color));
+                        for i in 0..segments {
+                            let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
+                            all_vertices.push(Vertex::new([rel_x + draw_r * angle.cos(), rel_y + draw_r * angle.sin()], *color));
+                        }
                     }
 
                     for i in 0..segments {
@@ -3939,7 +3660,7 @@ impl RenderState {
                         all_indices.push(base_index + ((i + 1) % segments) + 1);
                     }
                 } else {
-                    // Zoomed in close: 4096 segments over just the visible arc
+                    // Zoomed in close: segments over just the visible arc
                     let dist = (rel_x * rel_x + rel_y * rel_y).sqrt();
                     let cam_angle = (-rel_y).atan2(-rel_x);
 
@@ -3955,20 +3676,28 @@ impl RenderState {
                     };
                     let half_angle = half_angle.min(std::f32::consts::PI);
 
-                    let arc_segments = 4u32;
+                    let arc_segments = if texture_layer.is_some() { 256u32 } else { 4u32 };
 
-                    all_vertices.push(Vertex {
-                        position: [rel_x, rel_y],
-                        color: *color,
-                    });
-
-                    for i in 0..=arc_segments {
-                        let t = i as f32 / arc_segments as f32;
-                        let angle = cam_angle - half_angle + t * 2.0 * half_angle;
-                        all_vertices.push(Vertex {
-                            position: [rel_x + draw_r * angle.cos(), rel_y + draw_r * angle.sin()],
-                            color: *color,
-                        });
+                    if let Some(layer) = texture_layer {
+                        all_vertices.push(Vertex::textured([rel_x, rel_y], [0.5, 0.5], layer));
+                        for i in 0..=arc_segments {
+                            let t = i as f32 / arc_segments as f32;
+                            let angle = cam_angle - half_angle + t * 2.0 * half_angle;
+                            let u = 0.5 + 0.5 * angle.cos();
+                            let v = 0.5 - 0.5 * angle.sin();
+                            all_vertices.push(Vertex::textured(
+                                [rel_x + draw_r * angle.cos(), rel_y + draw_r * angle.sin()],
+                                [u, v],
+                                layer,
+                            ));
+                        }
+                    } else {
+                        all_vertices.push(Vertex::new([rel_x, rel_y], *color));
+                        for i in 0..=arc_segments {
+                            let t = i as f32 / arc_segments as f32;
+                            let angle = cam_angle - half_angle + t * 2.0 * half_angle;
+                            all_vertices.push(Vertex::new([rel_x + draw_r * angle.cos(), rel_y + draw_r * angle.sin()], *color));
+                        }
                     }
 
                     for i in 0..arc_segments {
@@ -3994,15 +3723,9 @@ impl RenderState {
                     let sin_a = angle.sin();
 
                     // Outer vertex
-                    all_vertices.push(Vertex {
-                        position: [rel_x + ring_outer * cos_a, rel_y + ring_outer * sin_a],
-                        color: *color,
-                    });
+                    all_vertices.push(Vertex::new([rel_x + ring_outer * cos_a, rel_y + ring_outer * sin_a], *color));
                     // Inner vertex
-                    all_vertices.push(Vertex {
-                        position: [rel_x + ring_inner * cos_a, rel_y + ring_inner * sin_a],
-                        color: [color[0] * 0.3, color[1] * 0.3, color[2] * 0.3, color[3] * 0.5],
-                    });
+                    all_vertices.push(Vertex::new([rel_x + ring_inner * cos_a, rel_y + ring_inner * sin_a], [color[0] * 0.3, color[1] * 0.3, color[2] * 0.3, color[3] * 0.5]));
                 }
 
                 // Create ring triangles
@@ -4236,6 +3959,7 @@ impl RenderState {
             if editor_num_indices > 0 {
                 render_pass.set_pipeline(&self.render_pipeline);
                 render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, editor_vertex_buffer.slice(..));
                 render_pass.set_index_buffer(editor_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..editor_num_indices, 0, 0..1);
@@ -4371,6 +4095,7 @@ impl RenderState {
             });
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
@@ -4621,6 +4346,7 @@ impl RenderState {
             });
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
@@ -4655,23 +4381,42 @@ impl RenderState {
     }
 }
 
-/// Apply heat tinting to a color based on heat_fraction (0-1).
-/// Transitions from original -> orange -> white.
-fn apply_heat_tint(color: [f32; 4], heat_fraction: f32) -> [f32; 4] {
-    if heat_fraction <= 0.01 {
-        return color;
+/// Blackbody glow color for a given temperature.
+/// Returns (r, g, b) in 0.0-1.0 following an approximate electromagnetic
+/// spectrum: dark red at 500K, cherry red ~1000K, orange ~2000K, bright
+/// yellow at 4000K. Below 500K returns None (no glow).
+fn blackbody_color(temp_k: f64) -> Option<[f32; 3]> {
+    if temp_k < 500.0 {
+        return None;
     }
-    let h = heat_fraction;
-    let r = color[0] + (1.0 - color[0]) * h;
-    let g = if h < 0.5 {
-        color[1] + (0.6 - color[1]) * h * 2.0
-    } else {
-        0.6 + (1.0 - 0.6) * (h - 0.5) * 2.0
+    // t: 0.0 at 500K, 1.0 at 4000K
+    let t = ((temp_k - 500.0) / 3500.0).min(1.0) as f32;
+
+    // Red: starts dim (0.3) at 500K, reaches full quickly
+    let r = (0.3 + 0.7 * (t * 2.0).min(1.0)).min(1.0);
+    // Green: stays 0 until ~1000K, then rises to ~0.85 at 4000K
+    let g = if t < 0.15 { 0.0 } else { 0.85 * ((t - 0.15) / 0.85).powf(1.5) };
+    // Blue: stays 0 (no blue in this range — yellow is the limit)
+    let b = 0.0_f32;
+
+    Some([r, g, b])
+}
+
+/// Apply heat tinting to a color based on temperature (Kelvin).
+/// Below 500K: no effect. 500K-4000K: blackbody glow from dark red to bright yellow.
+fn apply_heat_tint(color: [f32; 4], temperature: f64) -> [f32; 4] {
+    let glow = match blackbody_color(temperature) {
+        Some(g) => g,
+        None => return color,
     };
-    let b = if h < 0.5 {
-        color[2] * (1.0 - h * 2.0)
-    } else {
-        (h - 0.5) * 2.0
-    };
-    [r, g, b, color[3]]
+    // Blend factor: how much the glow overrides the base color.
+    // At 500K the glow is subtle, by ~1500K it dominates.
+    let t = ((temperature - 500.0) / 3500.0).min(1.0) as f32;
+    let blend = (t * 1.5).min(1.0);
+    [
+        color[0] * (1.0 - blend) + glow[0] * blend,
+        color[1] * (1.0 - blend) + glow[1] * blend,
+        color[2] * (1.0 - blend) + glow[2] * blend,
+        color[3],
+    ]
 }
