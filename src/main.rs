@@ -14,7 +14,8 @@ use sunscatter::editor::{
 use egui;
 use sunscatter::game::{Game, GameMode};
 use sunscatter::render::{RenderState, MainMenuAction, PauseAction, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, StagedPartInfo, Vertex};
-use sunscatter::ship::{AutopilotTarget, ShipState, VesselPhysicsData, SHIP_SIZE, MAX_THRUST_ACCELERATION, VESSEL_DESTRUCTION_TEMP, AMBIENT_TEMPERATURE, RAILS_WARP_THRESHOLD};
+use sunscatter::ship::{AutopilotTarget, ShipState, VesselPhysicsData, SHIP_SIZE, MAX_THRUST_ACCELERATION, AMBIENT_TEMPERATURE, RAILS_WARP_THRESHOLD};
+use sunscatter::parts::default_heat_tolerance;
 
 // 1:1 Real-Scale Solar System Simulation
 // All physics use real-world values: masses, radii, distances, orbital velocities
@@ -54,8 +55,9 @@ fn main() {
             .unwrap(),
     );
 
-    let mut render_state = pollster::block_on(RenderState::new(window.clone()));
     let mut game = Game::new();
+    let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
+    let mut render_state = pollster::block_on(RenderState::new(window.clone(), &body_names));
     let mut last_frame = Instant::now();
 
     // Double-click detection
@@ -405,14 +407,18 @@ fn render_flight_frame(
             // Per-part heat update
             if !game.flight.ship.on_rails {
                 if let Some((density, airspeed, airspeed_dir_world)) = game.flight.ship.compute_aero_environment(&game.solar_system) {
-                    // Convert airspeed direction from world to vessel-local coordinates
+                    // Convert airspeed direction from world to part-local coordinates.
+                    // Ship physics uses X=forward (rotation=0 → nose along +X), but parts
+                    // use Y=forward (editor convention: nose at +Y). We apply the inverse
+                    // rotation with a -PI/2 offset to account for this.
                     let rot = game.flight.ship.rotation;
                     let cos_r = rot.cos();
                     let sin_r = rot.sin();
-                    let airspeed_dir_local = [
-                        airspeed_dir_world[0] * cos_r + airspeed_dir_world[1] * sin_r,
-                        -airspeed_dir_world[0] * sin_r + airspeed_dir_world[1] * cos_r,
-                    ];
+                    // First: physics-local (X=forward)
+                    let phys_x = airspeed_dir_world[0] * cos_r + airspeed_dir_world[1] * sin_r;
+                    let phys_y = -airspeed_dir_world[0] * sin_r + airspeed_dir_world[1] * cos_r;
+                    // Rotate +90° to part-local (Y=forward): part_x = -phys_y, part_y = phys_x
+                    let airspeed_dir_local = [-phys_y, phys_x];
                     vessel.update_part_temperatures(effective_dt, density, airspeed, airspeed_dir_local, &game.part_definitions);
                 } else {
                     // No atmosphere — radiative cooling only
@@ -528,27 +534,56 @@ fn render_flight_frame(
         });
 
         // Collision detection: active vs inactive vessels during physics warp (1x-10x)
+        // Uses oriented bounding box (OBB) collision via Separating Axis Theorem
         if time_warp <= RAILS_WARP_THRESHOLD {
             if let Some(ref vessel) = game.flight.vessel {
-                let active_half_h = vessel.bounding_half_height();
-                let active_half_w = vessel.bounding_half_width();
-                let active_extent = active_half_h.max(active_half_w);
+                let active_hw = vessel.bounding_half_width();
+                let active_hh = vessel.bounding_half_height();
+                let active_rot = game.flight.ship.rotation;
 
-                for inactive in &game.flight.inactive_vessels {
+                for inactive in &mut game.flight.inactive_vessels {
                     if inactive.ship.soi_body != active_soi { continue; }
 
+                    let (inactive_hw, inactive_hh) = inactive.vessel.as_ref()
+                        .map(|v| (v.bounding_half_width(), v.bounding_half_height()))
+                        .unwrap_or((0.5, 1.0));
+                    let inactive_rot = inactive.ship.rotation;
+
+                    // Quick broad-phase: circle check with circumscribed radius
                     let dx = active_pos[0] - inactive.ship.rel_position[0];
                     let dy = active_pos[1] - inactive.ship.rel_position[1];
-                    let dist = (dx * dx + dy * dy).sqrt();
+                    let dist_sq = dx * dx + dy * dy;
+                    let max_r = (active_hw * active_hw + active_hh * active_hh).sqrt()
+                        + (inactive_hw * inactive_hw + inactive_hh * inactive_hh).sqrt();
+                    if dist_sq > max_r * max_r { continue; }
 
-                    let inactive_extent = inactive.vessel.as_ref()
-                        .map(|v| v.bounding_half_height().max(v.bounding_half_width()))
-                        .unwrap_or(1.0);
-                    let collision_dist = active_extent + inactive_extent;
+                    // Narrow-phase: SAT test on two oriented bounding boxes
+                    if obb_overlap(
+                        active_pos, active_rot, active_hw, active_hh,
+                        inactive.ship.rel_position, inactive_rot, inactive_hw, inactive_hh,
+                    ) {
+                        let dist = dist_sq.sqrt().max(0.001);
+                        let nx = dx / dist;
+                        let ny = dy / dist;
 
-                    if dist < collision_dist {
-                        // Collision — stop active vessel relative to inactive
-                        game.flight.ship.rel_velocity = inactive.ship.rel_velocity;
+                        // Separate: push active vessel out along collision normal
+                        // Use a conservative separation distance
+                        let overlap = (active_hw + inactive_hw).min(active_hh + inactive_hh);
+                        game.flight.ship.rel_position[0] += nx * overlap * 0.5;
+                        game.flight.ship.rel_position[1] += ny * overlap * 0.5;
+
+                        // Bounce: reflect relative velocity along collision normal
+                        let rel_vx = game.flight.ship.rel_velocity[0] - inactive.ship.rel_velocity[0];
+                        let rel_vy = game.flight.ship.rel_velocity[1] - inactive.ship.rel_velocity[1];
+                        let rel_dot_n = rel_vx * nx + rel_vy * ny;
+
+                        // Only bounce if moving toward the inactive vessel
+                        if rel_dot_n < 0.0 {
+                            let restitution = 0.3;
+                            let impulse = -(1.0 + restitution) * rel_dot_n;
+                            game.flight.ship.rel_velocity[0] += impulse * nx;
+                            game.flight.ship.rel_velocity[1] += impulse * ny;
+                        }
                         break;
                     }
                 }
@@ -720,7 +755,7 @@ fn render_flight_frame(
             let pos = scaled_positions[i];
             let atmo_height = body.atmosphere.map(|a| a.visible_height()).unwrap_or(0.0);
             let atmo_color = body.atmosphere.map(|a| a.color).unwrap_or([0.0; 3]);
-            (pos[0], pos[1], body.radius * BODY_SCALE, body.color, atmo_height, atmo_color)
+            (pos[0], pos[1], body.radius * BODY_SCALE, body.color, atmo_height, atmo_color, i)
         })
         .collect();
 
@@ -901,10 +936,14 @@ fn render_flight_frame(
                             let trans_right = rcs_translate_for_render[1]; // +right (vessel +X for non-mirrored)
 
                             // --- Rotation-driven nozzle activation ---
-                            let lateral_torque_sign = if is_mirrored { -ry } else { ry };
+                            // Lateral nozzle exhausts away from mount side: for non-mirrored,
+                            // it exhausts left (-X), producing force to the right at this part.
+                            // Torque = r × F: with part above COM (ry > 0), rightward force
+                            // gives CW (negative) torque, so torque_sign = -ry.
+                            let lateral_torque_sign = if is_mirrored { ry } else { -ry };
                             let rot_lateral = dir.abs() > 0.001 && ((dir > 0.0 && lateral_torque_sign > 0.0) || (dir < 0.0 && lateral_torque_sign < 0.0));
-                            // Mirrored lateral: opposite rotation condition (for bilateral pod RCS)
-                            let lateral_torque_sign_m = if is_mirrored { ry } else { -ry };
+                            // Mirrored lateral: opposite side nozzle (for bilateral pod RCS)
+                            let lateral_torque_sign_m = if is_mirrored { -ry } else { ry };
                             let rot_lateral_m = dir.abs() > 0.001 && ((dir > 0.0 && lateral_torque_sign_m > 0.0) || (dir < 0.0 && lateral_torque_sign_m < 0.0));
                             let up_torque_sign = -rx;
                             let rot_up = dir.abs() > 0.001 && ((dir > 0.0 && up_torque_sign > 0.0) || (dir < 0.0 && up_torque_sign < 0.0));
@@ -972,13 +1011,14 @@ fn render_flight_frame(
                         rcs_thrust: if p.rcs_thrust > 0.0 { Some(p.rcs_thrust) } else { None },
                         rcs_nozzle_state,
                         heat_fraction: ((p.temperature - 300.0) / (p.max_heat_tolerance - 300.0)).clamp(0.0, 1.0) as f32,
+                        temperature: p.temperature,
                     }
                 })
                 .collect();
 
-            let max_fuel = vessel.get_max_fuel();
-            let fuel_frac = if max_fuel > 0.0 {
-                vessel.get_total_fuel() / max_fuel
+            let (stage_fuel, stage_fuel_max) = vessel.get_stage_fuel(&game.part_definitions);
+            let fuel_frac = if stage_fuel_max > 0.0 {
+                stage_fuel / stage_fuel_max
             } else {
                 0.0
             };
@@ -1003,12 +1043,12 @@ fn render_flight_frame(
             .filter(|p| p.temperature == hottest)
             .map(|p| p.max_heat_tolerance)
             .next()
-            .unwrap_or(VESSEL_DESTRUCTION_TEMP);
+            .unwrap_or(default_heat_tolerance());
         let frac = ((hottest - 300.0) / (max_tol - 300.0)).clamp(0.0, 1.0) as f32;
         (hottest, frac)
     } else {
         let frac = ((game.flight.ship.temperature - AMBIENT_TEMPERATURE)
-            / (VESSEL_DESTRUCTION_TEMP - AMBIENT_TEMPERATURE))
+            / (default_heat_tolerance() - AMBIENT_TEMPERATURE))
             .clamp(0.0, 1.0) as f32;
         (game.flight.ship.temperature, frac)
     };
@@ -1529,14 +1569,14 @@ fn compute_scaled_positions(game: &Game) -> Vec<[f64; 2]> {
 }
 
 /// Build body render tuples from scaled positions
-fn build_body_data(game: &Game, scaled_positions: &[[f64; 2]]) -> Vec<(f64, f64, f64, [f32; 4], f64, [f32; 3])> {
+fn build_body_data(game: &Game, scaled_positions: &[[f64; 2]]) -> Vec<(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)> {
     (0..game.solar_system.bodies.len())
         .map(|i| {
             let body = &game.solar_system.bodies[i];
             let pos = scaled_positions[i];
             let atmo_height = body.atmosphere.map(|a| a.visible_height()).unwrap_or(0.0);
             let atmo_color = body.atmosphere.map(|a| a.color).unwrap_or([0.0; 3]);
-            (pos[0], pos[1], body.radius * BODY_SCALE, body.color, atmo_height, atmo_color)
+            (pos[0], pos[1], body.radius * BODY_SCALE, body.color, atmo_height, atmo_color, i)
         })
         .collect()
 }
@@ -1621,6 +1661,7 @@ fn build_vessel_part_render_data(
                 rcs_thrust: if p.rcs_thrust > 0.0 { Some(p.rcs_thrust) } else { None },
                 rcs_nozzle_state: None,
                 heat_fraction: ((p.temperature - 300.0) / (p.max_heat_tolerance - 300.0)).clamp(0.0, 1.0) as f32,
+                temperature: p.temperature,
             }
         })
         .collect()
@@ -1704,6 +1745,9 @@ fn render_main_menu_frame(
     let scaled_positions = compute_scaled_positions(game);
     let bodies = build_body_data(game, &scaled_positions);
     let orbits = build_orbit_data(game, &scaled_positions, render_state);
+
+    // Update camera tracking (body focus)
+    render_state.update_tracking(&scaled_positions, SCALE);
 
     // Update body/orbit geometry (no ship)
     render_state.update_bodies_orbits_and_ship(&bodies, &orbits, None, SCALE, None);
@@ -2261,14 +2305,14 @@ fn handle_tracking_station_mouse_input(
             let dy = mouse_pos[1] - last_click_pos[1];
             let dist = (dx * dx + dy * dy).sqrt();
 
-            render_state.camera.is_dragging = true;
-
             // Double-click on body to focus
+            let mut was_double_click = false;
             if let Some(last_time) = *last_click_time {
                 if now.duration_since(last_time) < DOUBLE_CLICK_TIME && dist < DOUBLE_CLICK_DIST {
                     if let Some(body_idx) = render_state.body_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
                         render_state.focus_on_body(body_idx);
                         println!("Focused on: {}", game.solar_system.bodies[body_idx].name);
+                        was_double_click = true;
                     }
                     *last_click_time = None;
                 } else {
@@ -2278,6 +2322,11 @@ fn handle_tracking_station_mouse_input(
             } else {
                 *last_click_time = Some(now);
                 *last_click_pos = mouse_pos;
+            }
+
+            // Only start drag if this wasn't a double-click focus
+            if !was_double_click {
+                render_state.camera.is_dragging = true;
             }
         } else {
             render_state.camera.is_dragging = false;
@@ -2307,4 +2356,40 @@ fn handle_tracking_station_cursor_moved(
     if !egui_consumed {
         render_state.update_hover(x, y);
     }
+}
+
+/// Oriented Bounding Box overlap test using the Separating Axis Theorem.
+fn obb_overlap(
+    pos_a: [f64; 2], rot_a: f64, hw_a: f64, hh_a: f64,
+    pos_b: [f64; 2], rot_b: f64, hw_b: f64, hh_b: f64,
+) -> bool {
+    let (sin_a, cos_a) = rot_a.sin_cos();
+    let (sin_b, cos_b) = rot_b.sin_cos();
+
+    // Two axes per OBB: local right and local up
+    let axes = [
+        [cos_a, sin_a],
+        [-sin_a, cos_a],
+        [cos_b, sin_b],
+        [-sin_b, cos_b],
+    ];
+    let halves_a = [hw_a, hh_a];
+    let halves_b = [hw_b, hh_b];
+
+    let d = [pos_b[0] - pos_a[0], pos_b[1] - pos_a[1]];
+
+    for axis in &axes {
+        let dist_proj = (d[0] * axis[0] + d[1] * axis[1]).abs();
+
+        let a_proj = (axes[0][0] * axis[0] + axes[0][1] * axis[1]).abs() * halves_a[0]
+            + (axes[1][0] * axis[0] + axes[1][1] * axis[1]).abs() * halves_a[1];
+
+        let b_proj = (axes[2][0] * axis[0] + axes[2][1] * axis[1]).abs() * halves_b[0]
+            + (axes[3][0] * axis[0] + axes[3][1] * axis[1]).abs() * halves_b[1];
+
+        if dist_proj > a_proj + b_proj {
+            return false;
+        }
+    }
+    true
 }

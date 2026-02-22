@@ -136,8 +136,8 @@ When RCS nozzles are active during rotation, white plume rectangles (`[0.95, 0.9
 
 Each RCS nozzle SHALL fire when its torque contribution matches the desired rotation direction OR when translation demands it. The final activation is the union of rotation-driven and translation-driven activations.
 
-**Rotation-driven activation** — torque is computed as the 2D cross product of the part position vector (relative to COM) and the nozzle force direction:
-- **Lateral nozzle**: Torque sign = `sign * ry` (where sign is 1.0 for right-mount, -1.0 for left-mount)
+**Rotation-driven activation** — torque is computed as the 2D cross product of the part position vector (relative to COM) and the nozzle reaction force direction (opposite exhaust):
+- **Lateral nozzle** (non-mirrored, right-mount): Exhausts left, reaction force is rightward. Torque sign = `-ry`. For mirrored (left-mount): exhausts right, reaction force is leftward. Torque sign = `ry`.
 - **Up nozzle**: Torque sign = `-rx`
 - **Down nozzle**: Torque sign = `rx`
 - A nozzle fires when its torque sign matches the desired rotation direction sign.

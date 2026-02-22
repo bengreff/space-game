@@ -7,7 +7,7 @@ Convective aerodynamic heating, radiative cooling, per-part thermal destruction,
 ### Requirement: Per-part thermal fields on PartDefinition
 
 `PartDefinition` SHALL have the following fields with serde defaults:
-- `max_heat_tolerance: f64` — default 2000.0 K
+- `max_heat_tolerance: f64` — default 1000.0 K
 - `specific_heat: f64` — default 900.0 J/(kg*K)
 - `emissivity: f64` — default 0.8
 - `is_heat_shield: bool` — default false (for rendering dispatch)
@@ -26,8 +26,8 @@ The `Ship` struct SHALL have a `temperature: f64` field (Kelvin) and a `heat_flu
 
 The system SHALL define the following constants:
 - `STEFAN_BOLTZMANN = 5.670374419e-8` W/(m^2*K^4)
-- `HEAT_COEFFICIENT = 1.0e-4` (Sutton-Graves simplified coefficient)
-- `VESSEL_DESTRUCTION_TEMP = 2000.0` K (ship-level fallback only)
+- `SUTTON_GRAVES_K = 1.7415e-4` (Sutton-Graves convective heating constant for N₂/O₂ atmosphere, used in both ship-level and per-part heating)
+- `default_heat_tolerance() = 1000.0` K (used as fallback for ship-level heat fraction display)
 - `AMBIENT_TEMPERATURE = 300.0` K
 
 ## Heat Shields
@@ -64,23 +64,27 @@ Heat shields SHALL be rendered with `generate_heat_shield_details()`:
 
 `Ship::update_temperature()` SHALL skip all processing when a `FlightVessel` exists (per-part system handles it). The ship-level model is kept as a fallback for no-vessel mode.
 
+### Requirement: Airspeed direction coordinate transform
+
+The world-space airspeed direction SHALL be transformed to **part-local coordinates** (Y=forward convention, matching the editor layout where nose is at +Y). Ship physics uses X=forward (rotation=0 → nose along +X), so the transform applies the inverse rotation with a −π/2 offset: compute physics-local via inverse rotation, then rotate +90° (`part_x = -phys_y, part_y = phys_x`).
+
 ### Requirement: Per-part exposure calculation (1D interval occlusion)
 
 `FlightVessel::update_part_temperatures()` SHALL:
-1. Project each part onto the velocity axis (in vessel-local coordinates)
-2. Sort parts by projection (most forward first)
+1. Project each part onto the velocity axis (in part-local coordinates, Y=forward)
+2. Sort parts by projection (most forward = most positive first)
 3. For each part, compute the perpendicular cross-section interval [min, max]
 4. Track a set of occluded perpendicular intervals (sorted, non-overlapping)
 5. Calculate the exposed width as the part's interval minus any overlapping occluded intervals
 6. After processing each part, add its interval to the occluded set
 
-### Requirement: Per-part heat input
+### Requirement: Per-part heat input (Sutton-Graves)
 
-Heat input per part SHALL be: `q_in = HEAT_COEFFICIENT * sqrt(density) * airspeed^3 * exposed_area`, where `exposed_area = exposed_width * 0.5` (depth approximation using GRID_SQUARE_SIZE).
+Heat flux SHALL use the Sutton-Graves convective heating correlation: `q_flux = K * sqrt(ρ) * V³`, where `K = 1.7415e-4` (the Sutton-Graves constant for N₂/O₂ atmosphere). Total heat input per part: `q_in = SUTTON_GRAVES_K * sqrt(density) * airspeed^3 * exposed_area`, where `exposed_area = exposed_width * 0.5` (depth approximation using GRID_SQUARE_SIZE).
 
-### Requirement: Per-part radiative cooling
+### Requirement: Per-part radiative cooling (net radiation)
 
-Heat output per part SHALL be: `q_out = emissivity * STEFAN_BOLTZMANN * T^4 * surface_area`, where `surface_area = 2 * (width + height)` (perimeter approximation).
+Heat output per part SHALL use the net radiation formula: `q_out = emissivity * STEFAN_BOLTZMANN * (T^4 - T_ambient^4) * surface_area`, where `surface_area = 2 * (width + height)` (perimeter approximation) and `T_ambient = 300 K`. The `T_ambient^4` term ensures parts naturally settle to ambient temperature. No gameplay multipliers are applied.
 
 ### Requirement: Per-part temperature update
 
@@ -130,15 +134,18 @@ If no non-destroyed, non-decoupled parts remain, the vessel SHALL be removed (`g
 
 ### Requirement: Per-part heat tinting on vertices
 
-When rendering parts in flight, per-part `heat_fraction` SHALL be used for tinting (not ship-level). The tinting formula transitions from original color -> orange -> white:
-- R: lerp toward 1.0
-- G: lerp toward 0.6 (h < 0.5), then toward 1.0 (h >= 0.5)
-- B: reduce toward 0 (h < 0.5), then increase toward 1.0 (h >= 0.5)
+When rendering parts in flight, per-part `temperature` (Kelvin) SHALL drive a blackbody glow color ramp via `apply_heat_tint()`:
+- Below 500K: no visible glow (original color unchanged)
+- 500K: dark red (R=0.3, G=0, B=0), subtly blended over the part color
+- ~1000K: cherry red, glow begins to dominate part color
+- ~2000K: orange (green channel rising)
+- 4000K: bright yellow (R=1.0, G≈0.85, B=0)
+- Blend factor increases from 0 at 500K to fully overriding part color by ~1500K
 - Alpha unchanged
 
 ### Requirement: Heat tinting on ship triangle icon
 
-The same heat tinting SHALL be applied to the ship's triangle indicator using the ship-level `heat_fraction` (hottest part) via `apply_heat_tint()`.
+The same blackbody heat tinting SHALL be applied to the ship's triangle indicator using the ship-level `temperature` (hottest part) via `apply_heat_tint()`.
 
 ### Requirement: Heat bar in left HUD panel
 

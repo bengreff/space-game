@@ -21,31 +21,22 @@ pub fn create_ship_triangle(
     let back_right_angle = rotation - std::f32::consts::PI * 0.8;
 
     // Nose vertex (front)
-    vertices.push(Vertex {
-        position: [
+    vertices.push(Vertex::new([
             cx + size * nose_angle.cos(),
             cy + size * nose_angle.sin(),
-        ],
-        color,
-    });
+        ], color));
 
     // Back left vertex
-    vertices.push(Vertex {
-        position: [
+    vertices.push(Vertex::new([
             cx + size * 0.6 * back_left_angle.cos(),
             cy + size * 0.6 * back_left_angle.sin(),
-        ],
-        color,
-    });
+        ], color));
 
     // Back right vertex
-    vertices.push(Vertex {
-        position: [
+    vertices.push(Vertex::new([
             cx + size * 0.6 * back_right_angle.cos(),
             cy + size * 0.6 * back_right_angle.sin(),
-        ],
-        color,
-    });
+        ], color));
 
     // Single triangle
     indices.push(0);
@@ -67,20 +58,14 @@ pub fn create_circle(
     let mut indices = Vec::with_capacity(segments as usize * 3);
 
     // Center vertex
-    vertices.push(Vertex {
-        position: [cx, cy],
-        color,
-    });
+    vertices.push(Vertex::new([cx, cy], color));
 
     // Edge vertices
     for i in 0..segments {
         let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
         let x = cx + radius * angle.cos();
         let y = cy + radius * angle.sin();
-        vertices.push(Vertex {
-            position: [x, y],
-            color,
-        });
+        vertices.push(Vertex::new([x, y], color));
     }
 
     // Triangle fan indices
@@ -114,15 +99,9 @@ pub fn create_ring(
         let sin_a = angle.sin();
 
         // Inner vertex
-        vertices.push(Vertex {
-            position: [cx + inner_radius * cos_a, cy + inner_radius * sin_a],
-            color,
-        });
+        vertices.push(Vertex::new([cx + inner_radius * cos_a, cy + inner_radius * sin_a], color));
         // Outer vertex
-        vertices.push(Vertex {
-            position: [cx + outer_radius * cos_a, cy + outer_radius * sin_a],
-            color,
-        });
+        vertices.push(Vertex::new([cx + outer_radius * cos_a, cy + outer_radius * sin_a], color));
     }
 
     // Create quads between adjacent pairs

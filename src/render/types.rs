@@ -10,12 +10,14 @@ pub const HYPERBOLIC_SKIP_MARGIN: f64 = 0.005;
 pub struct Vertex {
     pub position: [f32; 2],
     pub color: [f32; 4],
+    pub uv: [f32; 2],
 }
 
 impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
+    const ATTRIBS: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
         0 => Float32x2,  // position
         1 => Float32x4,  // color
+        2 => Float32x2,  // uv
     ];
 
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
@@ -23,6 +25,20 @@ impl Vertex {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &Self::ATTRIBS,
+        }
+    }
+
+    /// Create a solid-color vertex (no texture)
+    pub fn new(position: [f32; 2], color: [f32; 4]) -> Self {
+        Self { position, color, uv: [0.0, 0.0] }
+    }
+
+    /// Create a textured vertex. layer_index is stored in color.a.
+    pub fn textured(position: [f32; 2], uv: [f32; 2], layer_index: u32) -> Self {
+        Self {
+            position,
+            color: [0.0, 0.0, 0.0, layer_index as f32],
+            uv,
         }
     }
 }
@@ -95,7 +111,8 @@ pub struct ShipPartRenderData {
     pub rcs_thrust: Option<f64>,  // kN (Some if this is an RCS part)
     pub rcs_nozzle_state: Option<RcsNozzleState>,  // Per-nozzle activation (None = no plumes)
     // Thermal state
-    pub heat_fraction: f32,  // 0.0-1.0 per-part heat for visual tinting
+    pub heat_fraction: f32,  // 0.0-1.0 per-part heat for visual tinting (proximity to destruction)
+    pub temperature: f64,    // Kelvin, for blackbody glow color
 }
 
 /// Ship render data

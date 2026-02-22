@@ -96,14 +96,14 @@ pub fn generate_grid_vertices(
         let p4 = [x2 - nx, y2 - ny];
 
         // Triangle 1
-        vertices.push(Vertex { position: p1, color });
-        vertices.push(Vertex { position: p2, color });
-        vertices.push(Vertex { position: p3, color });
+        vertices.push(Vertex::new(p1, color));
+        vertices.push(Vertex::new(p2, color));
+        vertices.push(Vertex::new(p3, color));
 
         // Triangle 2
-        vertices.push(Vertex { position: p1, color });
-        vertices.push(Vertex { position: p3, color });
-        vertices.push(Vertex { position: p4, color });
+        vertices.push(Vertex::new(p1, color));
+        vertices.push(Vertex::new(p3, color));
+        vertices.push(Vertex::new(p4, color));
     };
 
     // Vertical grid lines
@@ -179,12 +179,12 @@ pub fn generate_part_vertices(
                     [0.55, 0.55, 0.6, 0.2]
                 };
                 let half_top_w = (def.top_width() / 2.0) as f32;
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_w, y - half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x - half_top_w, y + half_h], color: highlight_color });
+                vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y - half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_top_w, y + half_h], highlight_color));
+                vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_top_w, y + half_h], highlight_color));
+                vertices.push(Vertex::new([x - half_top_w, y + half_h], highlight_color));
             }
             continue;
         }
@@ -203,12 +203,12 @@ pub fn generate_part_vertices(
                     [0.55, 0.55, 0.6, 0.2]
                 };
                 let half_top_w = (def.top_width() / 2.0) as f32;
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_w, y - half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x - half_top_w, y + half_h], color: highlight_color });
+                vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y - half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_top_w, y + half_h], highlight_color));
+                vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_top_w, y + half_h], highlight_color));
+                vertices.push(Vertex::new([x - half_top_w, y + half_h], highlight_color));
             }
             continue;
         }
@@ -226,12 +226,12 @@ pub fn generate_part_vertices(
                     [0.55, 0.55, 0.6, 0.2]
                 };
                 let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
-                vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_w, y - hitbox_half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x - half_w, y + hitbox_half_h], color: highlight_color });
+                vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y - hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], highlight_color));
             }
             continue;
         }
@@ -250,12 +250,12 @@ pub fn generate_part_vertices(
                     [0.55, 0.55, 0.6, 0.2]
                 };
                 let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
-                vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_w, y - hitbox_half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x - half_w, y + hitbox_half_h], color: highlight_color });
+                vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y - hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], highlight_color));
             }
             continue;
         }
@@ -272,12 +272,12 @@ pub fn generate_part_vertices(
                 } else {
                     [0.55, 0.55, 0.6, 0.2]
                 };
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_w, y - half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_w, y + half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x + half_w, y + half_h], color: highlight_color });
-                vertices.push(Vertex { position: [x - half_w, y + half_h], color: highlight_color });
+                vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y - half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y + half_h], highlight_color));
+                vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y + half_h], highlight_color));
+                vertices.push(Vertex::new([x - half_w, y + half_h], highlight_color));
             }
             continue;
         }
@@ -286,63 +286,63 @@ pub fn generate_part_vertices(
         match def.shape {
             PartShape::Rectangle => {
                 // Two triangles for a rectangle
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-                vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-                vertices.push(Vertex { position: [x + half_w, y + half_h], color });
+                vertices.push(Vertex::new([x - half_w, y - half_h], color));
+                vertices.push(Vertex::new([x + half_w, y - half_h], color));
+                vertices.push(Vertex::new([x + half_w, y + half_h], color));
 
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-                vertices.push(Vertex { position: [x + half_w, y + half_h], color });
-                vertices.push(Vertex { position: [x - half_w, y + half_h], color });
+                vertices.push(Vertex::new([x - half_w, y - half_h], color));
+                vertices.push(Vertex::new([x + half_w, y + half_h], color));
+                vertices.push(Vertex::new([x - half_w, y + half_h], color));
 
                 // Invalid drag overlay for rectangles
                 if drag_invalid {
                     let overlay = [0.9, 0.2, 0.2, 0.4];
-                    vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay });
-                    vertices.push(Vertex { position: [x + half_w, y - half_h], color: overlay });
-                    vertices.push(Vertex { position: [x + half_w, y + half_h], color: overlay });
-                    vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay });
-                    vertices.push(Vertex { position: [x + half_w, y + half_h], color: overlay });
-                    vertices.push(Vertex { position: [x - half_w, y + half_h], color: overlay });
+                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
+                    vertices.push(Vertex::new([x + half_w, y - half_h], overlay));
+                    vertices.push(Vertex::new([x + half_w, y + half_h], overlay));
+                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
+                    vertices.push(Vertex::new([x + half_w, y + half_h], overlay));
+                    vertices.push(Vertex::new([x - half_w, y + half_h], overlay));
                 }
             }
             PartShape::Triangle => {
                 // Single triangle with base at bottom, point at top
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color }); // bottom left
-                vertices.push(Vertex { position: [x + half_w, y - half_h], color }); // bottom right
-                vertices.push(Vertex { position: [x, y + half_h], color });          // top center
+                vertices.push(Vertex::new([x - half_w, y - half_h], color)); // bottom left
+                vertices.push(Vertex::new([x + half_w, y - half_h], color)); // bottom right
+                vertices.push(Vertex::new([x, y + half_h], color));          // top center
 
                 // Invalid drag overlay for triangles
                 if drag_invalid {
                     let overlay = [0.9, 0.2, 0.2, 0.4];
-                    vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay });
-                    vertices.push(Vertex { position: [x + half_w, y - half_h], color: overlay });
-                    vertices.push(Vertex { position: [x, y + half_h], color: overlay });
+                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
+                    vertices.push(Vertex::new([x + half_w, y - half_h], overlay));
+                    vertices.push(Vertex::new([x, y + half_h], overlay));
                 }
             }
             PartShape::TriangleRight => {
                 // Right triangle: vertical edge on right, hypotenuse on left
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-                vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-                vertices.push(Vertex { position: [x + half_w, y + half_h], color });
+                vertices.push(Vertex::new([x - half_w, y - half_h], color));
+                vertices.push(Vertex::new([x + half_w, y - half_h], color));
+                vertices.push(Vertex::new([x + half_w, y + half_h], color));
 
                 if drag_invalid {
                     let overlay = [0.9, 0.2, 0.2, 0.4];
-                    vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay });
-                    vertices.push(Vertex { position: [x + half_w, y - half_h], color: overlay });
-                    vertices.push(Vertex { position: [x + half_w, y + half_h], color: overlay });
+                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
+                    vertices.push(Vertex::new([x + half_w, y - half_h], overlay));
+                    vertices.push(Vertex::new([x + half_w, y + half_h], overlay));
                 }
             }
             PartShape::TriangleLeft => {
                 // Right triangle: vertical edge on left, hypotenuse on right
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-                vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-                vertices.push(Vertex { position: [x - half_w, y + half_h], color });
+                vertices.push(Vertex::new([x - half_w, y - half_h], color));
+                vertices.push(Vertex::new([x + half_w, y - half_h], color));
+                vertices.push(Vertex::new([x - half_w, y + half_h], color));
 
                 if drag_invalid {
                     let overlay = [0.9, 0.2, 0.2, 0.4];
-                    vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay });
-                    vertices.push(Vertex { position: [x + half_w, y - half_h], color: overlay });
-                    vertices.push(Vertex { position: [x - half_w, y + half_h], color: overlay });
+                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
+                    vertices.push(Vertex::new([x + half_w, y - half_h], overlay));
+                    vertices.push(Vertex::new([x - half_w, y + half_h], overlay));
                 }
             }
             PartShape::Trapezoid => {
@@ -351,24 +351,24 @@ pub fn generate_part_vertices(
 
                 // Two triangles for trapezoid
                 // Triangle 1: bottom left, bottom right, top right
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-                vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-                vertices.push(Vertex { position: [x + half_top_w, y + half_h], color });
+                vertices.push(Vertex::new([x - half_w, y - half_h], color));
+                vertices.push(Vertex::new([x + half_w, y - half_h], color));
+                vertices.push(Vertex::new([x + half_top_w, y + half_h], color));
 
                 // Triangle 2: bottom left, top right, top left
-                vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-                vertices.push(Vertex { position: [x + half_top_w, y + half_h], color });
-                vertices.push(Vertex { position: [x - half_top_w, y + half_h], color });
+                vertices.push(Vertex::new([x - half_w, y - half_h], color));
+                vertices.push(Vertex::new([x + half_top_w, y + half_h], color));
+                vertices.push(Vertex::new([x - half_top_w, y + half_h], color));
 
                 // Invalid drag overlay for trapezoids
                 if drag_invalid {
                     let overlay = [0.9, 0.2, 0.2, 0.4];
-                    vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay });
-                    vertices.push(Vertex { position: [x + half_w, y - half_h], color: overlay });
-                    vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: overlay });
-                    vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay });
-                    vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: overlay });
-                    vertices.push(Vertex { position: [x - half_top_w, y + half_h], color: overlay });
+                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
+                    vertices.push(Vertex::new([x + half_w, y - half_h], overlay));
+                    vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay));
+                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
+                    vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay));
+                    vertices.push(Vertex::new([x - half_top_w, y + half_h], overlay));
                 }
             }
         }
@@ -419,12 +419,12 @@ fn generate_single_ghost_vertices(
             [0.9, 0.3, 0.3, 0.25]
         };
         let half_top_w = (def.top_width() / 2.0) as f32;
-        vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_w, y - half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x - half_top_w, y + half_h], color: overlay_color });
+        vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y - half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay_color));
+        vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay_color));
+        vertices.push(Vertex::new([x - half_top_w, y + half_h], overlay_color));
         return;
     }
 
@@ -437,12 +437,12 @@ fn generate_single_ghost_vertices(
             [0.9, 0.3, 0.3, 0.25]
         };
         let half_top_w = (def.top_width() / 2.0) as f32;
-        vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_w, y - half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x - half_top_w, y + half_h], color: overlay_color });
+        vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y - half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay_color));
+        vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay_color));
+        vertices.push(Vertex::new([x - half_top_w, y + half_h], overlay_color));
         return;
     }
 
@@ -455,12 +455,12 @@ fn generate_single_ghost_vertices(
             [0.9, 0.3, 0.3, 0.25]
         };
         let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
-        vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_w, y - hitbox_half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x - half_w, y + hitbox_half_h], color: overlay_color });
+        vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y - hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], overlay_color));
         return;
     }
 
@@ -477,12 +477,12 @@ fn generate_single_ghost_vertices(
             [0.9, 0.3, 0.3, 0.25]
         };
         let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
-        vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_w, y - hitbox_half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x - half_w, y - hitbox_half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_w, y + hitbox_half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x - half_w, y + hitbox_half_h], color: overlay_color });
+        vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y - hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], overlay_color));
         return;
     }
 
@@ -494,12 +494,12 @@ fn generate_single_ghost_vertices(
         } else {
             [0.9, 0.3, 0.3, 0.25]
         };
-        vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_w, y - half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_w, y + half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x - half_w, y - half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x + half_w, y + half_h], color: overlay_color });
-        vertices.push(Vertex { position: [x - half_w, y + half_h], color: overlay_color });
+        vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y - half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y + half_h], overlay_color));
+        vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y + half_h], overlay_color));
+        vertices.push(Vertex::new([x - half_w, y + half_h], overlay_color));
         return;
     }
 
@@ -511,39 +511,39 @@ fn generate_single_ghost_vertices(
 
     match def.shape {
         PartShape::Rectangle => {
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y + half_h], color });
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y + half_h], color));
 
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y + half_h], color });
-            vertices.push(Vertex { position: [x - half_w, y + half_h], color });
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y + half_h], color));
+            vertices.push(Vertex::new([x - half_w, y + half_h], color));
         }
         PartShape::Triangle => {
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x, y + half_h], color });
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y - half_h], color));
+            vertices.push(Vertex::new([x, y + half_h], color));
         }
         PartShape::TriangleRight => {
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y + half_h], color });
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y + half_h], color));
         }
         PartShape::TriangleLeft => {
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x - half_w, y + half_h], color });
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y - half_h], color));
+            vertices.push(Vertex::new([x - half_w, y + half_h], color));
         }
         PartShape::Trapezoid => {
             let half_top_w = (def.top_width() / 2.0) as f32;
 
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_top_w, y + half_h], color });
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_top_w, y + half_h], color));
 
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_top_w, y + half_h], color });
-            vertices.push(Vertex { position: [x - half_top_w, y + half_h], color });
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_top_w, y + half_h], color));
+            vertices.push(Vertex::new([x - half_top_w, y + half_h], color));
         }
     }
 }
@@ -623,12 +623,12 @@ pub fn generate_engine_details(
     let gas_gen_color = apply_alpha(ENGINE_GAS_GEN_COLOR);
 
     // Draw main nozzle bell (trapezoid)
-    vertices.push(Vertex { position: [x - half_w, y - half_h], color: nozzle_color });
-    vertices.push(Vertex { position: [x + half_w, y - half_h], color: nozzle_color });
-    vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: nozzle_color });
-    vertices.push(Vertex { position: [x - half_w, y - half_h], color: nozzle_color });
-    vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: nozzle_color });
-    vertices.push(Vertex { position: [x - half_top_w, y + half_h], color: nozzle_color });
+    vertices.push(Vertex::new([x - half_w, y - half_h], nozzle_color));
+    vertices.push(Vertex::new([x + half_w, y - half_h], nozzle_color));
+    vertices.push(Vertex::new([x + half_top_w, y + half_h], nozzle_color));
+    vertices.push(Vertex::new([x - half_w, y - half_h], nozzle_color));
+    vertices.push(Vertex::new([x + half_top_w, y + half_h], nozzle_color));
+    vertices.push(Vertex::new([x - half_top_w, y + half_h], nozzle_color));
 
     // Engine-specific details based on ID
     generate_engine_specific_details(
@@ -780,12 +780,12 @@ fn draw_turbopump_box(
     color: [f32; 4],
 ) {
     // Rectangle centered at (x, y)
-    vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-    vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-    vertices.push(Vertex { position: [x + half_w, y + half_h], color });
-    vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-    vertices.push(Vertex { position: [x + half_w, y + half_h], color });
-    vertices.push(Vertex { position: [x - half_w, y + half_h], color });
+    vertices.push(Vertex::new([x - half_w, y - half_h], color));
+    vertices.push(Vertex::new([x + half_w, y - half_h], color));
+    vertices.push(Vertex::new([x + half_w, y + half_h], color));
+    vertices.push(Vertex::new([x - half_w, y - half_h], color));
+    vertices.push(Vertex::new([x + half_w, y + half_h], color));
+    vertices.push(Vertex::new([x - half_w, y + half_h], color));
 }
 
 /// Draw cooling rings/tubes wrapping all around the nozzle (horizontal bands)
@@ -807,12 +807,12 @@ fn draw_nozzle_rings(
         let width_at_y = half_w + (half_top_w - half_w) * t;
 
         // Draw ring as horizontal band across the entire nozzle width
-        vertices.push(Vertex { position: [x - width_at_y, y_pos - ring_thickness], color });
-        vertices.push(Vertex { position: [x + width_at_y, y_pos - ring_thickness], color });
-        vertices.push(Vertex { position: [x + width_at_y, y_pos + ring_thickness], color });
-        vertices.push(Vertex { position: [x - width_at_y, y_pos - ring_thickness], color });
-        vertices.push(Vertex { position: [x + width_at_y, y_pos + ring_thickness], color });
-        vertices.push(Vertex { position: [x - width_at_y, y_pos + ring_thickness], color });
+        vertices.push(Vertex::new([x - width_at_y, y_pos - ring_thickness], color));
+        vertices.push(Vertex::new([x + width_at_y, y_pos - ring_thickness], color));
+        vertices.push(Vertex::new([x + width_at_y, y_pos + ring_thickness], color));
+        vertices.push(Vertex::new([x - width_at_y, y_pos - ring_thickness], color));
+        vertices.push(Vertex::new([x + width_at_y, y_pos + ring_thickness], color));
+        vertices.push(Vertex::new([x - width_at_y, y_pos + ring_thickness], color));
     }
 }
 
@@ -825,15 +825,15 @@ fn draw_gimbal_actuators(
 ) {
     // Left actuator (angled bracket)
     let left_x = x - half_w;
-    vertices.push(Vertex { position: [left_x, y - half_h], color });
-    vertices.push(Vertex { position: [left_x - half_w * 0.3, y], color });
-    vertices.push(Vertex { position: [left_x, y + half_h], color });
+    vertices.push(Vertex::new([left_x, y - half_h], color));
+    vertices.push(Vertex::new([left_x - half_w * 0.3, y], color));
+    vertices.push(Vertex::new([left_x, y + half_h], color));
 
     // Right actuator
     let right_x = x + half_w;
-    vertices.push(Vertex { position: [right_x, y - half_h], color });
-    vertices.push(Vertex { position: [right_x + half_w * 0.3, y], color });
-    vertices.push(Vertex { position: [right_x, y + half_h], color });
+    vertices.push(Vertex::new([right_x, y - half_h], color));
+    vertices.push(Vertex::new([right_x + half_w * 0.3, y], color));
+    vertices.push(Vertex::new([right_x, y + half_h], color));
 }
 
 /// Draw the combustion chamber at the top of the engine (rectangular box)
@@ -844,12 +844,12 @@ fn draw_combustion_chamber(
     color: [f32; 4],
 ) {
     // Rectangle centered at (x, y)
-    vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-    vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-    vertices.push(Vertex { position: [x + half_w, y + half_h], color });
-    vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-    vertices.push(Vertex { position: [x + half_w, y + half_h], color });
-    vertices.push(Vertex { position: [x - half_w, y + half_h], color });
+    vertices.push(Vertex::new([x - half_w, y - half_h], color));
+    vertices.push(Vertex::new([x + half_w, y - half_h], color));
+    vertices.push(Vertex::new([x + half_w, y + half_h], color));
+    vertices.push(Vertex::new([x - half_w, y - half_h], color));
+    vertices.push(Vertex::new([x + half_w, y + half_h], color));
+    vertices.push(Vertex::new([x - half_w, y + half_h], color));
 }
 
 /// Draw a gas generator box on the side of the engine (like F-1 or RD-180)
@@ -860,12 +860,12 @@ fn draw_gas_generator(
     color: [f32; 4],
 ) {
     // Rectangle centered at (x, y)
-    vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-    vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-    vertices.push(Vertex { position: [x + half_w, y + half_h], color });
-    vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-    vertices.push(Vertex { position: [x + half_w, y + half_h], color });
-    vertices.push(Vertex { position: [x - half_w, y + half_h], color });
+    vertices.push(Vertex::new([x - half_w, y - half_h], color));
+    vertices.push(Vertex::new([x + half_w, y - half_h], color));
+    vertices.push(Vertex::new([x + half_w, y + half_h], color));
+    vertices.push(Vertex::new([x - half_w, y - half_h], color));
+    vertices.push(Vertex::new([x + half_w, y + half_h], color));
+    vertices.push(Vertex::new([x - half_w, y + half_h], color));
 }
 
 /// Generate pod details (dark grey trapezoid with white circle window)
@@ -885,12 +885,12 @@ pub fn generate_pod_details(
     let window_color = [POD_WINDOW_COLOR[0], POD_WINDOW_COLOR[1], POD_WINDOW_COLOR[2], POD_WINDOW_COLOR[3] * alpha];
 
     // Draw main pod body (trapezoid)
-    vertices.push(Vertex { position: [x - half_w, y - half_h], color: pod_color });
-    vertices.push(Vertex { position: [x + half_w, y - half_h], color: pod_color });
-    vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: pod_color });
-    vertices.push(Vertex { position: [x - half_w, y - half_h], color: pod_color });
-    vertices.push(Vertex { position: [x + half_top_w, y + half_h], color: pod_color });
-    vertices.push(Vertex { position: [x - half_top_w, y + half_h], color: pod_color });
+    vertices.push(Vertex::new([x - half_w, y - half_h], pod_color));
+    vertices.push(Vertex::new([x + half_w, y - half_h], pod_color));
+    vertices.push(Vertex::new([x + half_top_w, y + half_h], pod_color));
+    vertices.push(Vertex::new([x - half_w, y - half_h], pod_color));
+    vertices.push(Vertex::new([x + half_top_w, y + half_h], pod_color));
+    vertices.push(Vertex::new([x - half_top_w, y + half_h], pod_color));
 
     // Draw white circular window in the center
     // Window size proportional to pod size
@@ -911,15 +911,15 @@ pub fn generate_pod_details(
 
         // Right nozzle: triangle pointing right, base on pod edge
         let r_base_x = x + edge_x;
-        vertices.push(Vertex { position: [r_base_x, nozzle_y - nozzle_hw], color: nozzle_color });
-        vertices.push(Vertex { position: [r_base_x, nozzle_y + nozzle_hw], color: nozzle_color });
-        vertices.push(Vertex { position: [r_base_x + nozzle_len, nozzle_y], color: nozzle_color });
+        vertices.push(Vertex::new([r_base_x, nozzle_y - nozzle_hw], nozzle_color));
+        vertices.push(Vertex::new([r_base_x, nozzle_y + nozzle_hw], nozzle_color));
+        vertices.push(Vertex::new([r_base_x + nozzle_len, nozzle_y], nozzle_color));
 
         // Left nozzle: triangle pointing left, base on pod edge
         let l_base_x = x - edge_x;
-        vertices.push(Vertex { position: [l_base_x, nozzle_y - nozzle_hw], color: nozzle_color });
-        vertices.push(Vertex { position: [l_base_x, nozzle_y + nozzle_hw], color: nozzle_color });
-        vertices.push(Vertex { position: [l_base_x - nozzle_len, nozzle_y], color: nozzle_color });
+        vertices.push(Vertex::new([l_base_x, nozzle_y - nozzle_hw], nozzle_color));
+        vertices.push(Vertex::new([l_base_x, nozzle_y + nozzle_hw], nozzle_color));
+        vertices.push(Vertex::new([l_base_x - nozzle_len, nozzle_y], nozzle_color));
     }
 }
 
@@ -942,13 +942,13 @@ pub fn generate_decoupler_details(
     let ring_top = ring_bottom + visual_h;
 
     // Two triangles for the ring rectangle
-    vertices.push(Vertex { position: [x - half_w, ring_bottom], color: ring_color });
-    vertices.push(Vertex { position: [x + half_w, ring_bottom], color: ring_color });
-    vertices.push(Vertex { position: [x + half_w, ring_top], color: ring_color });
+    vertices.push(Vertex::new([x - half_w, ring_bottom], ring_color));
+    vertices.push(Vertex::new([x + half_w, ring_bottom], ring_color));
+    vertices.push(Vertex::new([x + half_w, ring_top], ring_color));
 
-    vertices.push(Vertex { position: [x - half_w, ring_bottom], color: ring_color });
-    vertices.push(Vertex { position: [x + half_w, ring_top], color: ring_color });
-    vertices.push(Vertex { position: [x - half_w, ring_top], color: ring_color });
+    vertices.push(Vertex::new([x - half_w, ring_bottom], ring_color));
+    vertices.push(Vertex::new([x + half_w, ring_top], ring_color));
+    vertices.push(Vertex::new([x - half_w, ring_top], ring_color));
 }
 
 /// Generate heat shield details (black ablative face with convex dome, dark backing band)
@@ -973,12 +973,12 @@ pub fn generate_heat_shield_details(
 
     // Backing structure (top 40%) — flat rectangle
     let back_bottom = shield_top - visual_h * 0.4;
-    vertices.push(Vertex { position: [x - half_w, back_bottom], color: back_color });
-    vertices.push(Vertex { position: [x + half_w, back_bottom], color: back_color });
-    vertices.push(Vertex { position: [x + half_w, shield_top], color: back_color });
-    vertices.push(Vertex { position: [x - half_w, back_bottom], color: back_color });
-    vertices.push(Vertex { position: [x + half_w, shield_top], color: back_color });
-    vertices.push(Vertex { position: [x - half_w, shield_top], color: back_color });
+    vertices.push(Vertex::new([x - half_w, back_bottom], back_color));
+    vertices.push(Vertex::new([x + half_w, back_bottom], back_color));
+    vertices.push(Vertex::new([x + half_w, shield_top], back_color));
+    vertices.push(Vertex::new([x - half_w, back_bottom], back_color));
+    vertices.push(Vertex::new([x + half_w, shield_top], back_color));
+    vertices.push(Vertex::new([x - half_w, shield_top], back_color));
 
     // Ablative face (bottom 60%) — convex dome with curved bottom edge
     let face_top = back_bottom;
@@ -1003,14 +1003,14 @@ pub fn generate_heat_shield_details(
 
         // Two triangles: top-left to bottom edge segment
         // Triangle 1: top-left, top-right, bottom-right
-        vertices.push(Vertex { position: [x0, face_top], color: face_color });
-        vertices.push(Vertex { position: [x1, face_top], color: face_color });
-        vertices.push(Vertex { position: [x1, y1_bot], color: face_color });
+        vertices.push(Vertex::new([x0, face_top], face_color));
+        vertices.push(Vertex::new([x1, face_top], face_color));
+        vertices.push(Vertex::new([x1, y1_bot], face_color));
 
         // Triangle 2: top-left, bottom-right, bottom-left
-        vertices.push(Vertex { position: [x0, face_top], color: face_color });
-        vertices.push(Vertex { position: [x1, y1_bot], color: face_color });
-        vertices.push(Vertex { position: [x0, y0_bot], color: face_color });
+        vertices.push(Vertex::new([x0, face_top], face_color));
+        vertices.push(Vertex::new([x1, y1_bot], face_color));
+        vertices.push(Vertex::new([x0, y0_bot], face_color));
     }
 }
 
@@ -1046,12 +1046,12 @@ pub fn generate_rcs_details(
     // Body: rectangle covering 80% of visual extents
     let body_hw = half_w * 0.8;
     let body_hh = half_h * 0.8;
-    vertices.push(Vertex { position: [cx - body_hw, y - body_hh], color: body_color });
-    vertices.push(Vertex { position: [cx + body_hw, y - body_hh], color: body_color });
-    vertices.push(Vertex { position: [cx + body_hw, y + body_hh], color: body_color });
-    vertices.push(Vertex { position: [cx - body_hw, y - body_hh], color: body_color });
-    vertices.push(Vertex { position: [cx + body_hw, y + body_hh], color: body_color });
-    vertices.push(Vertex { position: [cx - body_hw, y + body_hh], color: body_color });
+    vertices.push(Vertex::new([cx - body_hw, y - body_hh], body_color));
+    vertices.push(Vertex::new([cx + body_hw, y - body_hh], body_color));
+    vertices.push(Vertex::new([cx + body_hw, y + body_hh], body_color));
+    vertices.push(Vertex::new([cx - body_hw, y - body_hh], body_color));
+    vertices.push(Vertex::new([cx + body_hw, y + body_hh], body_color));
+    vertices.push(Vertex::new([cx - body_hw, y + body_hh], body_color));
 
     // Nozzle dimensions
     let nozzle_len = half_h * 0.3;
@@ -1059,19 +1059,19 @@ pub fn generate_rcs_details(
 
     // Lateral nozzle: points away from vessel (left for right-mount, right for left-mount)
     let lateral_base_x = cx - sign * body_hw;
-    vertices.push(Vertex { position: [lateral_base_x, y - nozzle_hw], color: nozzle_color });
-    vertices.push(Vertex { position: [lateral_base_x, y + nozzle_hw], color: nozzle_color });
-    vertices.push(Vertex { position: [lateral_base_x - sign * nozzle_len, y], color: nozzle_color });
+    vertices.push(Vertex::new([lateral_base_x, y - nozzle_hw], nozzle_color));
+    vertices.push(Vertex::new([lateral_base_x, y + nozzle_hw], nozzle_color));
+    vertices.push(Vertex::new([lateral_base_x - sign * nozzle_len, y], nozzle_color));
 
     // Top nozzle
-    vertices.push(Vertex { position: [cx - nozzle_hw, y + body_hh], color: nozzle_color });
-    vertices.push(Vertex { position: [cx + nozzle_hw, y + body_hh], color: nozzle_color });
-    vertices.push(Vertex { position: [cx, y + body_hh + nozzle_len], color: nozzle_color });
+    vertices.push(Vertex::new([cx - nozzle_hw, y + body_hh], nozzle_color));
+    vertices.push(Vertex::new([cx + nozzle_hw, y + body_hh], nozzle_color));
+    vertices.push(Vertex::new([cx, y + body_hh + nozzle_len], nozzle_color));
 
     // Bottom nozzle
-    vertices.push(Vertex { position: [cx - nozzle_hw, y - body_hh], color: nozzle_color });
-    vertices.push(Vertex { position: [cx + nozzle_hw, y - body_hh], color: nozzle_color });
-    vertices.push(Vertex { position: [cx, y - body_hh - nozzle_len], color: nozzle_color });
+    vertices.push(Vertex::new([cx - nozzle_hw, y - body_hh], nozzle_color));
+    vertices.push(Vertex::new([cx + nozzle_hw, y - body_hh], nozzle_color));
+    vertices.push(Vertex::new([cx, y - body_hh - nozzle_len], nozzle_color));
 }
 
 /// Generate white RCS plume vertices for active nozzles.
@@ -1107,36 +1107,36 @@ pub fn generate_rcs_plume_vertices(
         let tip_x = cx - sign * (body_hw + nozzle_len);
         let end_x = tip_x - sign * plume_len;
         // Rectangle as two triangles
-        vertices.push(Vertex { position: [tip_x, y - plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [tip_x, y + plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [end_x, y + plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [tip_x, y - plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [end_x, y + plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [end_x, y - plume_hw], color: plume_color });
+        vertices.push(Vertex::new([tip_x, y - plume_hw], plume_color));
+        vertices.push(Vertex::new([tip_x, y + plume_hw], plume_color));
+        vertices.push(Vertex::new([end_x, y + plume_hw], plume_color));
+        vertices.push(Vertex::new([tip_x, y - plume_hw], plume_color));
+        vertices.push(Vertex::new([end_x, y + plume_hw], plume_color));
+        vertices.push(Vertex::new([end_x, y - plume_hw], plume_color));
     }
 
     // Top plume
     if nozzle_state.up {
         let tip_y = y + body_hh + nozzle_len;
         let end_y = tip_y + plume_len;
-        vertices.push(Vertex { position: [cx - plume_hw, tip_y], color: plume_color });
-        vertices.push(Vertex { position: [cx + plume_hw, tip_y], color: plume_color });
-        vertices.push(Vertex { position: [cx + plume_hw, end_y], color: plume_color });
-        vertices.push(Vertex { position: [cx - plume_hw, tip_y], color: plume_color });
-        vertices.push(Vertex { position: [cx + plume_hw, end_y], color: plume_color });
-        vertices.push(Vertex { position: [cx - plume_hw, end_y], color: plume_color });
+        vertices.push(Vertex::new([cx - plume_hw, tip_y], plume_color));
+        vertices.push(Vertex::new([cx + plume_hw, tip_y], plume_color));
+        vertices.push(Vertex::new([cx + plume_hw, end_y], plume_color));
+        vertices.push(Vertex::new([cx - plume_hw, tip_y], plume_color));
+        vertices.push(Vertex::new([cx + plume_hw, end_y], plume_color));
+        vertices.push(Vertex::new([cx - plume_hw, end_y], plume_color));
     }
 
     // Bottom plume
     if nozzle_state.down {
         let tip_y = y - body_hh - nozzle_len;
         let end_y = tip_y - plume_len;
-        vertices.push(Vertex { position: [cx - plume_hw, tip_y], color: plume_color });
-        vertices.push(Vertex { position: [cx + plume_hw, tip_y], color: plume_color });
-        vertices.push(Vertex { position: [cx + plume_hw, end_y], color: plume_color });
-        vertices.push(Vertex { position: [cx - plume_hw, tip_y], color: plume_color });
-        vertices.push(Vertex { position: [cx + plume_hw, end_y], color: plume_color });
-        vertices.push(Vertex { position: [cx - plume_hw, end_y], color: plume_color });
+        vertices.push(Vertex::new([cx - plume_hw, tip_y], plume_color));
+        vertices.push(Vertex::new([cx + plume_hw, tip_y], plume_color));
+        vertices.push(Vertex::new([cx + plume_hw, end_y], plume_color));
+        vertices.push(Vertex::new([cx - plume_hw, tip_y], plume_color));
+        vertices.push(Vertex::new([cx + plume_hw, end_y], plume_color));
+        vertices.push(Vertex::new([cx - plume_hw, end_y], plume_color));
     }
 }
 
@@ -1168,24 +1168,24 @@ pub fn generate_pod_rcs_plume_vertices(
     if nozzle_state.lateral {
         let tip_x = x - edge_x - nozzle_len;
         let end_x = tip_x - plume_len;
-        vertices.push(Vertex { position: [tip_x, nozzle_y - plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [tip_x, nozzle_y + plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [end_x, nozzle_y + plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [tip_x, nozzle_y - plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [end_x, nozzle_y + plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [end_x, nozzle_y - plume_hw], color: plume_color });
+        vertices.push(Vertex::new([tip_x, nozzle_y - plume_hw], plume_color));
+        vertices.push(Vertex::new([tip_x, nozzle_y + plume_hw], plume_color));
+        vertices.push(Vertex::new([end_x, nozzle_y + plume_hw], plume_color));
+        vertices.push(Vertex::new([tip_x, nozzle_y - plume_hw], plume_color));
+        vertices.push(Vertex::new([end_x, nozzle_y + plume_hw], plume_color));
+        vertices.push(Vertex::new([end_x, nozzle_y - plume_hw], plume_color));
     }
 
     // Right nozzle plume (exhaust goes right, from triangle tip)
     if nozzle_state.lateral_mirrored {
         let tip_x = x + edge_x + nozzle_len;
         let end_x = tip_x + plume_len;
-        vertices.push(Vertex { position: [tip_x, nozzle_y - plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [tip_x, nozzle_y + plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [end_x, nozzle_y + plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [tip_x, nozzle_y - plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [end_x, nozzle_y + plume_hw], color: plume_color });
-        vertices.push(Vertex { position: [end_x, nozzle_y - plume_hw], color: plume_color });
+        vertices.push(Vertex::new([tip_x, nozzle_y - plume_hw], plume_color));
+        vertices.push(Vertex::new([tip_x, nozzle_y + plume_hw], plume_color));
+        vertices.push(Vertex::new([end_x, nozzle_y + plume_hw], plume_color));
+        vertices.push(Vertex::new([tip_x, nozzle_y - plume_hw], plume_color));
+        vertices.push(Vertex::new([end_x, nozzle_y + plume_hw], plume_color));
+        vertices.push(Vertex::new([end_x, nozzle_y - plume_hw], plume_color));
     }
 }
 
@@ -1259,13 +1259,13 @@ fn generate_decoupler_adapter(
     let adapter_color = [PART_COLOR[0], PART_COLOR[1], PART_COLOR[2], PART_COLOR[3] * alpha];
 
     // Bottom edge = decoupler ring top (decoupler width), top edge = tank bottom (tank width)
-    vertices.push(Vertex { position: [draw_x - decoupler_half_w, adapter_bottom_draw], color: adapter_color });
-    vertices.push(Vertex { position: [draw_x + decoupler_half_w, adapter_bottom_draw], color: adapter_color });
-    vertices.push(Vertex { position: [draw_x + best_tank_half_w, adapter_top_draw], color: adapter_color });
+    vertices.push(Vertex::new([draw_x - decoupler_half_w, adapter_bottom_draw], adapter_color));
+    vertices.push(Vertex::new([draw_x + decoupler_half_w, adapter_bottom_draw], adapter_color));
+    vertices.push(Vertex::new([draw_x + best_tank_half_w, adapter_top_draw], adapter_color));
 
-    vertices.push(Vertex { position: [draw_x - decoupler_half_w, adapter_bottom_draw], color: adapter_color });
-    vertices.push(Vertex { position: [draw_x + best_tank_half_w, adapter_top_draw], color: adapter_color });
-    vertices.push(Vertex { position: [draw_x - best_tank_half_w, adapter_top_draw], color: adapter_color });
+    vertices.push(Vertex::new([draw_x - decoupler_half_w, adapter_bottom_draw], adapter_color));
+    vertices.push(Vertex::new([draw_x + best_tank_half_w, adapter_top_draw], adapter_color));
+    vertices.push(Vertex::new([draw_x - best_tank_half_w, adapter_top_draw], adapter_color));
 
     // Draw detail lines on the adapter surface.
     // Model as a frustum viewed from the side: lines are evenly spaced in angle,
@@ -1305,13 +1305,13 @@ fn generate_decoupler_adapter(
         let tr = [top_x + nx, adapter_top_draw + ny];
         let tl = [top_x - nx, adapter_top_draw - ny];
 
-        vertices.push(Vertex { position: bl, color: line_color });
-        vertices.push(Vertex { position: br, color: line_color });
-        vertices.push(Vertex { position: tr, color: line_color });
+        vertices.push(Vertex::new(bl, line_color));
+        vertices.push(Vertex::new(br, line_color));
+        vertices.push(Vertex::new(tr, line_color));
 
-        vertices.push(Vertex { position: bl, color: line_color });
-        vertices.push(Vertex { position: tr, color: line_color });
-        vertices.push(Vertex { position: tl, color: line_color });
+        vertices.push(Vertex::new(bl, line_color));
+        vertices.push(Vertex::new(tr, line_color));
+        vertices.push(Vertex::new(tl, line_color));
     }
 }
 
@@ -1379,13 +1379,13 @@ pub fn generate_flight_decoupler_adapter(
     let adapter_color = [PART_COLOR[0], PART_COLOR[1], PART_COLOR[2], PART_COLOR[3] * alpha];
 
     // Trapezoid: bottom = decoupler width, top = tank width
-    vertices.push(Vertex { position: [dec_x - decoupler_half_w, adapter_bottom], color: adapter_color });
-    vertices.push(Vertex { position: [dec_x + decoupler_half_w, adapter_bottom], color: adapter_color });
-    vertices.push(Vertex { position: [dec_x + best_tank_half_w, adapter_top], color: adapter_color });
+    vertices.push(Vertex::new([dec_x - decoupler_half_w, adapter_bottom], adapter_color));
+    vertices.push(Vertex::new([dec_x + decoupler_half_w, adapter_bottom], adapter_color));
+    vertices.push(Vertex::new([dec_x + best_tank_half_w, adapter_top], adapter_color));
 
-    vertices.push(Vertex { position: [dec_x - decoupler_half_w, adapter_bottom], color: adapter_color });
-    vertices.push(Vertex { position: [dec_x + best_tank_half_w, adapter_top], color: adapter_color });
-    vertices.push(Vertex { position: [dec_x - best_tank_half_w, adapter_top], color: adapter_color });
+    vertices.push(Vertex::new([dec_x - decoupler_half_w, adapter_bottom], adapter_color));
+    vertices.push(Vertex::new([dec_x + best_tank_half_w, adapter_top], adapter_color));
+    vertices.push(Vertex::new([dec_x - best_tank_half_w, adapter_top], adapter_color));
 
     // Detail lines (same frustum projection as editor)
     let num_lines = (decoupler_def.grid_width * 3.0).round() as u32;
@@ -1417,13 +1417,13 @@ pub fn generate_flight_decoupler_adapter(
         let tr = [top_x + nx, adapter_top + ny];
         let tl = [top_x - nx, adapter_top - ny];
 
-        vertices.push(Vertex { position: bl, color: line_color });
-        vertices.push(Vertex { position: br, color: line_color });
-        vertices.push(Vertex { position: tr, color: line_color });
+        vertices.push(Vertex::new(bl, line_color));
+        vertices.push(Vertex::new(br, line_color));
+        vertices.push(Vertex::new(tr, line_color));
 
-        vertices.push(Vertex { position: bl, color: line_color });
-        vertices.push(Vertex { position: tr, color: line_color });
-        vertices.push(Vertex { position: tl, color: line_color });
+        vertices.push(Vertex::new(bl, line_color));
+        vertices.push(Vertex::new(tr, line_color));
+        vertices.push(Vertex::new(tl, line_color));
     }
 }
 
@@ -1438,9 +1438,9 @@ pub fn draw_circle(
     for i in 0..segments {
         let a1 = (i as f32 / segments as f32) * std::f32::consts::TAU;
         let a2 = ((i + 1) as f32 / segments as f32) * std::f32::consts::TAU;
-        vertices.push(Vertex { position: [x, y], color });
-        vertices.push(Vertex { position: [x + a1.cos() * radius, y + a1.sin() * radius], color });
-        vertices.push(Vertex { position: [x + a2.cos() * radius, y + a2.sin() * radius], color });
+        vertices.push(Vertex::new([x, y], color));
+        vertices.push(Vertex::new([x + a1.cos() * radius, y + a1.sin() * radius], color));
+        vertices.push(Vertex::new([x + a2.cos() * radius, y + a2.sin() * radius], color));
     }
 }
 
@@ -1468,17 +1468,17 @@ pub fn generate_engine_plume_vertices(
 
     // Red outer plume triangle
     let red = [1.0, 0.2, 0.0, 0.9];
-    vertices.push(Vertex { position: [x - half_nozzle, nozzle_y], color: red });
-    vertices.push(Vertex { position: [x + half_nozzle, nozzle_y], color: red });
-    vertices.push(Vertex { position: [x, nozzle_y - plume_length], color: red });
+    vertices.push(Vertex::new([x - half_nozzle, nozzle_y], red));
+    vertices.push(Vertex::new([x + half_nozzle, nozzle_y], red));
+    vertices.push(Vertex::new([x, nozzle_y - plume_length], red));
 
     // Yellow inner plume triangle (60% width, 40% length)
     let yellow = [1.0, 0.9, 0.1, 1.0];
     let inner_half_w = half_nozzle * 0.6;
     let inner_length = plume_length * 0.4;
-    vertices.push(Vertex { position: [x - inner_half_w, nozzle_y], color: yellow });
-    vertices.push(Vertex { position: [x + inner_half_w, nozzle_y], color: yellow });
-    vertices.push(Vertex { position: [x, nozzle_y - inner_length], color: yellow });
+    vertices.push(Vertex::new([x - inner_half_w, nozzle_y], yellow));
+    vertices.push(Vertex::new([x + inner_half_w, nozzle_y], yellow));
+    vertices.push(Vertex::new([x, nozzle_y - inner_length], yellow));
 }
 
 /// Generate vertices for a single part at the given (x, y) center position.
@@ -1527,36 +1527,36 @@ pub fn generate_part_shape_vertices(
 
     match def.shape {
         PartShape::Rectangle => {
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y + half_h], color });
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y + half_h], color });
-            vertices.push(Vertex { position: [x - half_w, y + half_h], color });
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y + half_h], color));
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y + half_h], color));
+            vertices.push(Vertex::new([x - half_w, y + half_h], color));
         }
         PartShape::Triangle => {
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x, y + half_h], color });
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y - half_h], color));
+            vertices.push(Vertex::new([x, y + half_h], color));
         }
         PartShape::TriangleRight => {
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y + half_h], color });
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y + half_h], color));
         }
         PartShape::TriangleLeft => {
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x - half_w, y + half_h], color });
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y - half_h], color));
+            vertices.push(Vertex::new([x - half_w, y + half_h], color));
         }
         PartShape::Trapezoid => {
             let half_top_w = (def.top_width() / 2.0) as f32;
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_top_w, y + half_h], color });
-            vertices.push(Vertex { position: [x - half_w, y - half_h], color });
-            vertices.push(Vertex { position: [x + half_top_w, y + half_h], color });
-            vertices.push(Vertex { position: [x - half_top_w, y + half_h], color });
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_top_w, y + half_h], color));
+            vertices.push(Vertex::new([x - half_w, y - half_h], color));
+            vertices.push(Vertex::new([x + half_top_w, y + half_h], color));
+            vertices.push(Vertex::new([x - half_top_w, y + half_h], color));
         }
     }
 }

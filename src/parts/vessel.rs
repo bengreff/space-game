@@ -910,6 +910,47 @@ impl FlightVessel {
         total
     }
 
+    /// Get fuel accessible to currently active engines (current_kg, max_kg).
+    /// Uses fuel zones: only counts fuel in zones that contain an active engine.
+    pub fn get_stage_fuel(&self, part_defs: &PartDefinitions) -> (f64, f64) {
+        let zones = self.compute_fuel_zones(part_defs);
+
+        // Find zone IDs that contain at least one active, non-destroyed, non-decoupled engine
+        let mut active_zones = std::collections::HashSet::new();
+        for (i, part) in self.parts.iter().enumerate() {
+            if part.destroyed || part.decoupled {
+                continue;
+            }
+            if part.engine_active && part.engine_enabled && part.engine_thrust_vac > 0.0 {
+                if zones[i] != usize::MAX {
+                    active_zones.insert(zones[i]);
+                }
+            }
+        }
+
+        if active_zones.is_empty() {
+            return (0.0, 0.0);
+        }
+
+        let mut current = 0.0;
+        let mut max = 0.0;
+        for (i, part) in self.parts.iter().enumerate() {
+            if !active_zones.contains(&zones[i]) {
+                continue;
+            }
+            for &name in Self::PROPELLANT_RESOURCES {
+                if let Some(&amount) = part.resources.get(name) {
+                    current += amount;
+                }
+                if let Some(&amount) = part.max_resources.get(name) {
+                    max += amount;
+                }
+            }
+        }
+
+        (current, max)
+    }
+
     /// Get the bounding half-width of the vessel (max extent from COM in X)
     pub fn bounding_half_width(&self) -> f64 {
         let mut max_extent = 0.0f64;
@@ -1278,8 +1319,8 @@ impl FlightVessel {
     /// Stefan-Boltzmann constant (W/m^2/K^4)
     const STEFAN_BOLTZMANN: f64 = 5.670374419e-8;
 
-    /// Heat transfer coefficient for convective heating (Sutton-Graves simplified)
-    const HEAT_COEFFICIENT: f64 = 5.0e-4;
+    /// Sutton-Graves convective heating constant for N₂/O₂ atmosphere
+    const SUTTON_GRAVES_K: f64 = 1.7415e-4;
 
     /// Update per-part temperatures from aerodynamic heating and radiative cooling.
     /// `airspeed_dir_local` is the unit vector of airspeed in vessel-local coordinates
@@ -1302,7 +1343,7 @@ impl FlightVessel {
                 };
                 if part.temperature > 300.0 {
                     let surface_area = 2.0 * (def.width() + def.height());
-                    let q_out = def.emissivity * Self::STEFAN_BOLTZMANN * part.temperature.powi(4) * surface_area;
+                    let q_out = def.emissivity * Self::STEFAN_BOLTZMANN * (part.temperature.powi(4) - 300.0_f64.powi(4)) * surface_area;
                     let mass_kg = (def.mass + part.resources.values().sum::<f64>() * 0.001) * 1000.0;
                     if mass_kg > 0.0 {
                         let d_temp = q_out / (mass_kg * def.specific_heat) * dt;
@@ -1330,7 +1371,7 @@ impl FlightVessel {
         // - cross_section_width: width of the part perpendicular to velocity
         struct PartProjection {
             idx: usize,
-            proj_along: f64,  // how far along velocity axis (more negative = more forward)
+            proj_along: f64,  // how far along velocity axis (more positive = more forward)
             perp_min: f64,
             perp_max: f64,
             surface_area: f64,
@@ -1380,8 +1421,9 @@ impl FlightVessel {
             });
         }
 
-        // Sort by projection along velocity axis (most forward = most negative first)
-        projections.sort_by(|a, b| a.proj_along.partial_cmp(&b.proj_along).unwrap());
+        // Sort by projection along velocity axis (most forward = most positive first)
+        // The leading edge has the largest dot product with the velocity direction
+        projections.sort_by(|a, b| b.proj_along.partial_cmp(&a.proj_along).unwrap());
 
         // Track occluded perpendicular intervals (sorted, non-overlapping)
         let mut occluded: Vec<(f64, f64)> = Vec::new();
@@ -1401,11 +1443,11 @@ impl FlightVessel {
             // Exposed area for heating
             let exposed_area = exposed_width * 0.5; // depth approximation (GRID_SQUARE_SIZE)
 
-            // Heat input: q_in = HEAT_COEFFICIENT * sqrt(density) * airspeed^3 * exposed_area
-            let q_in = Self::HEAT_COEFFICIENT * density.sqrt() * airspeed.powi(3) * exposed_area;
+            // Sutton-Graves heat input: q_in = K * sqrt(density) * airspeed^3 * exposed_area
+            let q_in = Self::SUTTON_GRAVES_K * density.sqrt() * airspeed.powi(3) * exposed_area;
 
-            // Radiative cooling: q_out = emissivity * sigma * T^4 * surface_area
-            let q_out = def.emissivity * Self::STEFAN_BOLTZMANN * part.temperature.powi(4) * proj.surface_area;
+            // Radiative cooling (net radiation): q_out = emissivity * sigma * (T^4 - T_ambient^4) * surface_area
+            let q_out = def.emissivity * Self::STEFAN_BOLTZMANN * (part.temperature.powi(4) - 300.0_f64.powi(4)) * proj.surface_area;
 
             let mass_kg = (def.mass + part.resources.values().sum::<f64>() * 0.001) * 1000.0;
             if mass_kg > 0.0 {

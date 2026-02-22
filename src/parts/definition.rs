@@ -269,7 +269,7 @@ pub struct PartDefinition {
     pub mirror_def_id: Option<String>,
 }
 
-fn default_heat_tolerance() -> f64 { 2000.0 }
+pub fn default_heat_tolerance() -> f64 { 1000.0 }
 fn default_specific_heat() -> f64 { 900.0 }
 fn default_emissivity() -> f64 { 0.8 }
 

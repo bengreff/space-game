@@ -12,16 +12,23 @@ struct CameraUniform {
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 
+@group(1) @binding(0)
+var body_texture: texture_2d_array<f32>;
+@group(1) @binding(1)
+var body_sampler: sampler;
+
 // Vertex shader
 
 struct VertexInput {
     @location(0) position: vec2<f32>,
     @location(1) color: vec4<f32>,
+    @location(2) uv: vec2<f32>,
 }
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) uv: vec2<f32>,
 }
 
 @vertex
@@ -44,6 +51,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
     out.clip_position = vec4<f32>(corrected_x, view_pos.y, 0.0, 1.0);
     out.color = in.color;
+    out.uv = in.uv;
     return out;
 }
 
@@ -51,6 +59,12 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Textured body: uv is non-zero, layer index stored in color.a
+    if in.uv.x + in.uv.y > 0.0 {
+        let layer = i32(in.color.a + 0.5);
+        return textureSample(body_texture, body_sampler, in.uv, layer);
+    }
+
     // Atmosphere vertices use negative alpha as a flag.
     // Alpha encodes -(1 + t) where t is 0 at surface, 1 at edge.
     // The GPU linearly interpolates alpha from -1 (surface) to -2 (edge).

@@ -108,7 +108,7 @@ An egui left panel named "throttle_panel" with width 50 and background `rgba(20,
 
 ### Requirement: Fuel bar below throttle
 
-When vessel has fuel data, show fuel bar with 10px gap below throttle.
+When vessel has fuel data, show fuel bar with 10px gap below throttle. The fuel bar SHALL display fuel accessible to currently active engines (i.e., fuel in the same fuel zones as active engines), not total vessel fuel. This uses `compute_fuel_zones()` to determine which tanks feed active engines. If no engines are active, the bar shows 0%.
 
 #### Scenario: Fuel bar colors
 - `> 0.3` -> blue `rgb(80, 160, 220)`, `> 0.1` -> amber `rgb(220, 180, 80)`, `<= 0.1` -> red `rgb(220, 80, 80)`

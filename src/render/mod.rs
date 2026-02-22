@@ -2,6 +2,7 @@ mod camera;
 mod geometry;
 mod maneuver;
 mod state;
+pub mod textures;
 mod types;
 
 pub use camera::{Camera, CameraUniform};

@@ -21,6 +21,9 @@ glam = { version = "0.25", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 ron = "0.8"
 
+# Image loading
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 # Utilities
 pollster = "0.3"  # For blocking on async wgpu
 bytemuck = { version = "1.14", features = ["derive"] }

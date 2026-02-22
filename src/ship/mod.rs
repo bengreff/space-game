@@ -68,14 +68,11 @@ const STEFAN_BOLTZMANN: f64 = 5.670374419e-8;
 /// Emissivity for radiative cooling
 const VESSEL_EMISSIVITY: f64 = 0.8;
 
-/// Temperature at which the vessel is destroyed (K)
-pub const VESSEL_DESTRUCTION_TEMP: f64 = 2000.0;
-
 /// Ambient / starting temperature (K)
 pub const AMBIENT_TEMPERATURE: f64 = 300.0;
 
-/// Heat transfer coefficient for convective heating (Sutton-Graves simplified)
-const HEAT_COEFFICIENT: f64 = 1.0e-4;
+/// Sutton-Graves convective heating constant for N₂/O₂ atmosphere
+const SUTTON_GRAVES_K: f64 = 1.7415e-4;
 
 /// Maximum number of SOI changes to predict in patched conics
 pub const MAX_PATCHED_CONICS: usize = 1;
@@ -616,11 +613,19 @@ impl Ship {
         let (density, airspeed, airspeed_dir) = match aero {
             Some(a) => a,
             None => {
-                // No atmosphere or too thin: cool toward ambient
+                // No atmosphere or too thin: radiative cooling toward ambient
                 self.heat_flux = 0.0;
                 if self.temperature > AMBIENT_TEMPERATURE {
-                    self.temperature += (AMBIENT_TEMPERATURE - self.temperature) * (1.0 - (-0.01 * dt).exp());
-                    self.temperature = self.temperature.max(AMBIENT_TEMPERATURE);
+                    let (half_width, half_height) = vessel
+                        .map(|v| (v.vessel_half_width, v.vessel_height))
+                        .unwrap_or((SHIP_SIZE / 4.0, SHIP_SIZE / 2.0));
+                    let perimeter = 2.0 * (half_width * 2.0 + half_height * 2.0);
+                    let total_mass_kg = vessel
+                        .map(|v| v.total_mass * 1000.0)
+                        .unwrap_or(1000.0);
+                    let q_out = VESSEL_EMISSIVITY * STEFAN_BOLTZMANN * (self.temperature.powi(4) - AMBIENT_TEMPERATURE.powi(4)) * perimeter;
+                    let d_temp = q_out / (total_mass_kg * VESSEL_SPECIFIC_HEAT) * dt;
+                    self.temperature = (self.temperature - d_temp).max(AMBIENT_TEMPERATURE);
                 }
                 return;
             }
@@ -634,12 +639,12 @@ impl Ship {
         let aoa = (self.rotation - velocity_angle).sin().abs();
         let frontal_area = half_width * 2.0 * (1.0 - aoa) + half_height * 2.0 * aoa;
 
-        // Heating: q_in = HEAT_COEFFICIENT * sqrt(density) * airspeed^3 * frontal_area
-        let q_in = HEAT_COEFFICIENT * density.sqrt() * airspeed.powi(3) * frontal_area;
+        // Sutton-Graves heat input: q_in = K * sqrt(density) * airspeed^3 * frontal_area
+        let q_in = SUTTON_GRAVES_K * density.sqrt() * airspeed.powi(3) * frontal_area;
 
-        // Radiative cooling: q_out = emissivity * sigma * T^4 * surface_area
+        // Radiative cooling (net radiation): q_out = emissivity * sigma * (T^4 - T_ambient^4) * surface_area
         let perimeter = 2.0 * (half_width * 2.0 + half_height * 2.0);
-        let q_out = VESSEL_EMISSIVITY * STEFAN_BOLTZMANN * self.temperature.powi(4) * perimeter;
+        let q_out = VESSEL_EMISSIVITY * STEFAN_BOLTZMANN * (self.temperature.powi(4) - AMBIENT_TEMPERATURE.powi(4)) * perimeter;
 
         let total_mass_kg = vessel
             .map(|v| v.total_mass * 1000.0)

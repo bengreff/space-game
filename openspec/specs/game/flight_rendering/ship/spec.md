@@ -71,8 +71,10 @@ When an engine is active and throttle > 0, an exhaust plume SHALL be rendered be
 When RCS nozzles are active (vessel is rotating or translating via manual input or autopilot), white plume rectangles SHALL be rendered extending outward from each firing nozzle. Plumes are generated in part-local space at origin (0,0) and transformed with the rest of the part vertices (scale, gimbal rotation if applicable, vessel rotation).
 
 #### Scenario: RCS plume activation from rotation
-- **WHEN** the player presses Q (rotate left, `rcs_direction = 1.0`) and an RCS part is above the center of mass
-- **THEN** nozzles whose torque matches the positive rotation direction SHALL show white plumes
+- **WHEN** the player presses Q (rotate left/CCW, `rcs_direction = 1.0`) and a pod RCS is above the center of mass
+- **THEN** the right lateral nozzle SHALL fire (exhaust right, pushing the top left = CCW torque)
+- **WHEN** the player presses E (rotate right/CW, `rcs_direction = -1.0`) and a pod RCS is above the center of mass
+- **THEN** the left lateral nozzle SHALL fire (exhaust left, pushing the top right = CW torque)
 
 #### Scenario: RCS plume activation from translation
 - **WHEN** the player presses W (translate forward, `rcs_translate[0] > 0`)
