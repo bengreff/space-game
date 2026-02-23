@@ -113,6 +113,10 @@ pub struct ShipPartRenderData {
     // Thermal state
     pub heat_fraction: f32,  // 0.0-1.0 per-part heat for visual tinting (proximity to destruction)
     pub temperature: f64,    // Kelvin, for blackbody glow color
+    // Fairing info
+    pub is_fairing: bool,
+    pub fairing_shape: Option<crate::parts::FairingShape>,
+    pub fairing_half: Option<crate::parts::FairingHalf>,
 }
 
 /// Ship render data
@@ -203,6 +207,7 @@ pub struct OrbitSegmentData {
     pub parent_idx: usize,      // Index of parent body
     pub render_scale: f64,
     pub start_time: f64,        // Relative seconds from trajectory start to this segment
+    pub base_epoch: f64,        // Absolute sim time at trajectory start (start_time is relative to this)
 }
 
 /// Delta-V components for a maneuver node

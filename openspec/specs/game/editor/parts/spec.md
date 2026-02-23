@@ -80,9 +80,9 @@ Left-clicking on empty space with a valid ghost SHALL place the selected part at
 
 The first part placed SHALL become the root part, regardless of its category.
 
-### Requirement: Auto-stage engines and decouplers
+### Requirement: Auto-stage engines, decouplers, and fairings
 
-When an engine or decoupler is placed, it SHALL be automatically added to stage 0. If no stages exist, a new stage SHALL be created.
+When an engine, decoupler, or fairing base is placed, it SHALL be automatically added to stage 0. If no stages exist, a new stage SHALL be created.
 
 ### Requirement: Mirror part placement
 
@@ -209,6 +209,20 @@ For placed decouplers, the info panel SHALL display a "Fuel Crossfeed" checkbox 
 
 `DecouplerData` SHALL include an `is_radial: bool` field (serde-default `false`). Radial decouplers separate sideways (disconnecting side-mounted parts) instead of using Y-position-based stack separation. They are rendered as a simple dark rectangle without the ring band or adapter trapezoid. The TT-38K Radial Decoupler is a Tiny-size (1x2) radial decoupler with 10 kN ejection force.
 
+### Requirement: Fairing base part definitions
+
+`PartDefinition` SHALL support an optional `fairing: Option<FairingData>` field. `FairingData` contains `ejection_force: f64` (kN, used when jettisoning). Five fairing base parts SHALL exist in `data/parts/structural.ron` under the `Aerodynamic` category:
+
+| ID | Name | Size | Grid | Mass | Ejection Force | Heat Tolerance |
+|----|------|------|------|------|----------------|----------------|
+| `fairing_tiny` | AE-FF0 Fairing | Tiny | 1x1 | 0.01t | 5 kN | 2000 K |
+| `fairing_small` | AE-FF1 Fairing | Small | 3x1 | 0.05t | 15 kN | 2000 K |
+| `fairing_medium` | AE-FF2 Fairing | Medium | 5x1 | 0.1t | 30 kN | 2000 K |
+| `fairing_large` | AE-FF3 Fairing | Large | 9x1 | 0.2t | 60 kN | 2000 K |
+| `fairing_xl` | AE-FF4 Fairing | XL | 13x1 | 0.4t | 100 kN | 2000 K |
+
+All fairing bases have `shape: Rectangle` and `grid_height: 1.0` (1 grid square tall). The hitbox and visual height are identical — the disc fills the entire 1-square hitbox.
+
 ### Requirement: Linked part info panel
 
 When a part with a `mirror_partner` is selected, changes made in the part info panel SHALL apply to both parts. This includes fuel type selection, fill fraction (via drag, Fill, or Empty), and crossfeed toggle.
@@ -311,6 +325,55 @@ If the deleted part was the root, the root SHALL be reassigned to any remaining 
 
 - **WHEN** part A (ID=5) and part B (ID=6) are mirror-placed
 - **THEN** part A's `mirror_partner` SHALL be `Some(6)` and part B's `mirror_partner` SHALL be `Some(5)`
+
+## Fairing Build Mode
+
+### Requirement: FairingShape data model
+
+`FairingShape` in `blueprint.rs` SHALL contain:
+- `vertices: Vec<(f64, f64)>` -- each entry is `(half_width_grid, y_offset_grid)` relative to the base top center, in grid squares
+- `closed: bool` -- true if the shell terminates with a center-line point (triangle tip)
+
+`PlacedPart`, `BlueprintPart`, and `FlightPart` SHALL each have a `fairing_shape: Option<FairingShape>` field. The shape is serialized as part of blueprints.
+
+`FairingHalf` enum in `blueprint.rs` SHALL have variants `Left` and `Right`, used to indicate which half of a deployed fairing shell to render. `FlightPart` and `ShipPartRenderData` SHALL have a `fairing_half: Option<FairingHalf>` field (defaulting to `None` for full shells).
+
+### Requirement: Enter fairing build mode on placement
+
+After placing a fairing base part (any part with `fairing: Some(...)`), the editor SHALL immediately enter fairing build mode. `FairingBuildState` tracks: `part_id`, `base_top_y` (world Y of base top edge), `base_center_x`, `base_half_width` (in grid squares), `vertices` (completed points), `ghost_point` (current cursor), and `ghost_valid`.
+
+### Requirement: Fairing ghost snapping
+
+During fairing build mode, the cursor SHALL snap to half-grid positions (every 0.25m). The ghost point represents a symmetric shell vertex at the cursor's distance from center. The half-width is computed as the absolute distance from cursor X to `base_center_x`.
+
+### Requirement: Fairing ghost validation
+
+The ghost point SHALL be valid when all of:
+1. Y offset is above the last vertex (or base top if first) by at least half a grid square
+2. Half-width in grid squares is at most `base_half_width * 2.0` — fairings may extend past the base edge by up to one full base half-width (i.e., `max_half_width = base_half_width * 2.0`)
+3. Y offset does not exceed `base_half_width * 2.0 * 10.0 * GRID_SQUARE_SIZE` (max height proportional to base width)
+
+### Requirement: Fairing boundary validation
+
+Non-fairing parts SHALL NOT be placeable (ghost turns invalid) if they cross a completed (closed) fairing boundary. "Crossing" means the part is partially inside and partially outside the fairing envelope at any sampled height. Parts fully inside or fully outside a fairing are permitted.
+
+During drag, the same boundary check SHALL apply — a dragged part SHALL NOT be droppable at a position that crosses a fairing boundary.
+
+When closing a fairing (placing the tip vertex), the close SHALL be rejected if any existing part crosses the about-to-be-closed fairing envelope.
+
+The boundary check interpolates the fairing shell's half-width at the part's bottom, top, and each fairing vertex y within the part's height range, checking whether the part is fully inside or fully outside at each sample. Any mix or straddling constitutes a crossing.
+
+### Requirement: Add fairing vertex on left-click
+
+Left-clicking during fairing build mode with a valid ghost SHALL add a vertex `(half_width_grid, y_offset_grid)` to the shape. If the half-width is less than 0.25 grid squares, the vertex is treated as a closing point: it is stored as `(0.0, y_offset_grid)`, the shape is marked `closed: true`, and build mode exits. On close, the system validates that no existing part crosses the fairing boundary — if any does, the close is rejected.
+
+### Requirement: Undo fairing vertex on right-click
+
+Right-clicking during fairing build mode SHALL remove the last vertex. If no vertices remain, right-click exits build mode entirely.
+
+### Requirement: Exit fairing build mode
+
+Pressing Escape exits fairing build mode. The current vertices (if any) are saved to the part's `fairing_shape` with `closed: false`. Deselecting also exits build mode. Deleting the fairing base part exits build mode and discards the shape.
 
 ## Deselection
 

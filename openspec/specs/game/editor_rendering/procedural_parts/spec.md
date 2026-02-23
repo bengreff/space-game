@@ -148,6 +148,51 @@ Each RCS nozzle SHALL fire when its torque contribution matches the desired rota
 - **Left** (`translate[1] < 0`): right-mount (non-mirrored) lateral nozzles fire
 - **Right** (`translate[1] > 0`): left-mount (mirrored) lateral nozzles fire
 
+## Fairing Base Rendering
+
+### Requirement: Fairing base disc shape
+
+Fairing bases (parts with `fairing: Some(...)`) SHALL be rendered via `generate_fairing_base_details()` as a filled rectangle covering the full hitbox — from `y - hitbox_half_h` (bottom) to `y + hitbox_half_h` (top). The disc fills the entire 1-grid-square-tall hitbox. Color: `FAIRING_BASE_COLOR = [0.30, 0.30, 0.33, 1.0]` (lighter metallic disc, distinct from the darker decoupler ring).
+
+### Requirement: Fairing base alpha modulation
+
+The fairing base color SHALL support alpha modulation: `0.5` for ghost previews, `0.5` when the fairing is hovered (so interior parts become visible), `1.0` otherwise.
+
+## Fairing Shell Rendering (Editor)
+
+### Requirement: Completed fairing shell geometry
+
+`generate_fairing_shell_vertices()` SHALL render the shell of a completed `FairingShape` as a series of symmetric trapezoid segments from the base top edge upward. For each vertex `(hw_grid, y_off_grid)`:
+- Left half: two triangles from `(x - prev_hw, prev_y)` to `(x, prev_y)` to `(x, seg_y)` to `(x - hw, seg_y)`
+- Right half: mirrored from `(x, prev_y)` to `(x + prev_hw, prev_y)` to `(x + hw, seg_y)` to `(x, seg_y)`
+
+Shell color: `FAIRING_SHELL_COLOR = [0.35, 0.35, 0.38, 1.0]` (light grey panels).
+
+The function accepts a `fairing_half: Option<FairingHalf>` parameter. When `Some(Left)`, only left-side triangles are emitted. When `Some(Right)`, only right-side. When `None`, both halves are drawn (default).
+
+### Requirement: Fairing shell seam lines
+
+Each shell segment SHALL render a horizontal seam line at the vertex Y position (when `hw > 0.001`). A vertical seam line SHALL run down the center of the shell from base top to the top vertex. Line half-thickness: 0.008 world units. Color: `FAIRING_SHELL_LINE_COLOR = [0.20, 0.20, 0.22, 1.0]`.
+
+### Requirement: Fairing build preview
+
+During fairing build mode, `generate_fairing_build_preview()` SHALL render:
+1. Completed segments at alpha 0.7 using the same trapezoid geometry as the final shell
+2. A ghost segment from the last vertex (or base top) to the current cursor point, colored green `[0.3, 0.9, 0.3, 0.3]` when valid or red `[0.9, 0.3, 0.3, 0.3]` when invalid
+3. Diamond-shaped ghost point markers at both the left and right mirrored positions when the ghost is valid (marker size 0.03 world units, color `[0.3, 0.9, 0.3, 0.8]`)
+
+### Requirement: Fairing shell z-ordering
+
+Completed fairing shells SHALL be rendered in a dedicated third pass (after the decoupler adapter pass), so they always draw on top of all other parts. When the fairing is hovered, the shell alpha SHALL be `0.5` for transparency. The fairing base still renders in the first pass.
+
+### Requirement: Fairing build preview pass order
+
+The fairing build preview SHALL be rendered in a fourth pass after the shell z-ordering pass, ensuring in-progress shells draw on top of completed shells.
+
+### Requirement: Ghost fairing base preview
+
+Ghost previews of fairing bases SHALL render the base disc via `generate_fairing_base_details()` at ghost alpha, followed by a green/red validity overlay rectangle over the hitbox area.
+
 ## Highlight Overlays
 
 ### Requirement: Procedural part selection/hover overlay

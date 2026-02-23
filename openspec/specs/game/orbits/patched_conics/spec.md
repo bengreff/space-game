@@ -113,6 +113,28 @@ When on-rails and a SOI transition is detected:
 - SOI exit: add current body position/velocity to ship state, switch to parent, recalculate orbit; fall off rails if orbit calculation fails
 - SOI entry: subtract child body position/velocity from ship state, switch to child, recalculate orbit; fall off rails if orbit calculation fails
 
+## Maneuver Node Placement
+
+### Requirement: Maneuver nodes on any visible trajectory segment
+
+Maneuver nodes SHALL be placeable on any visible orbit line, not just the current orbit (segment 0). Clicking near any rendered trajectory segment — including later patched conic segments after SOI transitions and predicted trajectories from existing maneuver nodes — SHALL open the "Create Maneuver Node" popup.
+
+The orbit click detection SHALL search:
+1. All segments of the current trajectory (`current_trajectory`)
+2. All segments of all predicted trajectories (`predicted_trajectories`, one per existing maneuver node)
+
+The closest match across all trajectories wins. The clicked segment's orbital parameters are stored directly with the pending click, so node creation does not depend on segment indices.
+
+#### Scenario: Maneuver node on post-SOI segment
+- **GIVEN** a trajectory showing Earth orbit → Moon flyby → Earth return
+- **WHEN** the user clicks on the Earth return segment
+- **THEN** a maneuver node SHALL be created on that segment with the correct orbital parameters and epoch
+
+#### Scenario: Maneuver node on predicted trajectory
+- **GIVEN** an existing maneuver node with delta-v that produces a green predicted trajectory
+- **WHEN** the user clicks on the predicted trajectory line
+- **THEN** a second maneuver node SHALL be created on that predicted orbit segment
+
 ## Maneuver Node Prediction
 
 ### Requirement: Predicted trajectory for maneuver nodes

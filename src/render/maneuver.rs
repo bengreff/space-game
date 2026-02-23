@@ -22,9 +22,10 @@ impl RenderState {
         None
     }
 
-    /// Check if a screen click is near the orbit line, returns (true_anomaly, segment_idx) if found
-    pub fn orbit_click_position(&self, screen_x: f32, screen_y: f32) -> Option<(f64, usize)> {
-        if self.current_trajectory.is_empty() {
+    /// Check if a screen click is near any visible orbit line, returns (true_anomaly, segment_data) if found.
+    /// Searches current trajectory and all predicted trajectories (from maneuver nodes).
+    pub fn orbit_click_position(&self, screen_x: f32, screen_y: f32) -> Option<(f64, super::types::OrbitSegmentData)> {
+        if self.current_trajectory.is_empty() && self.predicted_trajectories.is_empty() {
             return None;
         }
 
@@ -40,18 +41,12 @@ impl RenderState {
         let aspect_ratio = self.camera.aspect_ratio;
         let size = self.size;
 
-        let mut best_match: Option<(f64, usize, f32)> = None; // (true_anomaly, segment_idx, distance)
+        let mut best_match: Option<(f64, super::types::OrbitSegmentData, f32)> = None; // (true_anomaly, segment_data, distance)
 
-        for (seg_idx, segment) in self.current_trajectory.iter().enumerate() {
-            // Only allow placing nodes on first segment for now
-            if seg_idx != 0 {
-                continue;
-            }
-
+        // Helper: hit-test a single segment against the click position
+        let test_segment = |segment: &super::types::OrbitSegmentData, best: &mut Option<(f64, super::types::OrbitSegmentData, f32)>| {
             let e = segment.eccentricity;
             let arg_peri = segment.argument_of_periapsis;
-
-            // Sample points along the orbit
             let num_samples = 256;
 
             if e >= 1.0 {
@@ -86,7 +81,6 @@ impl RenderState {
                     let px = segment.parent_x + r * angle.cos();
                     let py = segment.parent_y + r * angle.sin();
 
-                    // Convert to screen position
                     let view_x = ((px - cam_x) as f32) * self.camera.zoom;
                     let view_y = ((py - cam_y) as f32) * self.camera.zoom;
                     let ndc_x = view_x / aspect_ratio;
@@ -99,9 +93,9 @@ impl RenderState {
                     let dist = (dx * dx + dy * dy).sqrt();
 
                     if dist < click_threshold {
-                        match best_match {
-                            None => best_match = Some((ta, seg_idx, dist)),
-                            Some((_, _, prev_dist)) if dist < prev_dist => best_match = Some((ta, seg_idx, dist)),
+                        match best {
+                            None => *best = Some((ta, segment.clone(), dist)),
+                            Some((_, _, prev_dist)) if dist < *prev_dist => *best = Some((ta, segment.clone(), dist)),
                             _ => {}
                         }
                     }
@@ -114,7 +108,6 @@ impl RenderState {
                 let center_x = segment.parent_x - c * arg_peri.cos();
                 let center_y = segment.parent_y - c * arg_peri.sin();
 
-                // Calculate angle range
                 let start_ta = segment.start_true_anomaly;
                 let start_ea = (start_ta.sin() * (1.0 - e * e).sqrt()).atan2(e + start_ta.cos());
 
@@ -139,7 +132,6 @@ impl RenderState {
                     let t = i as f64 / num_samples as f64;
                     let ea = start_angle + t * angle_span;
 
-                    // Position on ellipse
                     let ex = a * ea.cos();
                     let ey = b * ea.sin();
                     let rx = ex * arg_peri.cos() - ey * arg_peri.sin();
@@ -147,11 +139,9 @@ impl RenderState {
                     let px = center_x + rx;
                     let py = center_y + ry;
 
-                    // Convert eccentric anomaly back to true anomaly
                     let ta = 2.0 * ((1.0 + e).sqrt() * (ea / 2.0).sin())
                         .atan2((1.0 - e).sqrt() * (ea / 2.0).cos());
 
-                    // Convert to screen position
                     let view_x = ((px - cam_x) as f32) * self.camera.zoom;
                     let view_y = ((py - cam_y) as f32) * self.camera.zoom;
                     let ndc_x = view_x / aspect_ratio;
@@ -164,17 +154,29 @@ impl RenderState {
                     let dist = (dx * dx + dy * dy).sqrt();
 
                     if dist < click_threshold {
-                        match best_match {
-                            None => best_match = Some((ta, seg_idx, dist)),
-                            Some((_, _, prev_dist)) if dist < prev_dist => best_match = Some((ta, seg_idx, dist)),
+                        match best {
+                            None => *best = Some((ta, segment.clone(), dist)),
+                            Some((_, _, prev_dist)) if dist < *prev_dist => *best = Some((ta, segment.clone(), dist)),
                             _ => {}
                         }
                     }
                 }
             }
+        };
+
+        // Search current trajectory segments
+        for segment in &self.current_trajectory {
+            test_segment(segment, &mut best_match);
         }
 
-        best_match.map(|(ta, idx, _)| (ta, idx))
+        // Search predicted trajectories (from maneuver node burns)
+        for trajectory in &self.predicted_trajectories {
+            for segment in trajectory {
+                test_segment(segment, &mut best_match);
+            }
+        }
+
+        best_match.map(|(ta, seg, _)| (ta, seg))
     }
 
     /// Convert true anomaly to mean anomaly for an elliptical orbit.
@@ -197,7 +199,7 @@ impl RenderState {
         let e = segment.eccentricity;
         if e >= 1.0 {
             // Hyperbolic — no good time estimate
-            return self.simulation_time;
+            return segment.base_epoch;
         }
 
         // Convert segment start TA and node TA to mean anomalies (same orbit frame)
@@ -217,37 +219,34 @@ impl RenderState {
         let mean_motion = (mu / a_meters.powi(3)).sqrt();
 
         if mean_motion > 0.0 {
-            self.simulation_time + segment.start_time + delta_ma / mean_motion
+            segment.base_epoch + segment.start_time + delta_ma / mean_motion
         } else {
-            self.simulation_time
+            segment.base_epoch
         }
     }
 
     /// Create a new maneuver node at the specified orbit position
-    pub fn create_maneuver_node(&mut self, true_anomaly: f64, segment_idx: usize) -> u64 {
+    pub fn create_maneuver_node(&mut self, true_anomaly: f64, segment: &super::types::OrbitSegmentData) -> u64 {
         let id = self.next_node_id;
         self.next_node_id += 1;
 
-        // Get segment data - store the orbit parameters
-        if let Some(segment) = self.current_trajectory.get(segment_idx) {
-            let epoch = self.compute_node_epoch(true_anomaly, segment);
-            self.maneuver_nodes.push(ManeuverNode {
-                id,
-                semi_major_axis: segment.semi_major_axis,
-                eccentricity: segment.eccentricity,
-                argument_of_periapsis: segment.argument_of_periapsis,
-                parent_x: segment.parent_x,
-                parent_y: segment.parent_y,
-                retrograde: segment.retrograde,
-                true_anomaly,
-                parent_idx: segment.parent_idx,
-                parent_mass: segment.parent_mass,
-                render_scale: segment.render_scale,
-                epoch,
-                delta_v: ManeuverDeltaV::default(),
-                remaining_delta_v: ManeuverDeltaV::default(),
-            });
-        }
+        let epoch = self.compute_node_epoch(true_anomaly, segment);
+        self.maneuver_nodes.push(ManeuverNode {
+            id,
+            semi_major_axis: segment.semi_major_axis,
+            eccentricity: segment.eccentricity,
+            argument_of_periapsis: segment.argument_of_periapsis,
+            parent_x: segment.parent_x,
+            parent_y: segment.parent_y,
+            retrograde: segment.retrograde,
+            true_anomaly,
+            parent_idx: segment.parent_idx,
+            parent_mass: segment.parent_mass,
+            render_scale: segment.render_scale,
+            epoch,
+            delta_v: ManeuverDeltaV::default(),
+            remaining_delta_v: ManeuverDeltaV::default(),
+        });
 
         self.pending_orbit_click = None;
         self.selected_maneuver_node = Some(id);
@@ -255,13 +254,10 @@ impl RenderState {
     }
 
     /// Create a maneuver node with pre-filled delta-v values
-    pub fn create_maneuver_node_with_dv(&mut self, true_anomaly: f64, segment_idx: usize, dv: ManeuverDeltaV) -> Option<u64> {
-        // Validate segment exists
-        let _ = self.current_trajectory.get(segment_idx)?;
+    pub fn create_maneuver_node_with_dv(&mut self, true_anomaly: f64, segment: &super::types::OrbitSegmentData, dv: ManeuverDeltaV) -> u64 {
         let id = self.next_node_id;
         self.next_node_id += 1;
 
-        let segment = &self.current_trajectory[segment_idx];
         let epoch = self.compute_node_epoch(true_anomaly, segment);
         self.maneuver_nodes.push(ManeuverNode {
             id,
@@ -282,16 +278,14 @@ impl RenderState {
 
         self.pending_orbit_click = None;
         self.selected_maneuver_node = Some(id);
-        Some(id)
+        id
     }
 
     /// Create a maneuver node with pre-filled delta-v and an explicit epoch (absolute simulation time)
-    pub fn create_maneuver_node_with_epoch(&mut self, true_anomaly: f64, segment_idx: usize, dv: ManeuverDeltaV, epoch: f64) -> Option<u64> {
-        let _ = self.current_trajectory.get(segment_idx)?;
+    pub fn create_maneuver_node_with_epoch(&mut self, true_anomaly: f64, segment: &super::types::OrbitSegmentData, dv: ManeuverDeltaV, epoch: f64) -> u64 {
         let id = self.next_node_id;
         self.next_node_id += 1;
 
-        let segment = &self.current_trajectory[segment_idx];
         self.maneuver_nodes.push(ManeuverNode {
             id,
             semi_major_axis: segment.semi_major_axis,
@@ -311,7 +305,7 @@ impl RenderState {
 
         self.pending_orbit_click = None;
         self.selected_maneuver_node = Some(id);
-        Some(id)
+        id
     }
 
     /// Delete a maneuver node by ID
@@ -362,14 +356,45 @@ impl RenderState {
             None => return,
         };
 
+        // Capture old TA, epoch, and orbit params before mutable borrow
+        let (old_ta, old_epoch, e, a, parent_mass, render_scale, retrograde) =
+            match self.maneuver_nodes.iter().find(|n| n.id == node_id) {
+                Some(n) => (n.true_anomaly, n.epoch, n.eccentricity,
+                            n.semi_major_axis, n.parent_mass, n.render_scale, n.retrograde),
+                None => return,
+            };
+
         // Find closest true_anomaly on the node's stored orbit
         if let Some(new_ta) = self.find_closest_ta_on_orbit(screen_x, screen_y, node_orbit) {
-            // Recompute epoch using the current trajectory's first segment
-            let new_epoch = if let Some(segment) = self.current_trajectory.first() {
-                self.compute_node_epoch(new_ta, segment)
+            // Compute epoch delta from old_ta to new_ta on the node's own orbit
+            let new_epoch = if e < 1.0 {
+                let old_ma = Self::ta_to_ma(old_ta, e);
+                let new_ma = Self::ta_to_ma(new_ta, e);
+
+                let a_meters = a / render_scale;
+                let mu = G * parent_mass;
+                let mean_motion = (mu / a_meters.powi(3)).sqrt();
+
+                if mean_motion > 0.0 {
+                    // Signed delta MA accounting for orbit direction
+                    let raw_delta = if retrograde {
+                        old_ma - new_ma
+                    } else {
+                        new_ma - old_ma
+                    };
+                    // Wrap to [-PI, PI] for forward/backward disambiguation
+                    let delta_ma = ((raw_delta + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU))
+                        - std::f64::consts::PI;
+                    let delta_time = delta_ma / mean_motion;
+                    old_epoch + delta_time
+                } else {
+                    old_epoch
+                }
             } else {
-                return;
+                // Hyperbolic — keep existing epoch
+                old_epoch
             };
+
             if let Some(node) = self.maneuver_nodes.iter_mut().find(|n| n.id == node_id) {
                 node.true_anomaly = new_ta;
                 node.epoch = new_epoch;

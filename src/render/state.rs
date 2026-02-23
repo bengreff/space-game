@@ -90,6 +90,7 @@ pub struct RenderState {
     pub engine_toggle_request: Option<(usize, bool)>,  // (part_index, enabled)
     pub crossfeed_toggle_request: Option<(usize, bool)>,  // (part_index, crossfeed_enabled)
     pub decouple_request: Option<usize>,  // part_index to manually decouple
+    pub fairing_deploy_request: Option<usize>,  // part_index to deploy fairing
     pub ap_markers: Vec<([f64; 2], f64)>, // Apoapsis markers: (world pos relative to camera, altitude)
     pub pe_markers: Vec<([f64; 2], f64)>, // Periapsis markers: (world pos relative to camera, altitude)
     pub closest_approach_world_pos: Option<([f64; 2], f64)>, // (render world pos, distance meters) - set by main.rs
@@ -97,7 +98,7 @@ pub struct RenderState {
     // Simulation time (updated each frame from main.rs)
     pub simulation_time: f64,
     // Maneuver node state
-    pub pending_orbit_click: Option<(f64, usize)>,  // (true_anomaly, segment_idx) - awaiting node creation
+    pub pending_orbit_click: Option<(f64, super::types::OrbitSegmentData)>,  // (true_anomaly, segment_data) - awaiting node creation
     pub selected_maneuver_node: Option<u64>,        // ID of selected node
     pub maneuver_nodes: Vec<ManeuverNode>,
     pub time_to_node: Option<f64>,      // seconds until first maneuver node
@@ -433,6 +434,7 @@ impl RenderState {
             engine_toggle_request: None,
             crossfeed_toggle_request: None,
             decouple_request: None,
+            fairing_deploy_request: None,
             ap_markers: Vec::new(),
             pe_markers: Vec::new(),
             closest_approach_world_pos: None,
@@ -603,20 +605,19 @@ impl RenderState {
         let flight_parts_cache = self.flight_parts_cache.clone();
         let ap_markers = self.ap_markers.clone();
         let pe_markers = self.pe_markers.clone();
-        let pending_orbit_click = self.pending_orbit_click;
+        let pending_orbit_click = self.pending_orbit_click.clone();
         let selected_maneuver_node = self.selected_maneuver_node;
         let maneuver_nodes = self.maneuver_nodes.clone();
         let time_to_node = self.time_to_node;
         let burn_time = self.burn_time;
         let warp_to_node_active = self.warp_to_node;
-        let current_trajectory = self.current_trajectory.clone();
         let current_autopilot = self.autopilot_target;
         let vessel_stages = self.vessel_stages.clone();
         let vessel_stage_delta_vs = self.vessel_stage_delta_vs.clone();
 
         let mut new_warp_index = current_warp_index;
         let mut pause_action = PauseAction::None;
-        let mut create_node_at: Option<(f64, usize)> = None;
+        let mut create_node_at: Option<(f64, super::types::OrbitSegmentData)> = None;
         let mut delete_node_id: Option<u64> = None;
         let mut close_maneuver_panel = false;
         let mut start_warp_to_node = false;
@@ -627,6 +628,7 @@ impl RenderState {
         let mut engine_toggle_req: Option<(usize, bool)> = None;
         let mut crossfeed_toggle_req: Option<(usize, bool)> = None;
         let mut decouple_req: Option<usize> = None;
+        let mut fairing_deploy_req: Option<usize> = None;
         let mut staging_reorder_req: Option<Vec<Vec<usize>>> = None;
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
@@ -1346,41 +1348,38 @@ impl RenderState {
             };
 
             // Draw "Create Maneuver Node" button if pending click
-            if let Some((ta, seg_idx)) = pending_orbit_click {
-                // Calculate the world position
-                if let Some(segment) = current_trajectory.get(seg_idx) {
-                    let e = segment.eccentricity;
-                    let arg_peri = segment.argument_of_periapsis;
+            if let Some((ta, ref segment)) = pending_orbit_click {
+                let e = segment.eccentricity;
+                let arg_peri = segment.argument_of_periapsis;
 
-                    let r = if e >= 1.0 {
-                        let a_abs = segment.semi_major_axis.abs();
-                        let p = a_abs * (e * e - 1.0);
-                        let denom = 1.0 + e * ta.cos();
-                        if denom > 0.001 { p / denom } else { 0.0 }
-                    } else {
-                        let a = segment.semi_major_axis;
-                        let p = a * (1.0 - e * e);
-                        p / (1.0 + e * ta.cos())
-                    };
+                let r = if e >= 1.0 {
+                    let a_abs = segment.semi_major_axis.abs();
+                    let p = a_abs * (e * e - 1.0);
+                    let denom = 1.0 + e * ta.cos();
+                    if denom > 0.001 { p / denom } else { 0.0 }
+                } else {
+                    let a = segment.semi_major_axis;
+                    let p = a * (1.0 - e * e);
+                    p / (1.0 + e * ta.cos())
+                };
 
-                    if r > 0.0 && r.is_finite() {
-                        let angle = ta + arg_peri;
-                        let world_x = segment.parent_x + r * angle.cos();
-                        let world_y = segment.parent_y + r * angle.sin();
+                if r > 0.0 && r.is_finite() {
+                    let angle = ta + arg_peri;
+                    let world_x = segment.parent_x + r * angle.cos();
+                    let world_y = segment.parent_y + r * angle.sin();
 
-                        let (scr_x, scr_y) = world_to_screen([world_x - camera_pos[0], world_y - camera_pos[1]]);
+                    let (scr_x, scr_y) = world_to_screen([world_x - camera_pos[0], world_y - camera_pos[1]]);
 
-                        // Draw a small window with the create button
-                        egui::Area::new(egui::Id::new("create_node_popup"))
-                            .fixed_pos(egui::pos2(scr_x + 15.0, scr_y - 15.0))
-                            .show(ctx, |ui| {
-                                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                                    if ui.button("Create Maneuver Node").clicked() {
-                                        create_node_at = Some((ta, seg_idx));
-                                    }
-                                });
+                    // Draw a small window with the create button
+                    egui::Area::new(egui::Id::new("create_node_popup"))
+                        .fixed_pos(egui::pos2(scr_x + 15.0, scr_y - 15.0))
+                        .show(ctx, |ui| {
+                            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                                if ui.button("Create Maneuver Node").clicked() {
+                                    create_node_at = Some((ta, segment.clone()));
+                                }
                             });
-                    }
+                        });
                 }
             }
 
@@ -1816,6 +1815,15 @@ impl RenderState {
                                     decouple_req = Some(part.part_index);
                                 }
                             }
+
+                            // Fairing info
+                            if part.is_fairing {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Fairing").strong());
+                                if ui.button("Deploy").clicked() {
+                                    fairing_deploy_req = Some(part.part_index);
+                                }
+                            }
                         });
                 }
             }
@@ -2101,8 +2109,8 @@ impl RenderState {
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
 
         // Handle maneuver node UI actions
-        if let Some((ta, seg_idx)) = create_node_at {
-            self.create_maneuver_node(ta, seg_idx);
+        if let Some((ta, ref segment)) = create_node_at {
+            self.create_maneuver_node(ta, segment);
         }
         if let Some(node_id) = delete_node_id {
             // Cancel warp-to-node if the first node is being deleted
@@ -2132,6 +2140,9 @@ impl RenderState {
         }
         if decouple_req.is_some() {
             self.decouple_request = decouple_req;
+        }
+        if fairing_deploy_req.is_some() {
+            self.fairing_deploy_request = fairing_deploy_req;
         }
         // Store staging reorder request for main.rs to process
         if staging_reorder_req.is_some() {
@@ -3259,10 +3270,13 @@ impl RenderState {
                             let part_center_y = rel_y + rotated_y;
 
                             // Generate vertices at origin, then transform
+                            // Skip base disc for fairing half debris (shell-only)
                             let mut part_verts: Vec<Vertex> = Vec::new();
-                            crate::editor::generate_part_shape_vertices(
-                                &mut part_verts, def, 0.0, 0.0, 1.0,
-                            );
+                            if part_data.fairing_half.is_none() {
+                                crate::editor::generate_part_shape_vertices(
+                                    &mut part_verts, def, 0.0, 0.0, 1.0,
+                                );
+                            }
 
                             // Add engine plume if this engine is firing
                             if part_data.engine_active && ship_data.throttle > 0.0 && def.engine.is_some() {
@@ -3361,6 +3375,43 @@ impl RenderState {
                                         all_indices.push(base_index + i + 1);
                                         all_indices.push(base_index + i + 2);
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    // Third pass: draw fairing shells
+                    for part_data in parts {
+                        let Some(ref shape) = part_data.fairing_shape else { continue };
+                        let Some(fairing_def) = defs.get(&part_data.definition_id) else { continue };
+                        if fairing_def.fairing.is_none() { continue; }
+
+                        let px = part_data.local_x as f32;
+                        let py = part_data.local_y as f32;
+                        let hitbox_half_h = part_data.hitbox_half_h as f32;
+                        let base_half_w = (fairing_def.width() / 2.0) as f32;
+                        let mut shell_verts: Vec<Vertex> = Vec::new();
+                        crate::editor::generate_flight_fairing_shell(
+                            &mut shell_verts, shape,
+                            px, py, hitbox_half_h, base_half_w, 1.0,
+                            part_data.fairing_half,
+                        );
+
+                        if !shell_verts.is_empty() {
+                            let base_index = all_vertices.len() as u32;
+                            for vert in &shell_verts {
+                                let vx = vert.position[0] * render_scale;
+                                let vy = vert.position[1] * render_scale;
+                                let rx = vx * cos_r - vy * sin_r;
+                                let ry = vx * sin_r + vy * cos_r;
+                                all_vertices.push(Vertex::new([rel_x + rx, rel_y + ry], vert.color));
+                            }
+                            let num_verts = shell_verts.len() as u32;
+                            for i in (0..num_verts).step_by(3) {
+                                if i + 2 < num_verts {
+                                    all_indices.push(base_index + i);
+                                    all_indices.push(base_index + i + 1);
+                                    all_indices.push(base_index + i + 2);
                                 }
                             }
                         }
@@ -3620,10 +3671,13 @@ impl RenderState {
                             let part_center_x = rel_x + rotated_x;
                             let part_center_y = rel_y + rotated_y;
 
+                            // Skip base disc for fairing half debris (shell-only)
                             let mut part_verts: Vec<Vertex> = Vec::new();
-                            crate::editor::generate_part_shape_vertices(
-                                &mut part_verts, def, 0.0, 0.0, 1.0,
-                            );
+                            if part_data.fairing_half.is_none() {
+                                crate::editor::generate_part_shape_vertices(
+                                    &mut part_verts, def, 0.0, 0.0, 1.0,
+                                );
+                            }
 
                             let base_index = all_vertices.len() as u32;
                             let scale_factor = render_scale;
@@ -3674,6 +3728,42 @@ impl RenderState {
                                         all_indices.push(base_index + i + 1);
                                         all_indices.push(base_index + i + 2);
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    // Third pass: fairing shells
+                    for part_data in parts {
+                        let Some(ref shape) = part_data.fairing_shape else { continue };
+                        let Some(fairing_def) = defs.get(&part_data.definition_id) else { continue };
+                        if fairing_def.fairing.is_none() { continue; }
+
+                        let px = part_data.local_x as f32;
+                        let py = part_data.local_y as f32;
+                        let hitbox_half_h = part_data.hitbox_half_h as f32;
+                        let base_half_w = (fairing_def.width() / 2.0) as f32;
+                        let mut shell_verts: Vec<Vertex> = Vec::new();
+                        crate::editor::generate_flight_fairing_shell(
+                            &mut shell_verts, shape,
+                            px, py, hitbox_half_h, base_half_w, 1.0,
+                            part_data.fairing_half,
+                        );
+                        if !shell_verts.is_empty() {
+                            let base_index = all_vertices.len() as u32;
+                            for vert in &shell_verts {
+                                let vx = vert.position[0] * render_scale;
+                                let vy = vert.position[1] * render_scale;
+                                let rx = vx * cos_r - vy * sin_r;
+                                let ry = vx * sin_r + vy * cos_r;
+                                all_vertices.push(Vertex::new([rel_x + rx, rel_y + ry], vert.color));
+                            }
+                            let num_verts = shell_verts.len() as u32;
+                            for i in (0..num_verts).step_by(3) {
+                                if i + 2 < num_verts {
+                                    all_indices.push(base_index + i);
+                                    all_indices.push(base_index + i + 1);
+                                    all_indices.push(base_index + i + 2);
                                 }
                             }
                         }

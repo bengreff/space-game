@@ -1,4 +1,4 @@
-use crate::parts::{PartDefinitions, PartShape, PartDefinition, PartCategory};
+use crate::parts::{PartDefinitions, PartShape, PartDefinition, PartCategory, FairingShape, GRID_SQUARE_SIZE};
 use crate::render::Vertex;
 use super::EditorState;
 
@@ -35,6 +35,11 @@ const DECOUPLER_RING_COLOR: [f32; 4] = [0.25, 0.25, 0.28, 1.0];    // Dark metal
 // Heat shield colors
 const HEAT_SHIELD_FACE_COLOR: [f32; 4] = [0.05, 0.05, 0.05, 1.0];  // Near-black ablative face
 const HEAT_SHIELD_BACK_COLOR: [f32; 4] = [0.12, 0.12, 0.12, 1.0];  // Dark backing structure
+
+// Fairing colors
+const FAIRING_BASE_COLOR: [f32; 4] = [0.30, 0.30, 0.33, 1.0];      // Lighter metallic disc
+const FAIRING_SHELL_COLOR: [f32; 4] = [0.35, 0.35, 0.38, 1.0];     // Light grey shell panels
+const FAIRING_SHELL_LINE_COLOR: [f32; 4] = [0.20, 0.20, 0.22, 1.0]; // Panel seam lines
 
 /// Generate vertices for the editor grid (as thin quads for triangle rendering)
 /// Note: Vertices are output in CAMERA-RELATIVE coordinates (shader expects this)
@@ -260,6 +265,30 @@ pub fn generate_part_vertices(
             continue;
         }
 
+        // For fairings, render base only (shell is deferred to third pass for z-ordering)
+        if def.fairing.is_some() {
+            let base_alpha = if is_hovered { 0.5 } else { 1.0 };
+            generate_fairing_base_details(&mut vertices, def, x, y, base_alpha);
+
+            if is_selected || is_hovered || drag_invalid {
+                let highlight_color = if drag_invalid {
+                    [0.9, 0.2, 0.2, 0.4]
+                } else if is_selected {
+                    [0.5, 0.7, 1.0, 0.3]
+                } else {
+                    [0.55, 0.55, 0.6, 0.2]
+                };
+                let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
+                vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y - hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
+                vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], highlight_color));
+            }
+            continue;
+        }
+
         // For RCS thrusters, use dedicated RCS rendering
         if def.rcs.is_some() {
             generate_rcs_details(&mut vertices, def, x, y, 1.0);
@@ -389,6 +418,35 @@ pub fn generate_part_vertices(
         generate_decoupler_adapter(&mut vertices, def, draw_x, draw_y, world_x, world_y, &editor.parts, part_defs, 1.0);
     }
 
+    // Third pass: draw fairing shells on top of all parts (z-ordering)
+    for (id, part) in &editor.parts {
+        let Some(def) = part_defs.get(&part.definition_id) else {
+            continue;
+        };
+        if def.fairing.is_none() {
+            continue;
+        }
+        if let Some(ref shape) = part.fairing_shape {
+            let x = part.position[0] as f32 - cam_x;
+            let y = part.position[1] as f32 - cam_y;
+            let is_hovered = editor.hovered_part == Some(*id)
+                || editor.hovered_part.and_then(|hov| editor.parts.get(&hov)?.mirror_partner) == Some(*id);
+            let shell_alpha = if is_hovered { 0.5 } else { 1.0 };
+            generate_fairing_shell_vertices(&mut vertices, shape, x, y, def, shell_alpha, None);
+        }
+    }
+
+    // Fourth pass: draw fairing build preview (in-progress shell)
+    if let Some(ref build) = editor.fairing_build_mode {
+        if let Some(def) = part_defs.get(
+            &editor.parts.get(&build.part_id).map(|p| p.definition_id.clone()).unwrap_or_default()
+        ) {
+            let base_x = build.base_center_x as f32 - cam_x;
+            let base_top_y = build.base_top_y as f32 - cam_y;
+            generate_fairing_build_preview(&mut vertices, build, def, base_x, base_top_y);
+        }
+    }
+
     vertices
 }
 
@@ -470,6 +528,24 @@ fn generate_single_ghost_vertices(
         let ghost_world_x = position[0] as f32;
         let ghost_world_y = position[1] as f32;
         generate_decoupler_adapter(vertices, def, x, y, ghost_world_x, ghost_world_y, &editor.parts, part_defs, ghost_alpha);
+
+        let overlay_color = if ghost_valid {
+            [0.3, 0.9, 0.3, 0.25]
+        } else {
+            [0.9, 0.3, 0.3, 0.25]
+        };
+        let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
+        vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y - hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
+        vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], overlay_color));
+        return;
+    }
+
+    if def.fairing.is_some() {
+        generate_fairing_base_details(vertices, def, x, y, ghost_alpha);
 
         let overlay_color = if ghost_valid {
             [0.3, 0.9, 0.3, 0.25]
@@ -1538,6 +1614,12 @@ pub fn generate_part_shape_vertices(
         return;
     }
 
+    // For fairings, draw the base disc (shell needs shape data, handled separately)
+    if def.fairing.is_some() {
+        generate_fairing_base_details(vertices, def, x, y, alpha);
+        return;
+    }
+
     // For RCS thrusters
     if def.rcs.is_some() {
         generate_rcs_details(vertices, def, x, y, alpha);
@@ -1628,6 +1710,295 @@ pub fn world_to_screen(
     [screen_x, screen_y]
 }
 
+/// Generate fairing base disc details (similar to decoupler ring but lighter)
+pub fn generate_fairing_base_details(
+    vertices: &mut Vec<Vertex>,
+    def: &PartDefinition,
+    x: f32,
+    y: f32,
+    alpha: f32,
+) {
+    let half_w = (def.width() / 2.0) as f32;
+    let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
+
+    let base_color = [FAIRING_BASE_COLOR[0], FAIRING_BASE_COLOR[1], FAIRING_BASE_COLOR[2], FAIRING_BASE_COLOR[3] * alpha];
+
+    // Base disc fills the full hitbox (1 tile tall)
+    let disc_bottom = y - hitbox_half_h;
+    let disc_top = y + hitbox_half_h;
+
+    vertices.push(Vertex::new([x - half_w, disc_bottom], base_color));
+    vertices.push(Vertex::new([x + half_w, disc_bottom], base_color));
+    vertices.push(Vertex::new([x + half_w, disc_top], base_color));
+
+    vertices.push(Vertex::new([x - half_w, disc_bottom], base_color));
+    vertices.push(Vertex::new([x + half_w, disc_top], base_color));
+    vertices.push(Vertex::new([x - half_w, disc_top], base_color));
+}
+
+/// Generate fairing shell vertices from a completed FairingShape.
+/// `x, y` is the part center. Shell starts from the base top edge.
+/// `fairing_half`: None = both halves, Some(Left) = left only, Some(Right) = right only.
+pub fn generate_fairing_shell_vertices(
+    vertices: &mut Vec<Vertex>,
+    shape: &FairingShape,
+    x: f32,
+    y: f32,
+    def: &PartDefinition,
+    alpha: f32,
+    fairing_half: Option<crate::parts::FairingHalf>,
+) {
+    if shape.vertices.is_empty() {
+        return;
+    }
+
+    let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
+    let base_top = y + hitbox_half_h;  // Top edge of the fairing base hitbox
+    let gs = GRID_SQUARE_SIZE as f32;
+
+    let shell_color = [FAIRING_SHELL_COLOR[0], FAIRING_SHELL_COLOR[1], FAIRING_SHELL_COLOR[2], FAIRING_SHELL_COLOR[3] * alpha];
+    let line_color = [FAIRING_SHELL_LINE_COLOR[0], FAIRING_SHELL_LINE_COLOR[1], FAIRING_SHELL_LINE_COLOR[2], FAIRING_SHELL_LINE_COLOR[3] * alpha];
+
+    use crate::parts::FairingHalf;
+    let draw_left = fairing_half != Some(FairingHalf::Right);
+    let draw_right = fairing_half != Some(FairingHalf::Left);
+
+    // Starting point: top corners of the base disc
+    let base_half_w = (def.width() / 2.0) as f32;
+    let mut prev_half_w = base_half_w;
+    let mut prev_y = base_top;
+
+    for &(hw_grid, y_off_grid) in &shape.vertices {
+        let hw = hw_grid as f32 * gs;
+        let seg_y = base_top + y_off_grid as f32 * gs;
+
+        if draw_left {
+            // Left trapezoid half
+            vertices.push(Vertex::new([x - prev_half_w, prev_y], shell_color));
+            vertices.push(Vertex::new([x, prev_y], shell_color));
+            vertices.push(Vertex::new([x, seg_y], shell_color));
+
+            vertices.push(Vertex::new([x - prev_half_w, prev_y], shell_color));
+            vertices.push(Vertex::new([x, seg_y], shell_color));
+            vertices.push(Vertex::new([x - hw, seg_y], shell_color));
+        }
+
+        if draw_right {
+            // Right trapezoid half
+            vertices.push(Vertex::new([x, prev_y], shell_color));
+            vertices.push(Vertex::new([x + prev_half_w, prev_y], shell_color));
+            vertices.push(Vertex::new([x + hw, seg_y], shell_color));
+
+            vertices.push(Vertex::new([x, prev_y], shell_color));
+            vertices.push(Vertex::new([x + hw, seg_y], shell_color));
+            vertices.push(Vertex::new([x, seg_y], shell_color));
+        }
+
+        // Horizontal seam line at this vertex
+        if hw > 0.001 {
+            let line_half_t = 0.008_f32;
+            let seam_left = if draw_left { x - hw } else { x };
+            let seam_right = if draw_right { x + hw } else { x };
+            vertices.push(Vertex::new([seam_left, seg_y - line_half_t], line_color));
+            vertices.push(Vertex::new([seam_right, seg_y - line_half_t], line_color));
+            vertices.push(Vertex::new([seam_right, seg_y + line_half_t], line_color));
+            vertices.push(Vertex::new([seam_left, seg_y - line_half_t], line_color));
+            vertices.push(Vertex::new([seam_right, seg_y + line_half_t], line_color));
+            vertices.push(Vertex::new([seam_left, seg_y + line_half_t], line_color));
+        }
+
+        prev_half_w = hw;
+        prev_y = seg_y;
+    }
+
+    // Vertical seam line down the center of the shell
+    if shape.vertices.len() >= 1 {
+        let shell_top_y = base_top + shape.vertices.last().unwrap().1 as f32 * gs;
+        let line_half_t = 0.008_f32;
+        vertices.push(Vertex::new([x - line_half_t, base_top], line_color));
+        vertices.push(Vertex::new([x + line_half_t, base_top], line_color));
+        vertices.push(Vertex::new([x + line_half_t, shell_top_y], line_color));
+        vertices.push(Vertex::new([x - line_half_t, base_top], line_color));
+        vertices.push(Vertex::new([x + line_half_t, shell_top_y], line_color));
+        vertices.push(Vertex::new([x - line_half_t, shell_top_y], line_color));
+    }
+}
+
+/// Generate the in-progress fairing build preview (ghost segments + cursor guide)
+fn generate_fairing_build_preview(
+    vertices: &mut Vec<Vertex>,
+    build: &super::FairingBuildState,
+    def: &PartDefinition,
+    base_x: f32,     // camera-relative x
+    base_top_y: f32,  // camera-relative base top y
+) {
+    let gs = GRID_SQUARE_SIZE as f32;
+    let shell_color = [FAIRING_SHELL_COLOR[0], FAIRING_SHELL_COLOR[1], FAIRING_SHELL_COLOR[2], 0.7];
+
+    // Draw completed segments
+    let base_half_w = (def.width() / 2.0) as f32;
+    let mut prev_half_w = base_half_w;
+    let mut prev_y = base_top_y;
+
+    for &(hw_grid, y_off_grid) in &build.vertices {
+        let hw = hw_grid as f32 * gs;
+        let seg_y = base_top_y + y_off_grid as f32 * gs;
+
+        // Left side
+        vertices.push(Vertex::new([base_x - prev_half_w, prev_y], shell_color));
+        vertices.push(Vertex::new([base_x, prev_y], shell_color));
+        vertices.push(Vertex::new([base_x, seg_y], shell_color));
+        vertices.push(Vertex::new([base_x - prev_half_w, prev_y], shell_color));
+        vertices.push(Vertex::new([base_x, seg_y], shell_color));
+        vertices.push(Vertex::new([base_x - hw, seg_y], shell_color));
+
+        // Right side
+        vertices.push(Vertex::new([base_x, prev_y], shell_color));
+        vertices.push(Vertex::new([base_x + prev_half_w, prev_y], shell_color));
+        vertices.push(Vertex::new([base_x + hw, seg_y], shell_color));
+        vertices.push(Vertex::new([base_x, prev_y], shell_color));
+        vertices.push(Vertex::new([base_x + hw, seg_y], shell_color));
+        vertices.push(Vertex::new([base_x, seg_y], shell_color));
+
+        prev_half_w = hw;
+        prev_y = seg_y;
+    }
+
+    // Draw ghost segment from last vertex to cursor
+    if let Some([gx, gy]) = build.ghost_point {
+        let ghost_hw = (gx - build.base_center_x).abs() as f32;
+        let ghost_y = gy as f32 - (build.base_top_y as f32 - base_top_y); // Convert to camera-relative
+
+        let ghost_color = if build.ghost_valid {
+            [0.3, 0.9, 0.3, 0.3]
+        } else {
+            [0.9, 0.3, 0.3, 0.3]
+        };
+
+        // Left side ghost
+        vertices.push(Vertex::new([base_x - prev_half_w, prev_y], ghost_color));
+        vertices.push(Vertex::new([base_x, prev_y], ghost_color));
+        vertices.push(Vertex::new([base_x, ghost_y], ghost_color));
+        vertices.push(Vertex::new([base_x - prev_half_w, prev_y], ghost_color));
+        vertices.push(Vertex::new([base_x, ghost_y], ghost_color));
+        vertices.push(Vertex::new([base_x - ghost_hw, ghost_y], ghost_color));
+
+        // Right side ghost
+        vertices.push(Vertex::new([base_x, prev_y], ghost_color));
+        vertices.push(Vertex::new([base_x + prev_half_w, prev_y], ghost_color));
+        vertices.push(Vertex::new([base_x + ghost_hw, ghost_y], ghost_color));
+        vertices.push(Vertex::new([base_x, prev_y], ghost_color));
+        vertices.push(Vertex::new([base_x + ghost_hw, ghost_y], ghost_color));
+        vertices.push(Vertex::new([base_x, ghost_y], ghost_color));
+
+        // Ghost point marker (small diamond)
+        if build.ghost_valid {
+            let marker_size = 0.03_f32;
+            let marker_color = [0.3, 0.9, 0.3, 0.8];
+            // Right side marker
+            let mx = base_x + ghost_hw;
+            vertices.push(Vertex::new([mx, ghost_y - marker_size], marker_color));
+            vertices.push(Vertex::new([mx + marker_size, ghost_y], marker_color));
+            vertices.push(Vertex::new([mx, ghost_y + marker_size], marker_color));
+            vertices.push(Vertex::new([mx, ghost_y - marker_size], marker_color));
+            vertices.push(Vertex::new([mx, ghost_y + marker_size], marker_color));
+            vertices.push(Vertex::new([mx - marker_size, ghost_y], marker_color));
+            // Left side marker (mirrored)
+            let mx = base_x - ghost_hw;
+            vertices.push(Vertex::new([mx, ghost_y - marker_size], marker_color));
+            vertices.push(Vertex::new([mx + marker_size, ghost_y], marker_color));
+            vertices.push(Vertex::new([mx, ghost_y + marker_size], marker_color));
+            vertices.push(Vertex::new([mx, ghost_y - marker_size], marker_color));
+            vertices.push(Vertex::new([mx, ghost_y + marker_size], marker_color));
+            vertices.push(Vertex::new([mx - marker_size, ghost_y], marker_color));
+        }
+    }
+}
+
+/// Generate fairing shell vertices for flight rendering
+/// Similar to generate_flight_decoupler_adapter but for fairing shells
+/// `fairing_half`: None = both halves, Some(Left) = left only, Some(Right) = right only.
+pub fn generate_flight_fairing_shell(
+    vertices: &mut Vec<Vertex>,
+    shape: &FairingShape,
+    part_x: f32,
+    part_y: f32,
+    hitbox_half_h: f32,
+    base_half_w: f32,
+    alpha: f32,
+    fairing_half: Option<crate::parts::FairingHalf>,
+) {
+    if shape.vertices.is_empty() {
+        return;
+    }
+
+    let base_top = part_y + hitbox_half_h;
+    let gs = GRID_SQUARE_SIZE as f32;
+
+    let shell_color = [FAIRING_SHELL_COLOR[0], FAIRING_SHELL_COLOR[1], FAIRING_SHELL_COLOR[2], FAIRING_SHELL_COLOR[3] * alpha];
+    let line_color = [FAIRING_SHELL_LINE_COLOR[0], FAIRING_SHELL_LINE_COLOR[1], FAIRING_SHELL_LINE_COLOR[2], FAIRING_SHELL_LINE_COLOR[3] * alpha];
+
+    use crate::parts::FairingHalf;
+    let draw_left = fairing_half != Some(FairingHalf::Right);
+    let draw_right = fairing_half != Some(FairingHalf::Left);
+
+    let mut prev_half_w = base_half_w;
+    let mut prev_y = base_top;
+
+    for &(hw_grid, y_off_grid) in &shape.vertices {
+        let hw = hw_grid as f32 * gs;
+        let seg_y = base_top + y_off_grid as f32 * gs;
+
+        if draw_left {
+            // Left trapezoid half
+            vertices.push(Vertex::new([part_x - prev_half_w, prev_y], shell_color));
+            vertices.push(Vertex::new([part_x, prev_y], shell_color));
+            vertices.push(Vertex::new([part_x, seg_y], shell_color));
+            vertices.push(Vertex::new([part_x - prev_half_w, prev_y], shell_color));
+            vertices.push(Vertex::new([part_x, seg_y], shell_color));
+            vertices.push(Vertex::new([part_x - hw, seg_y], shell_color));
+        }
+
+        if draw_right {
+            // Right trapezoid half
+            vertices.push(Vertex::new([part_x, prev_y], shell_color));
+            vertices.push(Vertex::new([part_x + prev_half_w, prev_y], shell_color));
+            vertices.push(Vertex::new([part_x + hw, seg_y], shell_color));
+            vertices.push(Vertex::new([part_x, prev_y], shell_color));
+            vertices.push(Vertex::new([part_x + hw, seg_y], shell_color));
+            vertices.push(Vertex::new([part_x, seg_y], shell_color));
+        }
+
+        // Horizontal seam
+        if hw > 0.001 {
+            let lt = 0.008_f32;
+            let seam_left = if draw_left { part_x - hw } else { part_x };
+            let seam_right = if draw_right { part_x + hw } else { part_x };
+            vertices.push(Vertex::new([seam_left, seg_y - lt], line_color));
+            vertices.push(Vertex::new([seam_right, seg_y - lt], line_color));
+            vertices.push(Vertex::new([seam_right, seg_y + lt], line_color));
+            vertices.push(Vertex::new([seam_left, seg_y - lt], line_color));
+            vertices.push(Vertex::new([seam_right, seg_y + lt], line_color));
+            vertices.push(Vertex::new([seam_left, seg_y + lt], line_color));
+        }
+
+        prev_half_w = hw;
+        prev_y = seg_y;
+    }
+
+    // Vertical center seam
+    if !shape.vertices.is_empty() {
+        let shell_top_y = base_top + shape.vertices.last().unwrap().1 as f32 * gs;
+        let lt = 0.008_f32;
+        vertices.push(Vertex::new([part_x - lt, base_top], line_color));
+        vertices.push(Vertex::new([part_x + lt, base_top], line_color));
+        vertices.push(Vertex::new([part_x + lt, shell_top_y], line_color));
+        vertices.push(Vertex::new([part_x - lt, base_top], line_color));
+        vertices.push(Vertex::new([part_x + lt, shell_top_y], line_color));
+        vertices.push(Vertex::new([part_x - lt, shell_top_y], line_color));
+    }
+}
+
 /// Find which part (if any) is at the given screen position
 /// Uses hitbox dimensions for click detection
 pub fn part_at_screen_pos(
@@ -1640,6 +2011,43 @@ pub fn part_at_screen_pos(
 ) -> Option<crate::parts::PlacedPartId> {
     let [world_x, world_y] = screen_to_world(screen_x, screen_y, screen_width, screen_height, editor);
 
+    // First pass: check fairing shells (they render on top, so should be hit-tested first)
+    for (id, part) in &editor.parts {
+        let Some(def) = part_defs.get(&part.definition_id) else { continue };
+        if def.fairing.is_none() { continue; }
+        let Some(ref shape) = part.fairing_shape else { continue; };
+        if shape.vertices.is_empty() { continue; }
+
+        let gs = GRID_SQUARE_SIZE;
+        let base_top_y = part.position[1] + def.hitbox_height() / 2.0;
+        let base_half_w = def.width() / 2.0;
+        let cx = part.position[0];
+
+        // Check if point is within the shell envelope
+        let tip_y = base_top_y + shape.vertices.last().unwrap().1 * gs;
+        if world_y >= base_top_y && world_y <= tip_y {
+            // Interpolate half-width at this y
+            let mut prev_hw = base_half_w;
+            let mut prev_y = base_top_y;
+            for &(hw_grid, y_off_grid) in &shape.vertices {
+                let seg_hw = hw_grid * gs;
+                let seg_y = base_top_y + y_off_grid * gs;
+                if world_y <= seg_y + 0.001 {
+                    let span = seg_y - prev_y;
+                    let t = if span < 0.001 { 1.0 } else { ((world_y - prev_y) / span).clamp(0.0, 1.0) };
+                    let hw_at_y = prev_hw + t * (seg_hw - prev_hw);
+                    if (world_x - cx).abs() <= hw_at_y + 0.001 {
+                        return Some(*id);
+                    }
+                    break;
+                }
+                prev_hw = seg_hw;
+                prev_y = seg_y;
+            }
+        }
+    }
+
+    // Second pass: check hitbox rectangles
     for (id, part) in &editor.parts {
         let Some(def) = part_defs.get(&part.definition_id) else {
             continue;

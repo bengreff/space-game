@@ -107,5 +107,91 @@
                 is_radial: true,
             )),
         ),
+
+        // === FAIRINGS ===
+        // Payload shrouds that protect parts from aerodynamic heating.
+        // Place the base, then click to build a symmetric fairing shell above it.
+        // 1 grid square tall disc, fully colored in.
+
+        (
+            id: "fairing_tiny",
+            name: "AE-FF0 Fairing",
+            description: "Tiny fairing base for probe payloads.",
+            category: Aerodynamic,
+            mass: 0.01,
+            cost: 75,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 1.0,
+            max_heat_tolerance: 2000.0,
+            fairing: Some((
+                ejection_force: 5.0,
+            )),
+        ),
+        (
+            id: "fairing_small",
+            name: "AE-FF1 Fairing",
+            description: "Small fairing base for light payloads.",
+            category: Aerodynamic,
+            mass: 0.05,
+            cost: 200,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 1.0,
+            max_heat_tolerance: 2000.0,
+            fairing: Some((
+                ejection_force: 15.0,
+            )),
+        ),
+        (
+            id: "fairing_medium",
+            name: "AE-FF2 Fairing",
+            description: "Medium fairing base for standard payloads.",
+            category: Aerodynamic,
+            mass: 0.1,
+            cost: 400,
+            size: Medium,
+            shape: Rectangle,
+            grid_width: 5.0,
+            grid_height: 1.0,
+            max_heat_tolerance: 2000.0,
+            fairing: Some((
+                ejection_force: 30.0,
+            )),
+        ),
+        (
+            id: "fairing_large",
+            name: "AE-FF3 Fairing",
+            description: "Large fairing base for heavy payloads.",
+            category: Aerodynamic,
+            mass: 0.2,
+            cost: 800,
+            size: Large,
+            shape: Rectangle,
+            grid_width: 9.0,
+            grid_height: 1.0,
+            max_heat_tolerance: 2000.0,
+            fairing: Some((
+                ejection_force: 60.0,
+            )),
+        ),
+        (
+            id: "fairing_xl",
+            name: "AE-FF4 Fairing",
+            description: "Extra-large fairing base for super-heavy payloads.",
+            category: Aerodynamic,
+            mass: 0.4,
+            cost: 1500,
+            size: XL,
+            shape: Rectangle,
+            grid_width: 13.0,
+            grid_height: 1.0,
+            max_heat_tolerance: 2000.0,
+            fairing: Some((
+                ejection_force: 100.0,
+            )),
+        ),
     ],
 )

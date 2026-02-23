@@ -6,11 +6,12 @@ Maneuver node creation, editing, dragging, burning, and predicted trajectory dis
 
 ### Requirement: Maneuver node creation via orbit click
 
-Clicking near the ship's orbit line in map view SHALL detect the closest orbit point and show a "Create Maneuver Node" popup button. Only the first segment (index 0) supports node placement.
+Clicking near any visible orbit line in map view SHALL detect the closest orbit point and show a "Create Maneuver Node" popup button. Click detection searches all current trajectory segments and all predicted trajectories (from maneuver node burns).
 
 #### Scenario: Orbit click detection
-- Sample 256 points along the first trajectory segment
+- Sample 256 points along each trajectory segment (current and predicted)
 - If any point is within 15 pixels of click position, store as `pending_orbit_click`
+- Closest match across all segments wins
 
 #### Scenario: Node creation details
 - ManeuverNode created with: unique auto-incrementing id, orbit parameters copied from segment
@@ -66,7 +67,7 @@ Clicking "Close" SHALL set `selected_maneuver_node = None` without deleting.
 
 ### Requirement: Maneuver node dragging along orbit
 
-Nodes can be dragged along their stored orbit to change position. Sample 360 points along the orbit and set `true_anomaly` to the closest point's value.
+Nodes can be dragged along their stored orbit to change position. Sample 360 points along the orbit and set `true_anomaly` to the closest point's value. Epoch is updated using a delta approach: compute the signed time delta between old and new true anomaly on the node's own orbit (via mean anomaly difference), then `new_epoch = old_epoch + delta_time`. This works correctly for nodes on any orbit, not just the current trajectory.
 
 ## Position Calculation
 
@@ -115,11 +116,14 @@ During a burn with autopilot in ManeuverNode mode, `apply_burn_to_maneuver` SHAL
 Each ManeuverNode SHALL store an `epoch: f64` — the absolute simulation time at which the ship will reach the node. This is computed at node creation and when dragging.
 
 #### Scenario: Epoch computation
+- Each `OrbitSegmentData` carries a `base_epoch` field: the absolute sim time at the trajectory's origin
+  - Current trajectory: `base_epoch = simulation_time`
+  - Predicted trajectories (post-maneuver): `base_epoch = source_maneuver_node.epoch`
 - Uses the trajectory segment's own `start_true_anomaly` and `start_time` — both the segment start TA and the node TA are in the same orbit frame, avoiding arg_peri mismatch issues
 - Convert segment `start_true_anomaly` and node TA to mean anomalies on the segment's orbit
 - Compute delta MA from segment start to node position, accounting for orbit direction
-- `epoch = simulation_time + segment.start_time + delta_ma / mean_motion`
-- Epoch is absolute simulation time; supports nodes at any distance along the trajectory
+- `epoch = base_epoch + segment.start_time + delta_ma / mean_motion`
+- Epoch is absolute simulation time; supports nodes on any trajectory segment
 
 ### Requirement: Time-to-node countdown
 

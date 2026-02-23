@@ -1,6 +1,8 @@
 # Sunscatter
 
-A 2D space game with **1:1 real-scale** orbital mechanics. Build rockets in the vehicle editor, launch from Earth, and fly using patched-conic trajectory prediction. Unlike Kerbal Space Program's 1/10 scale planets, this simulation uses actual solar system values - real masses, real distances, real orbital velocities.
+A 2D spaceflight simulator with **1:1 real-scale** orbital mechanics. Build rockets in the vehicle editor, launch from Earth, and fly to the Moon, Mars, or anywhere in the solar system using patched-conic trajectory prediction. Unlike Kerbal Space Program's 1/10 scale planets, this simulation uses actual solar system values — real masses, real distances, real orbital velocities.
+
+**The core gameplay loop is complete**: design, build, launch, orbit, plan maneuvers, transfer between planets, and land. Everything needed to fly missions from Earth to other bodies and back.
 
 ## 1:1 Real Scale
 
@@ -10,31 +12,48 @@ A 2D space game with **1:1 real-scale** orbital mechanics. Build rockets in the 
 - **20 celestial bodies**: Sun, Mercury, Venus, Earth, Moon, Mars, Jupiter + 4 Galilean moons, Saturn + 4 moons, Uranus, Neptune
 - **All physics**: Exact real-world values with `G = 6.67430e-11`
 
-## What Works
+## Features
 
 **Vehicle Editor**
 - Part palette with 6 categories: Pods, Engines, Fuel Tanks, Structural, Aerodynamic, Utility
-- 16 unique engines across 4 sizes (Tiny/Small/Medium/Large) and 3 propellant types (Kerolox/Methalox/Hydrolox)
+- 5 part sizes: Tiny, Small, Medium, Large, XL
+- 16 unique engines across 3 propellant types (Kerolox/Methalox/Hydrolox)
 - Procedural part rendering: engine nozzles with cooling rings, pod windows, decoupler adapters
-- Grid-based placement with overlap detection and ghost preview
+- Payload fairings: click-to-build symmetric shells that protect parts from aerodynamic heating
+- Grid-based placement with overlap detection, ghost preview, and fairing boundary validation
 - Mirror symmetry mode for symmetric builds
 - Drag-and-drop staging panel with per-stage delta-v calculation
 - Part info panel with fuel type selection, fill/empty toggle, crossfeed control
 - Blueprint save/load (RON format)
 
-**Flight Mode**
+**Orbital Mechanics**
 - Velocity Verlet physics integration with sub-stepping
 - Patched conics trajectory prediction across SOI boundaries
 - SOI transitions with precise binary-search frame conversion
-- On-rails Keplerian propagation at high time warp (up to 1 billion x)
-- Maneuver node creation, editing, and execution with predicted trajectories
-- Part-based vessel rendering with engine exhaust plumes
-- Staging activation (engine ignition, decoupler separation)
-- Fuel consumption across all non-decoupled tanks
+- On-rails Keplerian propagation at high time warp (up to 1,000,000,000x)
+- Maneuver node creation on any orbit segment (current trajectory or post-maneuver predictions)
+- Maneuver node editing, dragging, and execution with auto-warp-to-node
+- Transfer planner for interplanetary missions with phase angle computation
+- Closest approach indicators for navigation targets
+
+**Flight Systems**
+- Part-based vessel rendering with engine exhaust and RCS plumes
+- Staging activation: engine ignition, decoupler separation, fairing jettison (two-half debris)
+- Fuel zones with drain priority — asparagus/onion staging drains outer tanks first
+- RCS translation and rotation with per-nozzle activation
 - Autopilot (SAS): Prograde, Retrograde, Radial In/Out, Maneuver Node hold
-- HUD: velocity, altitude, orbital info, throttle/fuel bars, staging panel
-- Procedural surface scenery (trees, launchpad on Earth)
+- Aerodynamic drag (orientation-dependent) and heating with per-part thermal model
+- Fairing shielding protects enclosed parts from aerodynamic heating
+- Heat shields with high thermal tolerance
+- Terrain and vessel collision detection
+- Vessel recovery system
+
+**HUD and Navigation**
+- Velocity, altitude, orbital info, throttle/fuel bars, staging panel
+- Apoapsis/periapsis markers with altitude labels
 - Body hover labels, click-to-focus, camera tracking
+- Multi-vessel tracking station with vessel switching
+- Textured celestial body rendering
 
 ## Quick Start
 
@@ -52,9 +71,11 @@ cargo run
 
 | Action | Input |
 |--------|-------|
-| Throttle up/down | W / S |
+| Throttle up/down | W / S (also: forward/back translation with RCS) |
 | Full / cut throttle | Z / X |
-| Rotate left/right | A / D |
+| Rotate left/right | Q / E |
+| RCS translate left/right | A / D |
+| Stage | Space |
 | Focus on ship | ` (backtick) |
 | Pan camera | Left mouse drag |
 | Zoom | Scroll wheel |
@@ -66,10 +87,11 @@ cargo run
 
 | Action | Input |
 |--------|-------|
-| Place part | Left click (with part selected) |
+| Place part / fairing vertex | Left click |
 | Select placed part | Left click on part |
 | Delete part | Delete / Backspace |
-| Deselect | Escape or right-click |
+| Deselect / exit fairing build | Escape or right-click |
+| Undo fairing vertex | Right-click (in fairing build mode) |
 | Toggle symmetry | R |
 | Pan camera | Arrow keys or drag |
 | Zoom | Scroll wheel |
@@ -85,20 +107,21 @@ src/
 │   ├── mod.rs           # Velocity Verlet integration, thrust, rotation, autopilot
 │   ├── orbit.rs         # State vectors <-> orbital elements
 │   ├── patched_conics.rs # Trajectory prediction across SOI boundaries
+│   ├── transfer.rs      # Transfer planner, phase angle computation
 │   └── soi.rs           # SOI transition detection, frame conversion
 ├── parts/               # Part definitions and vessel systems
-│   ├── definition.rs    # PartDefinition, EngineData, TankData, PodData
-│   ├── blueprint.rs     # VesselBlueprint, PlacedPart, mirror symmetry
+│   ├── definition.rs    # PartDefinition, EngineData, TankData, PodData, FairingData
+│   ├── blueprint.rs     # VesselBlueprint, PlacedPart, FairingShape, mirror symmetry
 │   ├── registry.rs      # Blueprint save/load (RON files)
-│   └── vessel.rs        # FlightVessel, fuel consumption, staging, delta-v
+│   └── vessel.rs        # FlightVessel, fuel zones, drain priority, staging, delta-v
 ├── editor/              # Vehicle editor
-│   ├── state.rs         # EditorState, placement, dragging, deletion
+│   ├── state.rs         # EditorState, placement, dragging, fairing build mode
 │   ├── ui.rs            # egui UI: toolbar, palette, staging, part info
-│   └── render.rs        # Grid, parts, ghost preview, procedural details
+│   └── render.rs        # Grid, parts, ghost preview, fairing shells, procedural details
 └── render/              # Flight rendering and HUD
     ├── camera.rs        # Camera (position, zoom, body tracking)
     ├── geometry.rs      # Circle, ring, ship triangle primitives
-    ├── maneuver.rs      # Maneuver node management
+    ├── maneuver.rs      # Maneuver node management (create, drag, burn on any orbit)
     ├── types.rs         # Render data types, Vertex struct
     └── state.rs         # wgpu state, flight HUD, body/orbit/ship rendering
 
@@ -107,7 +130,8 @@ data/
 │   ├── engines.ron      # 16 engines
 │   ├── pods.ron         # Command pods
 │   ├── tanks.ron        # Fuel tanks
-│   └── structural.ron   # Decouplers
+│   ├── structural.ron   # Decouplers and fairings
+│   └── aerodynamic.ron  # Heat shields, nose cones, RCS thrusters
 └── blueprints/          # User-saved vessel designs
 
 openspec/specs/game/     # Requirements specs
@@ -115,14 +139,15 @@ openspec/specs/game/     # Requirements specs
 ├── editor/              # Editor logic (parts, persistence, staging)
 ├── editor_rendering/    # Editor GUI and part drawing
 ├── flight_rendering/    # Flight HUD, bodies, ship, maneuver nodes
-└── orbits/              # Physics, celestial bodies, patched conics
+├── orbits/              # Orbital mechanics, patched conics
+└── physics/             # Drag, heating, fuel system, collisions
 ```
 
 ## Tech Stack
 
 - **Language**: Rust (edition 2021)
-- **Rendering**: wgpu 0.19 (colored triangles, 4x MSAA, custom vertex shaders)
+- **Rendering**: wgpu 0.19 (colored triangles + body textures, 4x MSAA, custom vertex shaders)
 - **Windowing**: winit 0.29
 - **UI**: egui 0.27 (immediate mode)
 - **Serialization**: serde + ron 0.8
-- **No game engine** - custom physics loop, wgpu rendering, egui UI
+- **No game engine** — custom physics loop, wgpu rendering, egui UI

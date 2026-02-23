@@ -73,6 +73,11 @@ pub struct FlightPart {
     // Thermal state
     pub temperature: f64,         // Kelvin
     pub max_heat_tolerance: f64,  // Kelvin (from PartDefinition)
+
+    // Fairing shell shape (if this is a fairing base)
+    pub fairing_shape: Option<crate::parts::FairingShape>,
+    // Which half to render (None = full shell, Some = debris half)
+    pub fairing_half: Option<crate::parts::FairingHalf>,
 }
 
 impl FlightVessel {
@@ -167,6 +172,8 @@ impl FlightVessel {
                 crossfeed_enabled: bp_part.crossfeed_enabled,
                 temperature: 300.0,
                 max_heat_tolerance: def.max_heat_tolerance,
+                fairing_shape: bp_part.fairing_shape.clone(),
+                fairing_half: None,
             };
 
             // Set engine data if this is an engine
@@ -823,19 +830,30 @@ impl FlightVessel {
             total_thrust += engine_thrust * self.throttle;
         }
 
-        // Phase 3: Drain resources from tanks within each zone
-        // Drain oxygen per zone
+        // Phase 3: Drain resources from tanks within each zone,
+        // prioritizing tanks behind crossfeed decouplers (asparagus/onion staging)
+        let priorities = self.compute_drain_priorities(part_defs);
+
+        // Drain oxygen per zone (lowest priority tanks first)
         for (&zone, &ox_drain) in &zone_ox_drains {
+            // Find min priority among tanks in this zone that have oxygen
+            let min_pri = self.parts.iter().enumerate()
+                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == zone)
+                .filter(|(_, p)| p.resources.get("oxygen").copied().unwrap_or(0.0) > 0.0)
+                .map(|(j, _)| priorities[j])
+                .min()
+                .unwrap_or(usize::MAX);
+
             let ox_available: f64 = self.parts.iter()
                 .enumerate()
-                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == zone)
+                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == zone && priorities[*j] == min_pri)
                 .filter_map(|(_, p)| p.resources.get("oxygen"))
                 .sum();
 
             if ox_drain > 0.0 && ox_available > 0.0 {
                 let drain_frac = (ox_drain / ox_available).min(1.0);
                 for (j, part) in self.parts.iter_mut().enumerate() {
-                    if part.destroyed || part.decoupled || zones[j] != zone {
+                    if part.destroyed || part.decoupled || zones[j] != zone || priorities[j] != min_pri {
                         continue;
                     }
                     if let Some(ox) = part.resources.get_mut("oxygen") {
@@ -848,18 +866,25 @@ impl FlightVessel {
             }
         }
 
-        // Drain each fuel type per zone
+        // Drain each fuel type per zone (lowest priority tanks first)
         for (&(zone, fuel_name), &drain_amount) in &zone_fuel_drains {
+            let min_pri = self.parts.iter().enumerate()
+                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == zone)
+                .filter(|(_, p)| p.resources.get(fuel_name).copied().unwrap_or(0.0) > 0.0)
+                .map(|(j, _)| priorities[j])
+                .min()
+                .unwrap_or(usize::MAX);
+
             let available: f64 = self.parts.iter()
                 .enumerate()
-                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == zone)
+                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == zone && priorities[*j] == min_pri)
                 .filter_map(|(_, p)| p.resources.get(fuel_name))
                 .sum();
 
             if drain_amount > 0.0 && available > 0.0 {
                 let drain_frac = (drain_amount / available).min(1.0);
                 for (j, part) in self.parts.iter_mut().enumerate() {
-                    if part.destroyed || part.decoupled || zones[j] != zone {
+                    if part.destroyed || part.decoupled || zones[j] != zone || priorities[j] != min_pri {
                         continue;
                     }
                     if let Some(fuel) = part.resources.get_mut(fuel_name) {
@@ -1161,6 +1186,76 @@ impl FlightVessel {
         zones
     }
 
+    /// Compute drain priority for each part.
+    /// Tanks behind crossfeed-enabled decouplers in earlier stages get lower
+    /// priority values (drain first). Tanks always reachable from root get
+    /// `usize::MAX` (drain last). Used for asparagus/onion staging.
+    fn compute_drain_priorities(&self, part_defs: &PartDefinitions) -> Vec<usize> {
+        use std::collections::VecDeque;
+
+        let n = self.parts.len();
+        let connections = self.find_weld_connections(part_defs);
+
+        // Find root (same logic as decouple_disconnected)
+        let root = if self.root_part_index < n
+            && !self.parts[self.root_part_index].destroyed
+            && !self.parts[self.root_part_index].decoupled
+        {
+            self.root_part_index
+        } else {
+            self.parts.iter().enumerate()
+                .filter(|(_, p)| !p.destroyed && !p.decoupled)
+                .find(|(_, p)| part_defs.get(&p.definition_id).map(|d| d.pod.is_some()).unwrap_or(false))
+                .map(|(i, _)| i)
+                .or_else(|| self.parts.iter().enumerate()
+                    .find(|(_, p)| !p.destroyed && !p.decoupled)
+                    .map(|(i, _)| i))
+                .unwrap_or(0)
+        };
+
+        let mut priorities = vec![usize::MAX; n];
+
+        // For each crossfeed-enabled decoupler in each stage, BFS from root
+        // without that decoupler. Parts unreachable get priority = min(current, stage_idx).
+        for (stage_idx, stage) in self.stages.iter().enumerate() {
+            for &part_idx in stage {
+                if part_idx >= n { continue; }
+                if self.parts[part_idx].destroyed || self.parts[part_idx].decoupled { continue; }
+                let is_crossfeed_decoupler = part_defs.get(&self.parts[part_idx].definition_id)
+                    .map(|d| d.decoupler.is_some()).unwrap_or(false)
+                    && self.parts[part_idx].crossfeed_enabled;
+                if !is_crossfeed_decoupler { continue; }
+
+                // BFS from root, skipping this decoupler
+                let mut reached = vec![false; n];
+                let mut queue = VecDeque::new();
+                if root != part_idx {
+                    reached[root] = true;
+                    queue.push_back(root);
+                }
+                while let Some(idx) = queue.pop_front() {
+                    for &neighbor in &connections[idx] {
+                        if neighbor == part_idx || reached[neighbor] { continue; }
+                        if self.parts[neighbor].destroyed || self.parts[neighbor].decoupled { continue; }
+                        reached[neighbor] = true;
+                        queue.push_back(neighbor);
+                    }
+                }
+
+                // Unreachable parts get priority = min(current, stage_idx)
+                for i in 0..n {
+                    if !reached[i] && i != part_idx
+                        && !self.parts[i].destroyed && !self.parts[i].decoupled
+                    {
+                        priorities[i] = priorities[i].min(stage_idx);
+                    }
+                }
+            }
+        }
+
+        priorities
+    }
+
     /// Calculate delta-v using the Tsiolkovsky rocket equation
     pub fn calculate_delta_v(&self) -> f64 {
         if self.dry_mass <= 0.0 || self.total_mass <= self.dry_mass {
@@ -1279,6 +1374,85 @@ impl FlightVessel {
             current_zone += 1;
         }
         zones
+    }
+
+    /// Compute drain priorities using simulated decoupled state (for delta-v calculation).
+    /// Same algorithm as compute_drain_priorities but uses sim_decoupled instead of part state.
+    fn compute_drain_priorities_simulated(
+        &self,
+        part_defs: &PartDefinitions,
+        sim_decoupled: &[bool],
+    ) -> Vec<usize> {
+        use std::collections::VecDeque;
+
+        let n = self.parts.len();
+
+        // Build adjacency (same as compute_fuel_zones_simulated)
+        let mut connections = vec![Vec::new(); n];
+        for i in 0..n {
+            if sim_decoupled[i] { continue; }
+            let Some(def_i) = part_defs.get(&self.parts[i].definition_id) else { continue };
+            let weld_hw_i = def_i.weld_hitbox_width() / 2.0;
+            let weld_hh_i = def_i.weld_hitbox_height() / 2.0;
+            for j in (i + 1)..n {
+                if sim_decoupled[j] { continue; }
+                let Some(def_j) = part_defs.get(&self.parts[j].definition_id) else { continue };
+                let weld_hw_j = def_j.weld_hitbox_width() / 2.0;
+                let weld_hh_j = def_j.weld_hitbox_height() / 2.0;
+                let dx = (self.parts[i].local_position[0] - self.parts[j].local_position[0]).abs();
+                let dy = (self.parts[i].local_position[1] - self.parts[j].local_position[1]).abs();
+                if dx < weld_hw_i + weld_hw_j && dy < weld_hh_i + weld_hh_j {
+                    connections[i].push(j);
+                    connections[j].push(i);
+                }
+            }
+        }
+
+        // Find root
+        let root = if self.root_part_index < n && !sim_decoupled[self.root_part_index] {
+            self.root_part_index
+        } else {
+            (0..n).filter(|&i| !sim_decoupled[i])
+                .find(|&i| part_defs.get(&self.parts[i].definition_id).map(|d| d.pod.is_some()).unwrap_or(false))
+                .or_else(|| (0..n).find(|&i| !sim_decoupled[i]))
+                .unwrap_or(0)
+        };
+
+        let mut priorities = vec![usize::MAX; n];
+
+        for (stage_idx, stage) in self.stages.iter().enumerate() {
+            for &part_idx in stage {
+                if part_idx >= n || sim_decoupled[part_idx] { continue; }
+                let is_crossfeed_decoupler = part_defs.get(&self.parts[part_idx].definition_id)
+                    .map(|d| d.decoupler.is_some()).unwrap_or(false)
+                    && self.parts[part_idx].crossfeed_enabled;
+                if !is_crossfeed_decoupler { continue; }
+
+                // BFS from root, skipping this decoupler
+                let mut reached = vec![false; n];
+                let mut queue = VecDeque::new();
+                if root != part_idx && !sim_decoupled[root] {
+                    reached[root] = true;
+                    queue.push_back(root);
+                }
+                while let Some(idx) = queue.pop_front() {
+                    for &neighbor in &connections[idx] {
+                        if neighbor == part_idx || reached[neighbor] { continue; }
+                        if sim_decoupled[neighbor] { continue; }
+                        reached[neighbor] = true;
+                        queue.push_back(neighbor);
+                    }
+                }
+
+                for i in 0..n {
+                    if !reached[i] && i != part_idx && !sim_decoupled[i] {
+                        priorities[i] = priorities[i].min(stage_idx);
+                    }
+                }
+            }
+        }
+
+        priorities
     }
 
     /// Check if an engine is covered by a decoupler using simulated decoupled state.
@@ -1421,6 +1595,79 @@ impl FlightVessel {
             });
         }
 
+        // Compute fairing-shielded parts.
+        // A part is shielded if it falls within a non-decoupled fairing's envelope.
+        let mut fairing_shielded: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for (fi, fpart) in self.parts.iter().enumerate() {
+            if fpart.destroyed || fpart.decoupled { continue; }
+            let Some(ref shape) = fpart.fairing_shape else { continue; };
+            if shape.vertices.is_empty() { continue; }
+            let Some(fdef) = part_defs.get(&fpart.definition_id) else { continue; };
+            if fdef.fairing.is_none() { continue; }
+
+            let gs = crate::parts::GRID_SQUARE_SIZE;
+            let fairing_cx = fpart.local_position[0];
+            let fairing_base_top = fpart.local_position[1] + fdef.hitbox_height() / 2.0;
+            let base_half_w = fdef.width() / 2.0;
+
+            // Build segment list: [(y_bottom, half_w_bottom, y_top, half_w_top), ...]
+            let mut segs: Vec<(f64, f64, f64, f64)> = Vec::new();
+            let mut prev_y = fairing_base_top;
+            let mut prev_hw = base_half_w;
+            for &(hw_grid, y_off_grid) in &shape.vertices {
+                let seg_y = fairing_base_top + y_off_grid * gs;
+                let seg_hw = hw_grid * gs;
+                segs.push((prev_y, prev_hw, seg_y, seg_hw));
+                prev_y = seg_y;
+                prev_hw = seg_hw;
+            }
+
+            // Check each part
+            for (pi, ppart) in self.parts.iter().enumerate() {
+                if pi == fi || ppart.destroyed || ppart.decoupled { continue; }
+                let Some(pdef) = part_defs.get(&ppart.definition_id) else { continue; };
+                let part_cx = ppart.local_position[0];
+                let part_cy = ppart.local_position[1];
+                let part_half_h = pdef.hitbox_height() / 2.0;
+                let part_half_w = pdef.hitbox_width() / 2.0;
+                let part_bottom = part_cy - part_half_h;
+                let part_top = part_cy + part_half_h;
+
+                // Part must be between base top and fairing tip Y
+                if part_bottom < fairing_base_top - 0.01 { continue; }
+                let tip_y = segs.last().map(|s| s.2).unwrap_or(fairing_base_top);
+                if part_top > tip_y + 0.01 { continue; }
+
+                // Check if the part's width fits within the fairing width at the part's center Y
+                let mut shielded = true;
+                let check_y = part_cy;
+                let mut envelope_hw = 0.0_f64;
+                let mut found_seg = false;
+                for &(y_bot, hw_bot, y_top, hw_top) in &segs {
+                    if check_y >= y_bot - 0.01 && check_y <= y_top + 0.01 {
+                        let t = if (y_top - y_bot).abs() > 0.001 {
+                            (check_y - y_bot) / (y_top - y_bot)
+                        } else {
+                            0.5
+                        };
+                        envelope_hw = hw_bot + (hw_top - hw_bot) * t;
+                        found_seg = true;
+                        break;
+                    }
+                }
+                if !found_seg { shielded = false; }
+                if shielded {
+                    let dx = (part_cx - fairing_cx).abs();
+                    if dx + part_half_w > envelope_hw + 0.01 {
+                        shielded = false;
+                    }
+                }
+                if shielded {
+                    fairing_shielded.insert(pi);
+                }
+            }
+        }
+
         // Sort by projection along velocity axis (most forward = most positive first)
         // The leading edge has the largest dot product with the velocity direction
         projections.sort_by(|a, b| b.proj_along.partial_cmp(&a.proj_along).unwrap());
@@ -1440,8 +1687,12 @@ impl FlightVessel {
                 None => continue,
             };
 
-            // Exposed area for heating
-            let exposed_area = exposed_width * 0.5; // depth approximation (GRID_SQUARE_SIZE)
+            // Exposed area for heating (zero if fairing-shielded)
+            let exposed_area = if fairing_shielded.contains(&proj.idx) {
+                0.0
+            } else {
+                exposed_width * 0.5 // depth approximation (GRID_SQUARE_SIZE)
+            };
 
             // Sutton-Graves heat input: q_in = K * sqrt(density) * airspeed^3 * exposed_area
             let q_in = Self::SUTTON_GRAVES_K * density.sqrt() * airspeed.powi(3) * exposed_area;
@@ -1694,8 +1945,9 @@ impl FlightVessel {
                 }
             }
 
-            // 3. Compute fuel zones with simulated decoupled state
+            // 3. Compute fuel zones and drain priorities with simulated decoupled state
             let zones = self.compute_fuel_zones_simulated(part_defs, &decoupled);
+            let sim_priorities = self.compute_drain_priorities_simulated(part_defs, &decoupled);
 
             // 4. Find zones containing active (non-decoupled, non-covered) engines
             let engine_zones: std::collections::HashSet<usize> = (0..self.parts.len())
@@ -1705,7 +1957,16 @@ impl FlightVessel {
                 .collect();
 
             // 5. Calculate wet mass of ALL remaining parts, but only count
-            //    fuel from tanks in engine zones as burnable
+            //    fuel from min-priority tanks in engine zones as burnable
+            let mut zone_min_priority: HashMap<usize, usize> = HashMap::new();
+            for i in 0..self.parts.len() {
+                if decoupled[i] || fuel_remaining[i] <= 0.0 { continue; }
+                if zones[i] != usize::MAX && engine_zones.contains(&zones[i]) {
+                    let entry = zone_min_priority.entry(zones[i]).or_insert(usize::MAX);
+                    *entry = (*entry).min(sim_priorities[i]);
+                }
+            }
+
             let mut wet_mass = 0.0;
             let mut burnable_fuel = 0.0;
             for i in 0..self.parts.len() {
@@ -1715,7 +1976,10 @@ impl FlightVessel {
                 wet_mass += base_mass + fuel_remaining[i];
 
                 if zones[i] != usize::MAX && engine_zones.contains(&zones[i]) {
-                    burnable_fuel += fuel_remaining[i];
+                    let zmp = zone_min_priority.get(&zones[i]).copied().unwrap_or(usize::MAX);
+                    if sim_priorities[i] == zmp {
+                        burnable_fuel += fuel_remaining[i];
+                    }
                 }
             }
 
@@ -1739,16 +2003,86 @@ impl FlightVessel {
             };
             stage_dvs.push(dv);
 
-            // 8. Consume only burnable fuel (in engine zones)
+            // 8. Consume only min-priority burnable fuel (in engine zones)
             for i in 0..self.parts.len() {
                 if decoupled[i] { continue; }
                 if zones[i] != usize::MAX && engine_zones.contains(&zones[i]) {
-                    fuel_remaining[i] = 0.0;
+                    let zmp = zone_min_priority.get(&zones[i]).copied().unwrap_or(usize::MAX);
+                    if sim_priorities[i] == zmp {
+                        fuel_remaining[i] = 0.0;
+                    }
                 }
             }
         }
 
         stage_dvs
+    }
+
+    /// Extract decoupled fairing shells into two half-shell debris vessels.
+    /// The base disc stays on the vessel; only the shell splits off.
+    /// Must be called BEFORE extract_decoupled_parts().
+    /// Returns Vec of (debris_vessel, com_offset_local, FairingHalf).
+    pub fn extract_fairing_halves(&mut self, part_defs: &PartDefinitions) -> Vec<(FlightVessel, [f64; 2], crate::parts::FairingHalf)> {
+        use crate::parts::FairingHalf;
+        let mut result = Vec::new();
+
+        // Find decoupled fairing parts that have a shell to split
+        let fairing_indices: Vec<usize> = self.parts.iter()
+            .enumerate()
+            .filter(|(_, p)| p.decoupled && !p.destroyed && p.fairing_shape.is_some() && p.fairing_half.is_none())
+            .map(|(i, _)| i)
+            .collect();
+
+        for idx in fairing_indices {
+            let part = &self.parts[idx];
+            let com_offset = part.local_position;
+            let base_mass = part_defs.get(&part.definition_id).map(|d| d.mass).unwrap_or(0.0);
+            // Shell is ~20% of total fairing mass, split between two halves
+            let half_shell_mass = (base_mass * 0.1).max(0.001);
+
+            for &half in &[FairingHalf::Left, FairingHalf::Right] {
+                let mut debris_part = part.clone();
+                debris_part.local_position = [0.0, 0.0];
+                debris_part.decoupled = false;
+                debris_part.fairing_half = Some(half);
+
+                let moi = {
+                    let (w, h) = part_defs.get(&debris_part.definition_id)
+                        .map(|d| (d.width(), d.height()))
+                        .unwrap_or((1.0, 1.0));
+                    (half_shell_mass * (w * w + h * h) / 12.0).max(0.1)
+                };
+
+                let debris_vessel = FlightVessel {
+                    rel_position: [0.0, 0.0],
+                    rel_velocity: [0.0, 0.0],
+                    rotation: self.rotation,
+                    rotational_velocity: 0.0,
+                    soi_body: self.soi_body,
+                    parts: vec![debris_part],
+                    root_part_index: 0,
+                    total_mass: half_shell_mass,
+                    dry_mass: half_shell_mass,
+                    center_of_mass: [0.0, 0.0],
+                    max_thrust_vac: 0.0,
+                    max_thrust_asl: 0.0,
+                    moment_of_inertia: moi,
+                    throttle: 0.0,
+                    on_rails: false,
+                    stages: Vec::new(),
+                    current_stage: 0,
+                    last_decouple_force: 0.0,
+                };
+
+                result.push((debris_vessel, com_offset, half));
+            }
+
+            // Keep the base disc on the vessel: un-decouple and strip the shell
+            self.parts[idx].decoupled = false;
+            self.parts[idx].fairing_shape = None;
+        }
+
+        result
     }
 
     /// Extract decoupled parts into a new FlightVessel (debris).
@@ -1867,6 +2201,18 @@ impl FlightVessel {
             // Enable engines in this stage
             if self.parts[part_idx].propellant_type.is_some() {
                 self.parts[part_idx].engine_enabled = true;
+            }
+
+            // Fire fairings: decouple just the fairing base (parts inside stay)
+            let def = part_defs.get(&self.parts[part_idx].definition_id);
+            if let Some(def) = def {
+                if let Some(ref fairing_data) = def.fairing {
+                    if fairing_data.ejection_force > self.last_decouple_force {
+                        self.last_decouple_force = fairing_data.ejection_force;
+                    }
+                    // Mark the fairing base as decoupled — parts above stay connected
+                    self.parts[part_idx].decoupled = true;
+                }
             }
 
             // Fire decouplers: decouple all parts below the decoupler
@@ -2091,6 +2437,8 @@ pub fn create_default_vessel(
             crossfeed_enabled: false,
             temperature: 300.0,
             max_heat_tolerance: 2000.0,
+            fairing_shape: None,
+            fairing_half: None,
         }],
         root_part_index: 0,
         total_mass: 2.0,

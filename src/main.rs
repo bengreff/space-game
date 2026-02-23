@@ -231,6 +231,10 @@ fn main() {
                             // In editor: deselect first, then pause on next press
                             let escape_pressed = pressed && matches!(logical_key, Key::Named(winit::keyboard::NamedKey::Escape));
                             if escape_pressed && game.mode == GameMode::Editor
+                                && game.editor.fairing_build_mode.is_some()
+                            {
+                                game.editor.exit_fairing_build_mode();
+                            } else if escape_pressed && game.mode == GameMode::Editor
                                 && (game.editor.selected_part_def.is_some() || game.editor.selected_placed_part.is_some())
                             {
                                 game.editor.deselect();
@@ -882,6 +886,7 @@ fn render_flight_frame(
                     parent_idx: seg.parent_idx,
                     render_scale: SCALE * BODY_SCALE,
                     start_time: seg.start_time,
+                    base_epoch: game.simulation_time,
                 }
             }).collect::<Vec<_>>()
         })
@@ -1042,6 +1047,9 @@ fn render_flight_frame(
                         rcs_nozzle_state,
                         heat_fraction: ((p.temperature - 300.0) / (p.max_heat_tolerance - 300.0)).clamp(0.0, 1.0) as f32,
                         temperature: p.temperature,
+                        is_fairing: def.map(|d| d.fairing.is_some()).unwrap_or(false),
+                        fairing_shape: p.fairing_shape.clone(),
+                        fairing_half: p.fairing_half,
                     }
                 })
                 .collect();
@@ -1446,6 +1454,7 @@ fn render_flight_frame(
                     parent_idx: seg.parent_idx,
                     render_scale: SCALE * BODY_SCALE,
                     start_time: seg.start_time,
+                    base_epoch: node.epoch,
                 }
             }).collect();
             predicted_trajectories.push(segments);
@@ -1721,7 +1730,8 @@ fn render_flight_frame(
             let ta = sunscatter::ship::transfer::normalize_angle(position_angle - segment.argument_of_periapsis);
             let dv = sunscatter::render::ManeuverDeltaV { prograde, radial_out: radial };
             let epoch = game.simulation_time + time_to_window;
-            render_state.create_maneuver_node_with_epoch(ta, 0, dv, epoch);
+            let seg = segment.clone();
+            render_state.create_maneuver_node_with_epoch(ta, &seg, dv, epoch);
         }
         render_state.transfer_planner_open = false;
     }
@@ -1775,6 +1785,23 @@ fn render_flight_frame(
                                 vessel.parts[i].decoupled = true;
                             }
                         }
+                    }
+                }
+            }
+        }
+        handle_post_decouple(game);
+        render_state.selected_flight_part = None;
+    }
+
+    // Process fairing deploy request from part info popup
+    if let Some(part_idx) = render_state.fairing_deploy_request.take() {
+        if let Some(ref mut vessel) = game.flight.vessel {
+            if part_idx < vessel.parts.len() && !vessel.parts[part_idx].decoupled {
+                let def = game.part_definitions.get(&vessel.parts[part_idx].definition_id);
+                if let Some(def) = def {
+                    if let Some(ref fairing_data) = def.fairing {
+                        vessel.last_decouple_force = fairing_data.ejection_force;
+                        vessel.parts[part_idx].decoupled = true;
                     }
                 }
             }
@@ -2123,6 +2150,9 @@ fn build_vessel_part_render_data(
                 rcs_nozzle_state: None,
                 heat_fraction: ((p.temperature - 300.0) / (p.max_heat_tolerance - 300.0)).clamp(0.0, 1.0) as f32,
                 temperature: p.temperature,
+                is_fairing: def.map(|d| d.fairing.is_some()).unwrap_or(false),
+                fairing_shape: p.fairing_shape.clone(),
+                fairing_half: p.fairing_half,
             }
         })
         .collect()
@@ -2501,6 +2531,16 @@ fn handle_editor_mouse_input(
     let screen_width = render_state.size.width as f32;
     let screen_height = render_state.size.height as f32;
 
+    // Fairing build mode intercepts all mouse input
+    if game.editor.fairing_build_mode.is_some() {
+        if button == MouseButton::Left && state == ElementState::Pressed {
+            game.editor.add_fairing_vertex(&game.part_definitions);
+        } else if button == MouseButton::Right && state == ElementState::Pressed {
+            game.editor.undo_fairing_vertex();
+        }
+        return;
+    }
+
     if button == MouseButton::Left {
         if state == ElementState::Pressed {
             // Check if clicking on a placed part - start dragging it
@@ -2581,6 +2621,12 @@ fn handle_editor_cursor_moved(
     if !egui_consumed {
         let [world_x, world_y] = screen_to_world(x, y, screen_width, screen_height, &game.editor);
 
+        // Fairing build mode: update ghost point
+        if game.editor.fairing_build_mode.is_some() {
+            game.editor.update_fairing_ghost(world_x, world_y);
+            return;
+        }
+
         // Update drag position if dragging a part
         if game.editor.is_dragging() {
             game.editor.update_drag(world_x, world_y, &game.part_definitions);
@@ -2602,6 +2648,19 @@ fn handle_post_decouple(game: &mut Game) {
     // Read ejection force before extracting (set by activate_next_stage or manual decouple)
     let ejection_force = game.flight.vessel.as_ref()
         .map(|v| v.last_decouple_force).unwrap_or(0.0);
+
+    // Extract fairing halves BEFORE extracting decoupled parts
+    let fairing_halves = game.flight.vessel.as_mut()
+        .map(|v| v.extract_fairing_halves(&game.part_definitions))
+        .unwrap_or_default();
+
+    for (debris_vessel, com_offset, half) in fairing_halves {
+        let sign = match half {
+            sunscatter::parts::FairingHalf::Left => -1.0,
+            sunscatter::parts::FairingHalf::Right => 1.0,
+        };
+        game.flight.create_fairing_debris(debris_vessel, com_offset, 5.0, sign, &game.solar_system);
+    }
 
     // Extract decoupled parts into debris (separate step to avoid borrow conflict)
     let extracted = game.flight.vessel.as_mut()

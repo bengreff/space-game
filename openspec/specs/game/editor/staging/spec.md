@@ -10,7 +10,7 @@ Stages SHALL be represented as `Vec<Vec<PlacedPartId>>` where the outer Vec is t
 
 ### Requirement: Auto-staging on placement
 
-When an engine or decoupler is placed, it SHALL be automatically added to stage 0. If no stages exist, a new stage SHALL be created first. No other part categories are auto-staged.
+When an engine, decoupler, or fairing base is placed, it SHALL be automatically added to stage 0. If no stages exist, a new stage SHALL be created first. No other part categories are auto-staged.
 
 ### Requirement: Auto-staging on blueprint load
 
@@ -84,13 +84,15 @@ Per-stage delta-v SHALL be calculated using the Tsiolkovsky equation: `dv = Isp 
 
 Delta-v calculation SHALL simulate stages sequentially in order. For each stage:
 
-1. **Fire decouplers**: Mark decoupler and all parts with top edge at or below the decoupler's bottom edge (0.01m tolerance) as decoupled.
-2. **Enable engines**: Mark non-decoupled engines in this stage as active.
-3. **Compute fuel zones**: Perform BFS through welding hitbox overlap among non-decoupled parts, treating decouplers with `crossfeed_enabled = false` as barriers that block traversal.
-4. **Compute wet mass**: Sum mass + remaining fuel for all non-decoupled parts.
-5. **Compute Isp**: Thrust-weighted average of `isp_vac` across all active non-decoupled engines.
-6. **Apply Tsiolkovsky**: Calculate delta-v from wet/dry mass ratio.
-7. **Consume fuel**: Set fuel to 0 only for tanks in fuel zones that contain at least one active engine. Tanks in zones without active engines SHALL retain their fuel for later stages.
+1. **Fire fairings**: Mark fairing bases in this stage as decoupled. Only the fairing base itself is decoupled -- parts inside the fairing envelope remain connected to the vessel. The fairing's `ejection_force` is tracked for debris separation (same as decoupler ejection force).
+2. **Fire decouplers**: Mark decoupler and all parts with top edge at or below the decoupler's bottom edge (0.01m tolerance) as decoupled.
+3. **Enable engines**: Mark non-decoupled engines in this stage as active.
+4. **Compute fuel zones**: Perform BFS through welding hitbox overlap among non-decoupled parts, treating decouplers with `crossfeed_enabled = false` as barriers that block traversal.
+5. **Compute drain priorities**: For each crossfeed-enabled decoupler in stage S, BFS from root excluding that decoupler; unreachable parts get `priority = min(current, S)`. Always-reachable parts keep `priority = usize::MAX`.
+6. **Compute wet mass**: Sum mass + remaining fuel for all non-decoupled parts. Only count fuel from minimum-priority tanks in engine zones as burnable.
+7. **Compute Isp**: Thrust-weighted average of `isp_vac` across all active non-decoupled engines.
+8. **Apply Tsiolkovsky**: Calculate delta-v from wet/dry mass ratio.
+9. **Consume fuel**: Set fuel to 0 only for minimum-priority tanks in fuel zones that contain at least one active engine. Higher-priority tanks retain fuel for later consumption within the same stage or subsequent stages.
 
 #### Scenario: Zero delta-v cases
 - **WHEN** Isp <= 0, dry mass <= 0, or wet mass <= dry mass

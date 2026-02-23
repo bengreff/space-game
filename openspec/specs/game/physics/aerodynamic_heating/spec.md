@@ -68,6 +68,23 @@ Heat shields SHALL be rendered with `generate_heat_shield_details()`:
 
 The world-space airspeed direction SHALL be transformed to **part-local coordinates** (Y=forward convention, matching the editor layout where nose is at +Y). Ship physics uses X=forward (rotation=0 → nose along +X), so the transform applies the inverse rotation with a −π/2 offset: compute physics-local via inverse rotation, then rotate +90° (`part_x = -phys_y, part_y = phys_x`).
 
+### Requirement: Fairing airflow shielding
+
+Before computing per-part exposure, `FlightVessel::update_part_temperatures()` SHALL identify all parts inside a non-decoupled fairing envelope. For each non-destroyed, non-decoupled fairing base with a non-empty `fairing_shape`:
+1. Build a segment list from the shape vertices, converting grid-square offsets to world coordinates relative to the fairing base top edge
+2. For each other part, check if it falls entirely within the fairing envelope: part bottom must be at or above the base top, part top must be at or below the tip Y, and the part's half-width plus its lateral offset from the fairing center must fit within the interpolated envelope half-width at the part's center Y
+3. Parts passing all checks are added to a `fairing_shielded` set
+
+Fairing-shielded parts SHALL have their exposed area set to 0.0, receiving zero aerodynamic heating. They still undergo radiative cooling.
+
+#### Scenario: Part inside fairing gets no heating
+- **WHEN** a part's hitbox fits entirely within an active fairing envelope
+- **THEN** its exposed area SHALL be 0.0 and it receives no convective heating
+
+#### Scenario: Fairing decoupled removes shielding
+- **WHEN** a fairing base is decoupled (jettisoned via staging)
+- **THEN** parts previously inside the envelope are no longer shielded and receive normal heating
+
 ### Requirement: Per-part exposure calculation (1D interval occlusion)
 
 `FlightVessel::update_part_temperatures()` SHALL:

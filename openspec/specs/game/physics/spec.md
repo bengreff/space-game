@@ -9,3 +9,4 @@ Physical interactions between the ship and its environment: atmospheric effects 
 - [Aerodynamic Heating](aerodynamic_heating/spec.md) - Convective heating, radiative cooling, thermal destruction, and heat HUD
 - [Terrain Collision](terrain_collision/spec.md) - Collision detection with celestial body surfaces and launchpad structures
 - [Craft Collision](craft_collision/spec.md) - Collision detection between vessels (future)
+- [Fuel System](fuel/spec.md) - Fuel zones, consumption, and drain priority (asparagus/onion staging)

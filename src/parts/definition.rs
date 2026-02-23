@@ -217,6 +217,12 @@ pub struct PodData {
     pub crew_capacity: u32,
 }
 
+/// Fairing-specific data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FairingData {
+    pub ejection_force: f64,  // Force in kN when jettisoning
+}
+
 /// RCS thruster data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RcsData {
@@ -259,6 +265,8 @@ pub struct PartDefinition {
     pub decoupler: Option<DecouplerData>,
     #[serde(default)]
     pub rcs: Option<RcsData>,
+    #[serde(default)]
+    pub fairing: Option<FairingData>,
     #[serde(default)]
     pub resources: HashMap<String, f64>,
     // Thermal properties

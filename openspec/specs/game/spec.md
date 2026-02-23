@@ -28,9 +28,9 @@ Each grid square SHALL measure 0.5m x 0.5m, defined by `GRID_SQUARE_SIZE = 0.5`.
 
 ## Part Size System
 
-### Requirement: Four part sizes
+### Requirement: Five part sizes
 
-The system SHALL support four part sizes with the following grid widths:
+The system SHALL support five part sizes with the following grid widths:
 
 | Size   | Grid Width | Meters |
 |--------|-----------|--------|
@@ -38,6 +38,7 @@ The system SHALL support four part sizes with the following grid widths:
 | Small  | 3         | 1.5m   |
 | Medium | 5         | 2.5m   |
 | Large  | 9         | 4.5m   |
+| XL     | 13        | 6.5m   |
 
 ## Part Categories
 
@@ -77,7 +78,7 @@ Part definitions SHALL be loaded from RON files in the `data/parts/` directory. 
 
 ### Requirement: Part definition fields
 
-Each `PartDefinition` SHALL include: `id`, `name`, `description`, `category`, `mass` (dry, in tonnes), `cost`, `size`, `shape`, `grid_width` (visual, decimal), `grid_height` (visual, decimal), optional `top_width` (for trapezoids), optional `hitbox_width`/`hitbox_height` overrides, and optional component data (`engine`, `tank`, `pod`, `decoupler`).
+Each `PartDefinition` SHALL include: `id`, `name`, `description`, `category`, `mass` (dry, in tonnes), `cost`, `size`, `shape`, `grid_width` (visual, decimal), `grid_height` (visual, decimal), optional `top_width` (for trapezoids), optional `hitbox_width`/`hitbox_height` overrides, and optional component data (`engine`, `tank`, `pod`, `decoupler`, `fairing`, `rcs`).
 
 ### Requirement: Part shapes
 
@@ -124,6 +125,10 @@ Pod definitions SHALL include: `crew_capacity` and `torque` (reaction wheel torq
 ### Requirement: Decoupler data
 
 Decoupler definitions SHALL include: `ejection_force` (kN).
+
+### Requirement: Fairing data
+
+Fairing definitions SHALL include: `ejection_force` (kN, used when jettisoning the fairing shell).
 
 ### Requirement: Tank data
 

@@ -2,6 +2,21 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use super::FuelType;
 
+/// Shape of a user-constructed fairing shell
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FairingShape {
+    /// Each entry: (half_width_grid, y_offset_grid) — in grid squares from base top center
+    pub vertices: Vec<(f64, f64)>,
+    pub closed: bool,  // true if terminated with a center-line point (triangle tip)
+}
+
+/// Which half of a fairing shell to render (for debris)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum FairingHalf {
+    Left,
+    Right,
+}
+
 /// A unique identifier for a placed part in a blueprint
 pub type PlacedPartId = u64;
 
@@ -80,6 +95,8 @@ pub struct BlueprintPart {
     pub crossfeed_enabled: bool,
     #[serde(default)]
     pub mirror_partner_index: Option<usize>,
+    #[serde(default)]
+    pub fairing_shape: Option<FairingShape>,
 }
 
 /// How a part is attached to its parent
@@ -108,6 +125,8 @@ pub struct PlacedPart {
     pub crossfeed_enabled: bool, // Whether fuel can flow through this decoupler
     // Mirror symmetry link
     pub mirror_partner: Option<PlacedPartId>,
+    // Fairing shell shape (if this is a fairing base)
+    pub fairing_shape: Option<FairingShape>,
 }
 
 impl PlacedPart {
@@ -129,6 +148,7 @@ impl PlacedPart {
             fill_fraction: 0.0,
             crossfeed_enabled: false,
             mirror_partner: None,
+            fairing_shape: None,
         }
     }
 
@@ -208,6 +228,7 @@ pub fn parts_to_blueprint(
             fill_fraction: part.fill_fraction,
             crossfeed_enabled: part.crossfeed_enabled,
             mirror_partner_index,
+            fairing_shape: part.fairing_shape.clone(),
         });
     }
 
@@ -255,6 +276,7 @@ pub fn blueprint_to_parts(
             0.0
         };
         part.crossfeed_enabled = bp_part.crossfeed_enabled;
+        part.fairing_shape = bp_part.fairing_shape.clone();
         parts.insert(id, part);
     }
 

@@ -1,7 +1,7 @@
 use crate::parts::{
-    FuelType, PartCategory, PartDefinitions,
+    FairingShape, FuelType, PartCategory, PartDefinitions,
     PlacedPart, PlacedPartId, SymmetryMode, VesselBlueprint,
-    blueprint_to_parts, parts_to_blueprint,
+    blueprint_to_parts, parts_to_blueprint, GRID_SQUARE_SIZE,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -61,6 +61,18 @@ impl Default for TwrSettings {
     }
 }
 
+/// State for the fairing shell building mode
+#[derive(Debug, Clone)]
+pub struct FairingBuildState {
+    pub part_id: PlacedPartId,       // The fairing base being built
+    pub base_top_y: f64,             // World Y of the base top edge
+    pub base_center_x: f64,          // World X of the base center
+    pub base_half_width: f64,        // Half-width of the fairing base (in grid squares)
+    pub vertices: Vec<(f64, f64)>,   // Completed vertices (half_width_grid, y_offset_grid)
+    pub ghost_point: Option<[f64; 2]>, // Current mouse-snapped point (world coords)
+    pub ghost_valid: bool,           // Whether current ghost point is valid
+}
+
 /// Editor state
 #[derive(Debug)]
 pub struct EditorState {
@@ -108,6 +120,9 @@ pub struct EditorState {
 
     // Stats display settings
     pub twr_settings: TwrSettings,
+
+    // Fairing build mode
+    pub fairing_build_mode: Option<FairingBuildState>,
 }
 
 /// Tracks which camera movement keys are held
@@ -149,6 +164,7 @@ impl EditorState {
             drag_offset: [0.0, 0.0],
             drag_valid: true,
             twr_settings: TwrSettings::default(),
+            fairing_build_mode: None,
         }
     }
 
@@ -185,6 +201,7 @@ impl EditorState {
         self.stages.clear();
         self.staging_selected_engine = None;
         self.vessel_name = "Untitled Vessel".to_string();
+        self.fairing_build_mode = None;
     }
 
     /// Load a blueprint into the editor
@@ -409,8 +426,21 @@ impl EditorState {
             }
         }
 
-        // Valid if no overlap with existing parts AND weld-connected
-        self.ghost_valid = !overlaps && weld_connected;
+        // Check if part crosses any completed fairing boundary
+        let crosses_fairing = if !overlaps && weld_connected {
+            // Don't check fairings against themselves
+            let is_fairing = def.fairing.is_some();
+            if is_fairing {
+                false
+            } else {
+                self.part_crosses_any_fairing([snapped_x, snapped_y], def, part_defs, None)
+            }
+        } else {
+            false
+        };
+
+        // Valid if no overlap with existing parts AND weld-connected AND not crossing fairing
+        self.ghost_valid = !overlaps && weld_connected && !crosses_fairing;
     }
 
     /// Calculate exact bounds for a part (no padding)
@@ -448,6 +478,136 @@ impl EditorState {
         Self::bounds_overlap(&a, &b)
     }
 
+    /// Interpolate fairing shell half-width at a given world-y coordinate.
+    /// Returns None if y is outside the fairing's vertical range.
+    fn fairing_half_width_at_y(
+        shape: &FairingShape,
+        base_top_y: f64,
+        base_half_w: f64,
+    ) -> impl Fn(f64) -> Option<f64> + '_ {
+        let gs = GRID_SQUARE_SIZE;
+        move |y: f64| {
+            if y < base_top_y - 0.001 {
+                return None; // Below fairing
+            }
+            let tip_y = base_top_y + shape.vertices.last().map(|v| v.1 * gs).unwrap_or(0.0);
+            if y > tip_y + 0.001 {
+                return None; // Above fairing
+            }
+
+            let mut prev_hw = base_half_w;
+            let mut prev_y = base_top_y;
+
+            for &(hw_grid, y_off_grid) in &shape.vertices {
+                let seg_hw = hw_grid * gs;
+                let seg_y = base_top_y + y_off_grid * gs;
+                if y <= seg_y + 0.001 {
+                    // Interpolate between prev and this segment
+                    let span = seg_y - prev_y;
+                    if span < 0.001 {
+                        return Some(seg_hw);
+                    }
+                    let t = ((y - prev_y) / span).clamp(0.0, 1.0);
+                    return Some(prev_hw + t * (seg_hw - prev_hw));
+                }
+                prev_hw = seg_hw;
+                prev_y = seg_y;
+            }
+            Some(prev_hw)
+        }
+    }
+
+    /// Check if a part's AABB crosses a completed fairing boundary.
+    /// Returns true if the part straddles the boundary (partially inside, partially outside).
+    /// Fully inside or fully outside is OK.
+    fn part_crosses_fairing_boundary(
+        part_pos: [f64; 2],
+        part_def: &crate::parts::PartDefinition,
+        fairing_pos: [f64; 2],
+        fairing_def: &crate::parts::PartDefinition,
+        fairing_shape: &FairingShape,
+    ) -> bool {
+        let gs = GRID_SQUARE_SIZE;
+        let base_top_y = fairing_pos[1] + fairing_def.hitbox_height() / 2.0;
+        let base_half_w = fairing_def.width() / 2.0;
+        let tip_y = base_top_y + fairing_shape.vertices.last().map(|v| v.1 * gs).unwrap_or(0.0);
+        let fairing_cx = fairing_pos[0];
+
+        let part_half_w = part_def.hitbox_width() / 2.0;
+        let part_half_h = part_def.hitbox_height() / 2.0;
+        let part_left = part_pos[0] - part_half_w;
+        let part_right = part_pos[0] + part_half_w;
+        let part_bottom = part_pos[1] - part_half_h;
+        let part_top = part_pos[1] + part_half_h;
+
+        // No vertical overlap with fairing → fully outside → OK
+        if part_top < base_top_y - 0.001 || part_bottom > tip_y + 0.001 {
+            return false;
+        }
+
+        let half_w_at = Self::fairing_half_width_at_y(fairing_shape, base_top_y, base_half_w);
+
+        // Collect y-values to sample: part bottom, part top, and each fairing vertex y within range
+        let mut sample_ys = vec![part_bottom.max(base_top_y), part_top.min(tip_y)];
+        for &(_, y_off_grid) in &fairing_shape.vertices {
+            let fy = base_top_y + y_off_grid * gs;
+            if fy > part_bottom + 0.001 && fy < part_top - 0.001 {
+                sample_ys.push(fy);
+            }
+        }
+
+        let mut any_inside = false;
+        let mut any_outside = false;
+
+        for y in &sample_ys {
+            if let Some(hw) = half_w_at(*y) {
+                let fairing_left = fairing_cx - hw;
+                let fairing_right = fairing_cx + hw;
+
+                // Part is inside if both edges are within fairing width
+                let inside = part_left >= fairing_left - 0.001 && part_right <= fairing_right + 0.001;
+                // Part is outside if both edges are outside fairing width
+                let outside = part_right <= fairing_left + 0.001 || part_left >= fairing_right - 0.001;
+
+                if inside {
+                    any_inside = true;
+                } else if outside {
+                    any_outside = true;
+                } else {
+                    // Straddling at this height → crossing
+                    return true;
+                }
+            }
+        }
+
+        // Mix of inside and outside across heights → crossing
+        any_inside && any_outside
+    }
+
+    /// Check if a part crosses any completed fairing boundary
+    fn part_crosses_any_fairing(
+        &self,
+        part_pos: [f64; 2],
+        part_def: &crate::parts::PartDefinition,
+        part_defs: &PartDefinitions,
+        exclude_part_id: Option<PlacedPartId>,
+    ) -> bool {
+        for (&id, fairing_part) in &self.parts {
+            if exclude_part_id == Some(id) {
+                continue;
+            }
+            let Some(fairing_def) = part_defs.get(&fairing_part.definition_id) else { continue };
+            if fairing_def.fairing.is_none() { continue; }
+            let Some(ref shape) = fairing_part.fairing_shape else { continue };
+            if !shape.closed { continue; }
+
+            if Self::part_crosses_fairing_boundary(part_pos, part_def, fairing_part.position, fairing_def, shape) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Place a part at the current ghost position
     pub fn place_part(&mut self, part_defs: &PartDefinitions) -> bool {
         let Some(ref def_id) = self.selected_part_def else {
@@ -468,7 +628,8 @@ impl EditorState {
         let def = part_defs.get(def_id);
         let is_engine = def.map(|d| d.engine.is_some()).unwrap_or(false);
         let is_decoupler = def.map(|d| d.decoupler.is_some()).unwrap_or(false);
-        let needs_staging = is_engine || is_decoupler;
+        let is_fairing = def.map(|d| d.fairing.is_some()).unwrap_or(false);
+        let needs_staging = is_engine || is_decoupler || is_fairing;
 
         let mut part = PlacedPart::new(id, def_id.clone(), position);
 
@@ -512,11 +673,40 @@ impl EditorState {
             }
         }
 
+        // Enter fairing build mode after placing a fairing base
+        if is_fairing {
+            if let Some(d) = def {
+                let hitbox_half_h = d.hitbox_height() / 2.0;
+                let base_top_y = position[1] + hitbox_half_h;
+                let base_half_width = d.grid_width / 2.0;
+                self.fairing_build_mode = Some(FairingBuildState {
+                    part_id: id,
+                    base_top_y,
+                    base_center_x: position[0],
+                    base_half_width,
+                    vertices: Vec::new(),
+                    ghost_point: None,
+                    ghost_valid: false,
+                });
+                // Deselect the part def so no ghost part shows
+                self.selected_part_def = None;
+                self.ghost_position = None;
+                self.ghost_valid = false;
+                self.mirror_ghost_position = None;
+                self.mirror_ghost_def_id = None;
+            }
+        }
+
         true
     }
 
     /// Delete a part (and its mirror partner if linked)
     pub fn delete_part(&mut self, part_id: PlacedPartId) {
+        // Exit fairing build mode if deleting the fairing being built
+        if self.fairing_build_mode.as_ref().map(|b| b.part_id) == Some(part_id) {
+            self.fairing_build_mode = None;
+        }
+
         // Check for mirror partner before removing
         let mirror_id = self.parts.get(&part_id).and_then(|p| p.mirror_partner);
 
@@ -585,6 +775,9 @@ impl EditorState {
 
     /// Deselect the current part
     pub fn deselect(&mut self) {
+        if self.fairing_build_mode.is_some() {
+            self.exit_fairing_build_mode();
+        }
         self.selected_part_def = None;
         self.selected_placed_part = None;
         self.ghost_position = None;
@@ -702,6 +895,14 @@ impl EditorState {
                         mirror_part.position = [mirror_x, snapped_y];
                     }
                 }
+            }
+        }
+
+        // Also check fairing boundary crossing for non-fairing parts
+        if !overlaps {
+            let is_fairing = def.fairing.is_some();
+            if !is_fairing && self.part_crosses_any_fairing([snapped_x, snapped_y], def, part_defs, Some(part_id)) {
+                overlaps = true;
             }
         }
 
@@ -1156,6 +1357,157 @@ impl EditorState {
         }
 
         stage_dvs
+    }
+
+    // === Fairing Build Mode ===
+
+    /// Exit fairing build mode, saving the current vertices to the part
+    pub fn exit_fairing_build_mode(&mut self) {
+        if let Some(build) = self.fairing_build_mode.take() {
+            if let Some(part) = self.parts.get_mut(&build.part_id) {
+                if !build.vertices.is_empty() {
+                    part.fairing_shape = Some(FairingShape {
+                        vertices: build.vertices,
+                        closed: false, // not closed unless via center-line point
+                    });
+                }
+            }
+        }
+    }
+
+    /// Add a fairing vertex at the current ghost point
+    pub fn add_fairing_vertex(&mut self, part_defs: &PartDefinitions) {
+        let (ghost, base_center_x, base_top_y, ghost_valid, part_id) = {
+            let Some(ref build) = self.fairing_build_mode else { return };
+            (build.ghost_point, build.base_center_x, build.base_top_y, build.ghost_valid, build.part_id)
+        };
+
+        if !ghost_valid {
+            return;
+        }
+
+        let Some([gx, gy]) = ghost else { return };
+
+        // Convert from world coords to grid-relative coords (half_width_grid, y_offset_grid)
+        let half_width_world = (gx - base_center_x).abs();
+        let y_offset_world = gy - base_top_y;
+        let half_width_grid = half_width_world / GRID_SQUARE_SIZE;
+        let y_offset_grid = y_offset_world / GRID_SQUARE_SIZE;
+
+        // Check if this is a closing point (on center line)
+        let is_closing = half_width_grid < 0.25; // Within tolerance of center
+
+        // On close, validate that no existing part crosses the about-to-be-closed fairing boundary
+        if is_closing {
+            let fairing_pos = self.parts.get(&part_id).map(|p| p.position).unwrap_or([0.0, 0.0]);
+            let Some(fairing_def) = self.parts.get(&part_id)
+                .and_then(|p| part_defs.get(&p.definition_id)) else { return };
+
+            // Build the closing shape
+            let build = self.fairing_build_mode.as_ref().unwrap();
+            let mut closing_verts = build.vertices.clone();
+            closing_verts.push((0.0, y_offset_grid));
+            let closing_shape = FairingShape { vertices: closing_verts, closed: true };
+
+            // Check all parts against this envelope
+            for (&id, part) in &self.parts {
+                if id == part_id { continue; }
+                let Some(pdef) = part_defs.get(&part.definition_id) else { continue };
+                if Self::part_crosses_fairing_boundary(part.position, pdef, fairing_pos, fairing_def, &closing_shape) {
+                    // Reject the close
+                    return;
+                }
+            }
+        }
+
+        let build = self.fairing_build_mode.as_mut().unwrap();
+
+        if is_closing {
+            // Close the fairing with a tip point at center
+            build.vertices.push((0.0, y_offset_grid));
+
+            // Save to part and exit
+            if let Some(part) = self.parts.get_mut(&build.part_id) {
+                part.fairing_shape = Some(FairingShape {
+                    vertices: build.vertices.clone(),
+                    closed: true,
+                });
+            }
+            self.fairing_build_mode = None;
+        } else {
+            build.vertices.push((half_width_grid, y_offset_grid));
+        }
+    }
+
+    /// Undo the last fairing vertex
+    pub fn undo_fairing_vertex(&mut self) {
+        let should_exit = if let Some(ref mut build) = self.fairing_build_mode {
+            if build.vertices.is_empty() {
+                true // No vertices to undo, exit build mode
+            } else {
+                build.vertices.pop();
+                false
+            }
+        } else {
+            false
+        };
+        if should_exit {
+            self.exit_fairing_build_mode();
+        }
+    }
+
+    /// Update the fairing ghost point based on cursor position
+    pub fn update_fairing_ghost(&mut self, world_x: f64, world_y: f64) {
+        let Some(ref mut build) = self.fairing_build_mode else { return };
+
+        // Snap to half-grid positions (every 0.25m = every half grid square)
+        let snap = |v: f64| -> f64 { (v / 0.25).round() * 0.25 };
+        let snapped_x = snap(world_x);
+        let snapped_y = snap(world_y);
+
+        // Calculate half_width from center
+        let half_width_world = (snapped_x - build.base_center_x).abs();
+        let half_width_grid = half_width_world / GRID_SQUARE_SIZE;
+        let y_offset_world = snapped_y - build.base_top_y;
+
+        // Validate:
+        // 1. y must be above last vertex (or base top if first)
+        let min_y_offset = if let Some(&(_, last_y)) = build.vertices.last() {
+            last_y * GRID_SQUARE_SIZE + 0.25 // Must be at least half-grid above last point
+        } else {
+            0.25 // Must be at least half-grid above base top
+        };
+        let y_valid = y_offset_world >= min_y_offset;
+
+        // 2. half_width can extend up to base_half_width beyond the base edge
+        //    (i.e., max half_width = base_half_width * 2)
+        let max_half_width = build.base_half_width * 2.0;
+        let width_valid = half_width_grid <= max_half_width + 0.01;
+
+        // 3. y must be <= base_top_y + 10 * base_width (reasonable max height)
+        let max_y_offset = build.base_half_width * 2.0 * 10.0 * GRID_SQUARE_SIZE;
+        let height_valid = y_offset_world <= max_y_offset;
+
+        build.ghost_valid = y_valid && width_valid && height_valid;
+
+        // Mirror the x to center (use positive side, snap to center if close)
+        let mirrored_x = if half_width_grid < 0.25 {
+            build.base_center_x // Snap to center for closing
+        } else {
+            // Mirror to the side closest to cursor
+            if snapped_x >= build.base_center_x {
+                build.base_center_x + half_width_world
+            } else {
+                build.base_center_x - half_width_world
+            }
+        };
+        let _ = mirrored_x; // We use the absolute half_width, drawing is symmetric
+
+        // Store the ghost point (always on positive side for rendering)
+        build.ghost_point = Some([
+            build.base_center_x + half_width_world,
+            snapped_y,
+        ]);
     }
 }
 

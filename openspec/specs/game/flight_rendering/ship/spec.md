@@ -48,6 +48,28 @@ When no vessel parts are available, the ship SHALL be rendered as a simple trian
 
 Decoupler adapter fairings SHALL be rendered in a separate pass after all base parts for proper layering.
 
+### Requirement: Fairing shell rendering in third pass
+
+Fairing shells SHALL be rendered in a third pass after decoupler adapters. For each part with a `fairing_shape` and `fairing: Some(...)` definition, `generate_flight_fairing_shell()` SHALL draw the shell using the same trapezoid segment + seam line geometry as the editor shell renderer, passing `fairing_half` to support half-shell debris rendering. The shell is positioned relative to the part's local coordinates, transformed through the standard vertex pipeline (scale, rotate, translate). Shell color: `FAIRING_SHELL_COLOR = [0.35, 0.35, 0.38, 1.0]`. Seam line color: `FAIRING_SHELL_LINE_COLOR = [0.20, 0.20, 0.22, 1.0]`.
+
+### Requirement: Fairing shape in render data
+
+`ShipPartRenderData` SHALL include `fairing_shape: Option<FairingShape>` to pass the shell geometry from the vessel to the renderer each frame. This is populated from `FlightPart.fairing_shape` during render data construction. `ShipPartRenderData` SHALL also include `is_fairing: bool` (true when the definition has `fairing: Some(...)`) and `fairing_half: Option<FairingHalf>` (from `FlightPart.fairing_half`).
+
+### Requirement: Fairing deploy button
+
+The flight part info popup SHALL show a "Deploy" button for fairing parts (`is_fairing == true`). Clicking deploy SHALL set `fairing_deploy_request` on `RenderState`, which main.rs processes by marking the fairing as decoupled and calling `handle_post_decouple()`.
+
+### Requirement: Two-half fairing debris
+
+When a fairing is decoupled (via staging or deploy button), `extract_fairing_halves()` SHALL be called before `extract_decoupled_parts()`. It finds decoupled fairing parts with a shape but no `fairing_half` set, and for each creates two shell-only debris vessels — one with `fairing_half = Left` and one with `fairing_half = Right`. The base disc stays on the vessel: the original part is un-decoupled (`decoupled = false`) and its `fairing_shape` is cleared. Shell debris mass is 10% of total fairing mass per half.
+
+Each fairing half debris vessel SHALL receive 5 m/s perpendicular separation velocity: left half gets -5 m/s in vessel-local X, right half gets +5 m/s. The velocity is rotated to world coordinates using the vessel's heading.
+
+### Requirement: Shell-only debris rendering
+
+When rendering a part with `fairing_half.is_some()`, the base disc SHALL be skipped (`generate_part_shape_vertices` is not called). Only the fairing shell half is rendered via the fairing shell pass.
+
 ## Exhaust Plumes
 
 ### Requirement: Engine exhaust plumes during thrust

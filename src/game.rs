@@ -231,6 +231,53 @@ impl FlightState {
         log::info!("Created debris vessel: {} (id={})", name, id);
     }
 
+    /// Create a fairing half debris vessel with a fixed perpendicular velocity.
+    /// `com_offset` is the local position of the fairing part.
+    /// `sign` is -1.0 for left half, +1.0 for right half.
+    pub fn create_fairing_debris(
+        &mut self,
+        debris_vessel: FlightVessel,
+        com_offset: [f64; 2],
+        sep_speed: f64,
+        sign: f64,
+        solar_system: &SolarSystem,
+    ) {
+        let local_rot = self.ship.rotation - std::f64::consts::FRAC_PI_2;
+
+        let world_offset_x = com_offset[0] * local_rot.cos() - com_offset[1] * local_rot.sin();
+        let world_offset_y = com_offset[0] * local_rot.sin() + com_offset[1] * local_rot.cos();
+
+        let mut debris_ship = self.ship.clone();
+        debris_ship.rel_position[0] += world_offset_x;
+        debris_ship.rel_position[1] += world_offset_y;
+        debris_ship.throttle = 0.0;
+        debris_ship.on_rails = false;
+        debris_ship.cached_orbit = None;
+        debris_ship.cached_trajectory = None;
+        debris_ship.color = [1.0, 1.0, 1.0, 1.0];
+
+        // Perpendicular velocity in local X direction
+        let perp_x = local_rot.cos() * sign;
+        let perp_y = local_rot.sin() * sign;
+        debris_ship.rel_velocity[0] += sep_speed * perp_x;
+        debris_ship.rel_velocity[1] += sep_speed * perp_y;
+
+        debris_ship.enter_rails_mode(solar_system);
+
+        self.debris_counter += 1;
+        let name = format!("Debris {}", self.debris_counter);
+        let id = self.next_vessel_id;
+        self.next_vessel_id += 1;
+
+        self.inactive_vessels.push(TrackedVessel {
+            id,
+            name: name.clone(),
+            ship: debris_ship,
+            vessel: Some(debris_vessel),
+            maneuver_nodes: Vec::new(),
+        });
+    }
+
     /// Remove inactive vessels that are landed on the launchpad.
     /// Called before launching a new vessel to clear the pad.
     pub fn recover_vessels_on_launchpad(&mut self, solar_system: &crate::bodies::SolarSystem) {
