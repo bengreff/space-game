@@ -333,6 +333,8 @@ pub struct TrackingVesselData {
     pub color: [f32; 4],
     pub x: f64,       // Absolute position (scaled for rendering)
     pub y: f64,
+    pub body_center: [f64; 2],  // SOI body position in render units (large, galaxy-scale)
+    pub rel_offset: [f64; 2],   // Vessel offset from SOI body in render units (small, local)
     pub soi_body: usize,
     pub orbit: Option<OrbitRenderData>,
     pub parts: Option<Vec<ShipPartRenderData>>,

@@ -1245,6 +1245,8 @@ fn render_flight_frame(
                 color: v.ship.color,
                 x: soi_pos[0] * SCALE + rel[0] * SCALE * BODY_SCALE,
                 y: soi_pos[1] * SCALE + rel[1] * SCALE * BODY_SCALE,
+                body_center: [soi_pos[0] * SCALE, soi_pos[1] * SCALE],
+                rel_offset: [rel[0] * SCALE * BODY_SCALE, rel[1] * SCALE * BODY_SCALE],
                 soi_body: v.ship.soi_body,
                 orbit: orbit_data,
                 parts,
@@ -1252,6 +1254,10 @@ fn render_flight_frame(
             }
         })
         .collect();
+
+    // Store decomposed ship position for precision-safe camera-relative rendering
+    render_state.ship_body_center = [soi_pos_render[0] * SCALE, soi_pos_render[1] * SCALE];
+    render_state.ship_rel_offset = [rel_render[0] * SCALE * BODY_SCALE, rel_render[1] * SCALE * BODY_SCALE];
 
     let accretion_discs = build_accretion_disc_data(game);
     let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
@@ -2288,6 +2294,8 @@ fn build_tracking_vessel_data(
             color: v.ship.color,
             x: soi_pos[0] * SCALE + rel[0] * SCALE * BODY_SCALE,
             y: soi_pos[1] * SCALE + rel[1] * SCALE * BODY_SCALE,
+            body_center: [soi_pos[0] * SCALE, soi_pos[1] * SCALE],
+            rel_offset: [rel[0] * SCALE * BODY_SCALE, rel[1] * SCALE * BODY_SCALE],
             soi_body: v.ship.soi_body,
             orbit: orbit_data,
             parts,

@@ -18,7 +18,7 @@ vertex_f32 = ((world_pos - body_center) - ship_offset) as f32
 
 This preserves full f32 precision for vertices near the ship. Adding `ship_offset` (~0.006 WU) to `body_center` (~2.46e11 WU) would introduce ~3e-5 WU error (f64 ULP at galaxy-scale), which is 30 km in physical units. The two-step subtraction keeps each f64 operation between values of similar magnitude.
 
-Ship parts are rendered at `(0, 0)` in camera-relative space (their `body_center` and `ship_offset` exactly cancel), so part vertex offsets (~1e-9 WU) have full f32 precision. The shader's `fine_offset` uniform is set to `[0.0, 0.0]` — all precision work happens on the CPU.
+When tracking the ship, parts are rendered at `(0, 0)` in camera-relative space (their `body_center` and `ship_offset` exactly cancel), so part vertex offsets (~1e-9 WU) have full f32 precision. When the camera is focused on a body instead, the ship's camera-relative position uses the same two-step decomposition: `RenderState` stores `ship_body_center` (SOI body position in render units) and `ship_rel_offset` (ship's local offset) separately, then computes `((ship_body_center - cam_body_center) + (ship_rel_offset - cam_ship_offset)) as f32`. Each subtraction is between values of similar magnitude, preserving f64 precision. The shader's `fine_offset` uniform is set to `[0.0, 0.0]` — all precision work happens on the CPU.
 
 When the user pans the camera, `body_center` is set to `camera.position` and `ship_offset` is zeroed, gracefully degrading to single-step subtraction.
 
