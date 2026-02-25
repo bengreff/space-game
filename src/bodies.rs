@@ -486,7 +486,8 @@ impl SolarSystem {
         // === SUN (index 1) ===
         let sun_mass = 1.989e30 * PHYSICS_SCALE * PHYSICS_SCALE;
         let sun_radius = 6.96e8 * PHYSICS_SCALE;
-        let sun_sma = 2.46e20 * PHYSICS_SCALE;
+        // ~21,100 ly from galactic center (target position: -2000 ly x, -21000 ly y)
+        let sun_sma = 1.996e20 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Sun".to_string(),
             description: String::new(),
@@ -498,7 +499,8 @@ impl SolarSystem {
                 semi_major_axis: sun_sma,
                 eccentricity: 0.07,
                 argument_of_periapsis: 0.0,
-                mean_anomaly_at_epoch: 3.0 * std::f64::consts::PI / 2.0, // Start at bottom of orbit (-y)
+                // ~264.6° = atan2(-21003, -2000): 2000 ly left, 5000 ly up from old position
+                mean_anomaly_at_epoch: 4.617,
             }),
             soi_radius: calculate_soi(sun_sma, sun_mass, galactic_enclosed_mass(sun_sma)),
             atmosphere: None,

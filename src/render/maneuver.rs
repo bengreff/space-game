@@ -48,6 +48,9 @@ impl RenderState {
             let e = segment.eccentricity;
             let arg_peri = segment.argument_of_periapsis;
             let num_samples = 256;
+            // Subtract camera from parent first for precision
+            let pcam_x = segment.parent_x - cam_x;
+            let pcam_y = segment.parent_y - cam_y;
 
             if e >= 1.0 {
                 // Hyperbolic - sample along the visible arc
@@ -78,11 +81,11 @@ impl RenderState {
                     }
 
                     let angle = ta + arg_peri;
-                    let px = segment.parent_x + r * angle.cos();
-                    let py = segment.parent_y + r * angle.sin();
+                    let px = pcam_x + r * angle.cos();
+                    let py = pcam_y + r * angle.sin();
 
-                    let view_x = ((px - cam_x) as f32) * self.camera.zoom;
-                    let view_y = ((py - cam_y) as f32) * self.camera.zoom;
+                    let view_x = (px as f32) * self.camera.zoom;
+                    let view_y = (py as f32) * self.camera.zoom;
                     let ndc_x = view_x / aspect_ratio;
                     let ndc_y = view_y;
                     let scr_x = (ndc_x + 1.0) * 0.5 * size.width as f32 / scale_factor;
@@ -105,8 +108,8 @@ impl RenderState {
                 let a = segment.semi_major_axis;
                 let b = a * (1.0 - e * e).sqrt();
                 let c = a * e;
-                let center_x = segment.parent_x - c * arg_peri.cos();
-                let center_y = segment.parent_y - c * arg_peri.sin();
+                let center_x = pcam_x - c * arg_peri.cos();
+                let center_y = pcam_y - c * arg_peri.sin();
 
                 let start_ta = segment.start_true_anomaly;
                 let start_ea = (start_ta.sin() * (1.0 - e * e).sqrt()).atan2(e + start_ta.cos());
@@ -142,8 +145,8 @@ impl RenderState {
                     let ta = 2.0 * ((1.0 + e).sqrt() * (ea / 2.0).sin())
                         .atan2((1.0 - e).sqrt() * (ea / 2.0).cos());
 
-                    let view_x = ((px - cam_x) as f32) * self.camera.zoom;
-                    let view_y = ((py - cam_y) as f32) * self.camera.zoom;
+                    let view_x = (px as f32) * self.camera.zoom;
+                    let view_y = (py as f32) * self.camera.zoom;
                     let ndc_x = view_x / aspect_ratio;
                     let ndc_y = view_y;
                     let scr_x = (ndc_x + 1.0) * 0.5 * size.width as f32 / scale_factor;
@@ -420,6 +423,10 @@ impl RenderState {
         let aspect_ratio = self.camera.aspect_ratio;
         let size = self.size;
 
+        // Subtract camera from parent first for precision
+        let pcam_x = parent_x - cam_x;
+        let pcam_y = parent_y - cam_y;
+
         let mut best_match: Option<(f64, f32)> = None; // (true_anomaly, distance)
         let num_samples = 360;
 
@@ -439,11 +446,11 @@ impl RenderState {
                 if r <= 0.0 || !r.is_finite() { continue; }
 
                 let angle = ta + arg_peri;
-                let world_x = parent_x + r * angle.cos();
-                let world_y = parent_y + r * angle.sin();
+                let px = pcam_x + r * angle.cos();
+                let py = pcam_y + r * angle.sin();
 
-                let view_x = ((world_x - cam_x) as f32) * self.camera.zoom;
-                let view_y = ((world_y - cam_y) as f32) * self.camera.zoom;
+                let view_x = (px as f32) * self.camera.zoom;
+                let view_y = (py as f32) * self.camera.zoom;
                 let ndc_x = view_x / aspect_ratio;
                 let ndc_y = view_y;
                 let scr_x = (ndc_x + 1.0) * 0.5 * size.width as f32 / scale_factor;
@@ -463,8 +470,8 @@ impl RenderState {
             // Elliptical
             let b = a * (1.0 - e * e).sqrt();
             let c = a * e;
-            let center_x = parent_x - c * arg_peri.cos();
-            let center_y = parent_y - c * arg_peri.sin();
+            let center_x = pcam_x - c * arg_peri.cos();
+            let center_y = pcam_y - c * arg_peri.sin();
 
             for i in 0..num_samples {
                 let t = i as f64 / num_samples as f64;
@@ -474,15 +481,15 @@ impl RenderState {
                 let ey = b * ea.sin();
                 let rx = ex * arg_peri.cos() - ey * arg_peri.sin();
                 let ry = ex * arg_peri.sin() + ey * arg_peri.cos();
-                let world_x = center_x + rx;
-                let world_y = center_y + ry;
+                let px = center_x + rx;
+                let py = center_y + ry;
 
                 // Convert eccentric anomaly to true anomaly
                 let ta = 2.0 * ((1.0 + e).sqrt() * (ea / 2.0).sin())
                     .atan2((1.0 - e).sqrt() * (ea / 2.0).cos());
 
-                let view_x = ((world_x - cam_x) as f32) * self.camera.zoom;
-                let view_y = ((world_y - cam_y) as f32) * self.camera.zoom;
+                let view_x = (px as f32) * self.camera.zoom;
+                let view_y = (py as f32) * self.camera.zoom;
                 let ndc_x = view_x / aspect_ratio;
                 let ndc_y = view_y;
                 let scr_x = (ndc_x + 1.0) * 0.5 * size.width as f32 / scale_factor;
