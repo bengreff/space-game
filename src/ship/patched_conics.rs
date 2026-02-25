@@ -45,10 +45,11 @@ impl Ship {
         let parent_idx = self.soi_body;
         let parent = &solar_system.bodies[parent_idx];
 
+        let r = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
         let (orbit, true_anomaly, retrograde) = self.calculate_orbit_from_state(
             self.rel_position,
             self.rel_velocity,
-            parent.mass,
+            parent.effective_mass_at(r),
         )?;
 
         let segments = self.compute_patched_segments(
@@ -101,7 +102,8 @@ impl Ship {
                 // Calculate time to exit for body position computation
                 let exit_ma = self.true_to_mean_anomaly(&current_orbit, exit_true_anomaly);
                 let start_ma = self.true_to_mean_anomaly(&current_orbit, current_ta);
-                let mu = G * parent.mass;
+                let parent_mass_eff = parent.effective_mass_at(a_abs);
+                let mu = G * parent_mass_eff;
                 let n = (mu / a_abs.powi(3)).sqrt();
                 let time_to_exit = if n > 0.0 {
                     (exit_ma - start_ma).abs() / n
@@ -125,9 +127,9 @@ impl Ship {
                 }
 
                 if let Some(grandparent_idx) = parent.parent {
-                    let exit_pos = current_orbit.position_from_mean_anomaly(exit_ma, parent.mass);
+                    let exit_pos = current_orbit.position_from_mean_anomaly(exit_ma, parent_mass_eff);
                     let exit_vel = current_orbit.velocity_from_mean_anomaly_with_direction(
-                        exit_ma, parent.mass, current_retrograde,
+                        exit_ma, parent_mass_eff, current_retrograde,
                     );
                     let exit_absolute_time = base_time + cumulative_time + time_to_exit;
 
@@ -140,8 +142,9 @@ impl Ship {
                     );
 
                     let grandparent = &solar_system.bodies[grandparent_idx];
+                    let r_new = (new_pos[0].powi(2) + new_pos[1].powi(2)).sqrt();
                     if let Some((new_orbit, new_ta, new_retro)) = self.calculate_orbit_from_state(
-                        new_pos, new_vel, grandparent.mass,
+                        new_pos, new_vel, grandparent.effective_mass_at(r_new),
                     ) {
                         cumulative_time += time_to_exit;
                         current_orbit = new_orbit;
@@ -193,10 +196,11 @@ impl Ship {
                     });
 
                     let intersect_mean_anomaly = self.true_to_mean_anomaly(&current_orbit, intersect_ta);
-                    let pos = current_orbit.position_from_mean_anomaly(intersect_mean_anomaly, parent.mass);
+                    let eff_mass = parent.effective_mass_at(current_orbit.semi_major_axis);
+                    let pos = current_orbit.position_from_mean_anomaly(intersect_mean_anomaly, eff_mass);
                     let vel = current_orbit.velocity_from_mean_anomaly_with_direction(
                         intersect_mean_anomaly,
-                        parent.mass,
+                        eff_mass,
                         current_retrograde,
                     );
 
@@ -220,8 +224,9 @@ impl Ship {
                     };
 
                     let new_parent = &solar_system.bodies[new_parent_idx];
+                    let r_new = (new_pos[0].powi(2) + new_pos[1].powi(2)).sqrt();
                     if let Some((new_orbit, new_ta, new_retro)) = self.calculate_orbit_from_state(
-                        new_pos, new_vel, new_parent.mass,
+                        new_pos, new_vel, new_parent.effective_mass_at(r_new),
                     ) {
                         cumulative_time += intersect_time;
                         current_orbit = new_orbit;
@@ -263,7 +268,8 @@ impl Ship {
         base_time: f64,
     ) -> Option<(f64, f64, usize, bool)> {
         let parent = &solar_system.bodies[parent_idx];
-        let mu = G * parent.mass;
+        let parent_mass_eff = parent.effective_mass_at(orbit.semi_major_axis);
+        let mu = G * parent_mass_eff;
         let period = std::f64::consts::TAU * (orbit.semi_major_axis.powi(3) / mu).sqrt();
         let mean_motion = std::f64::consts::TAU / period;
 
@@ -360,7 +366,7 @@ impl Ship {
                 continue;
             }
 
-            let pos = orbit.position_from_mean_anomaly(sample_m, parent.mass);
+            let pos = orbit.position_from_mean_anomaly(sample_m, parent_mass_eff);
             let dist_from_parent = (pos[0].powi(2) + pos[1].powi(2)).sqrt();
 
             // Check if exiting current SOI
@@ -380,7 +386,7 @@ impl Ship {
                     let child = &solar_system.bodies[child_idx];
 
                     let child_pos = if let Some(ref child_orbit) = child.orbit {
-                        child_orbit.position_at(base_time + time_to_sample, parent.mass)
+                        child_orbit.position_at(base_time + time_to_sample, parent.effective_mass_at(child_orbit.semi_major_axis))
                     } else {
                         self.get_body_position_relative(child_idx, parent_idx, solar_system)
                     };
@@ -415,8 +421,8 @@ impl Ship {
                     let mid_sample_m = get_sample_m(mid_delta_m);
                     let mid_time = mid_delta_m / mean_motion;
 
-                    let ship_pos = orbit.position_from_mean_anomaly(mid_sample_m, parent.mass);
-                    let child_pos = child_orbit.position_at(base_time + mid_time, parent.mass);
+                    let ship_pos = orbit.position_from_mean_anomaly(mid_sample_m, parent_mass_eff);
+                    let child_pos = child_orbit.position_at(base_time + mid_time, parent.effective_mass_at(child_orbit.semi_major_axis));
 
                     let dx = ship_pos[0] - child_pos[0];
                     let dy = ship_pos[1] - child_pos[1];

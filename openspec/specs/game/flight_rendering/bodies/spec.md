@@ -56,8 +56,12 @@ When a body is smaller than 5 pixels on screen (`body_pixels < 5.0`), a ring ind
 
 #### Scenario: Indicator ring rendering
 - **GIVEN** a body with `body_pixels < 5.0`
-- **THEN** outer radius = `16.0 / pixels_per_world_unit`, inner radius = `outer_radius * 0.7`, 64 segments
-- **AND** outer vertex color = body color, inner vertex color = `[color[0]*0.3, color[1]*0.3, color[2]*0.3, color[3]*0.5]`
+- **THEN** outer radius = `16.0 / pixels_per_world_unit`, inner radius = `outer_radius * 0.7`, 4 segments
+- **AND** outer vertex color = body color (or warm amber `[0.7, 0.5, 0.3, 1.0]` if body color RGB sum < 0.1), inner vertex color = dimmed to 30% brightness at 50% alpha
+
+#### Scenario: Hidden bodies skip indicator
+- **GIVEN** a body with radius = 0.0 (hidden in galaxy view)
+- **THEN** no indicator ring is drawn, and the body is not clickable or hoverable (BodyData has radius=0, indicator_radius=0)
 
 ### Requirement: Body hover detection and label display
 

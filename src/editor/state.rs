@@ -55,7 +55,7 @@ pub struct TwrSettings {
 impl Default for TwrSettings {
     fn default() -> Self {
         Self {
-            body_index: 3,  // Earth by default
+            body_index: 4,  // Earth by default
             show_asl: true, // Show ASL by default
         }
     }

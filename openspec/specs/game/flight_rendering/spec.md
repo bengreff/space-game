@@ -39,9 +39,9 @@ All positions are scaled by `SCALE = 1e-9` and `BODY_SCALE = 1.0`, so the effect
 Geometry is drawn in the following back-to-front order within a single MSAA render pass:
 1. Atmosphere rings
 2. Celestial body orbit lines (256 segments each)
-3. Ship orbit/trajectory lines (patched conics)
-4. Predicted trajectory lines (green, from maneuver nodes)
-5. Celestial bodies (filled circles)
+3. Celestial bodies (filled circles)
+4. Ship orbit/trajectory lines (patched conics, on top of bodies)
+5. Predicted trajectory lines (green, from maneuver nodes)
 6. Launchpad (ship view only)
 7. Ship (part-based rendering or triangle, at actual world scale)
 8. Ship indicator triangle (map view only, fixed screen size)

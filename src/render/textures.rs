@@ -38,6 +38,7 @@ fn bleed_disc_edges(img: &mut image::RgbaImage) {
 /// Maps body index to texture array layer index. None means no texture for that body.
 pub struct BodyTextureMap {
     layers: HashMap<usize, u32>,
+    pub galaxy_layer: Option<u32>,
 }
 
 impl BodyTextureMap {
@@ -81,6 +82,30 @@ pub fn load_body_textures(
                 Err(e) => {
                     log::warn!("Failed to load body texture {}: {}", path.display(), e);
                 }
+            }
+        }
+    }
+
+    // Load galaxy background image as an extra layer
+    let galaxy_path = Path::new("data/textures/milky_way.png");
+    let mut galaxy_layer_idx: Option<u32> = None;
+    if galaxy_path.exists() {
+        match image::open(galaxy_path) {
+            Ok(img) => {
+                let rgba = img.to_rgba8();
+                let final_img = if rgba.width() != TEXTURE_SIZE || rgba.height() != TEXTURE_SIZE {
+                    image::imageops::resize(&rgba, TEXTURE_SIZE, TEXTURE_SIZE, image::imageops::FilterType::Triangle)
+                } else {
+                    rgba
+                };
+                let idx = images.len();
+                log::info!("Loaded galaxy texture: {} (layer {})", galaxy_path.display(), idx);
+                galaxy_layer_idx = Some(idx as u32);
+                // Use usize::MAX as a sentinel body index (won't collide with real bodies)
+                images.push((usize::MAX, final_img));
+            }
+            Err(e) => {
+                log::warn!("Failed to load galaxy texture {}: {}", galaxy_path.display(), e);
             }
         }
     }
@@ -144,5 +169,5 @@ pub fn load_body_textures(
         ..Default::default()
     });
 
-    (view, sampler, BodyTextureMap { layers })
+    (view, sampler, BodyTextureMap { layers, galaxy_layer: galaxy_layer_idx })
 }

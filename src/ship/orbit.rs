@@ -19,7 +19,7 @@ impl Ship {
         let vy = self.rel_velocity[1];
         let v = (vx * vx + vy * vy).sqrt();
 
-        let mu = G * parent.mass;
+        let mu = G * parent.effective_mass_at(r);
 
         // Specific orbital energy
         let energy = v * v / 2.0 - mu / r;
@@ -75,7 +75,7 @@ impl Ship {
     pub fn get_orbital_info(&self, solar_system: &SolarSystem) -> Option<OrbitalInfo> {
         let ship_orbit = self.cached_orbit.as_ref()?;
         let parent = &solar_system.bodies[ship_orbit.parent_idx];
-        let mu = G * parent.mass;
+        let mu = G * parent.effective_mass_at(ship_orbit.orbit.semi_major_axis);
 
         let a = ship_orbit.orbit.semi_major_axis;
         let e = ship_orbit.orbit.eccentricity;

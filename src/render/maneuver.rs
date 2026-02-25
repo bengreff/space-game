@@ -545,17 +545,22 @@ impl RenderState {
             return None;
         }
 
-        // Convert screen to world coordinates
-        let world_pos = self.camera.screen_to_world(
-            screen_x,
-            screen_y,
-            self.size.width as f32,
-            self.size.height as f32,
-        );
+        // Compute click offset from camera center directly in f32, avoiding the precision
+        // loss from adding a tiny screen offset to galaxy-scale camera.position in f64.
+        // camera.position ≈ ship_render_x at ~1e10, so a ~1e-8 screen offset would vanish.
+        let ndc_x = (screen_x / self.size.width as f32) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (screen_y / self.size.height as f32) * 2.0;
+        let view_x = ndc_x * self.camera.aspect_ratio / self.camera.zoom;
+        let view_y = ndc_y / self.camera.zoom;
+        let cos_cam = self.camera.rotation.cos();
+        let sin_cam = self.camera.rotation.sin();
+        let offset_x = (view_x * cos_cam + view_y * sin_cam) as f64;
+        let offset_y = (-view_x * sin_cam + view_y * cos_cam) as f64;
 
-        // Subtract vessel render position to get vessel-local (in render/world units)
-        let rel_x = world_pos[0] - self.ship_render_x;
-        let rel_y = world_pos[1] - self.ship_render_y;
+        // offset is click relative to camera center. Add any camera-vs-ship drift
+        // (zero when tracking, non-zero after panning).
+        let rel_x = offset_x + (self.camera.position[0] - self.ship_render_x);
+        let rel_y = offset_y + (self.camera.position[1] - self.ship_render_y);
 
         // Un-rotate by visual rotation (rotation - PI/2 maps vessel "up" to the heading)
         let visual_rot = self.ship_render_rotation - std::f64::consts::FRAC_PI_2;

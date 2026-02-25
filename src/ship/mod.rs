@@ -193,9 +193,9 @@ pub struct Ship {
 }
 
 impl Ship {
-    /// Create a ship spawned on Earth's surface (Earth is at index 3)
+    /// Create a ship spawned on Earth's surface (Earth is at index 4)
     pub fn spawn_on_earth(solar_system: &SolarSystem) -> Self {
-        let earth_index = 3;
+        let earth_index = 4;
         let earth = &solar_system.bodies[earth_index];
         let earth_radius = earth.radius;
         let earth_mass = earth.mass;
@@ -311,7 +311,7 @@ impl Ship {
         // Fallback: compute from state vectors using vis-viva and angular momentum
         let r = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
         let v2 = self.rel_velocity[0].powi(2) + self.rel_velocity[1].powi(2);
-        let mu = G * soi_body.mass;
+        let mu = G * soi_body.effective_mass_at(r);
 
         // Semi-major axis from vis-viva: 1/a = 2/r - v²/μ
         let inv_a = 2.0 / r - v2 / mu;
@@ -366,7 +366,7 @@ impl Ship {
         // Fallback: compute from state vectors using vis-viva and angular momentum
         let r = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
         let v2 = self.rel_velocity[0].powi(2) + self.rel_velocity[1].powi(2);
-        let mu = G * soi_body.mass;
+        let mu = G * soi_body.effective_mass_at(r);
 
         // Semi-major axis from vis-viva: 1/a = 2/r - v²/μ
         let inv_a = 2.0 / r - v2 / mu;
@@ -452,13 +452,14 @@ impl Ship {
     pub fn exit_rails_mode(&mut self, solar_system: &SolarSystem) {
         if let Some(ref ship_orbit) = self.cached_orbit {
             let parent = &solar_system.bodies[ship_orbit.parent_idx];
+            let parent_mass = parent.effective_mass_at(ship_orbit.orbit.semi_major_axis);
             self.rel_position = ship_orbit.orbit.position_from_mean_anomaly(
                 ship_orbit.mean_anomaly,
-                parent.mass,
+                parent_mass,
             );
             self.rel_velocity = ship_orbit.orbit.velocity_from_mean_anomaly_with_direction(
                 ship_orbit.mean_anomaly,
-                parent.mass,
+                parent_mass,
                 ship_orbit.retrograde,
             );
         }
@@ -486,8 +487,9 @@ impl Ship {
     pub fn update_on_rails(&mut self, dt: f64, solar_system: &SolarSystem) {
         if let Some(ref mut ship_orbit) = self.cached_orbit {
             let parent = &solar_system.bodies[ship_orbit.parent_idx];
+            let parent_mass = parent.effective_mass_at(ship_orbit.orbit.semi_major_axis);
 
-            let mean_motion = ship_orbit.orbit.mean_motion(parent.mass);
+            let mean_motion = ship_orbit.orbit.mean_motion(parent_mass);
             let direction = if ship_orbit.retrograde { -1.0 } else { 1.0 };
             ship_orbit.mean_anomaly += direction * mean_motion * dt;
 
@@ -498,11 +500,11 @@ impl Ship {
 
             self.rel_position = ship_orbit.orbit.position_from_mean_anomaly(
                 ship_orbit.mean_anomaly,
-                parent.mass,
+                parent_mass,
             );
             self.rel_velocity = ship_orbit.orbit.velocity_from_mean_anomaly_with_direction(
                 ship_orbit.mean_anomaly,
-                parent.mass,
+                parent_mass,
                 ship_orbit.retrograde,
             );
 
@@ -666,7 +668,7 @@ impl Ship {
             let dist_sq = pos[0] * pos[0] + pos[1] * pos[1];
             let dist = dist_sq.sqrt();
             if dist > soi_body.radius {
-                let accel_mag = G * soi_body.mass / dist_sq;
+                let accel_mag = G * soi_body.effective_mass_at(dist) / dist_sq;
                 [-pos[0] / dist * accel_mag, -pos[1] / dist * accel_mag]
             } else {
                 [0.0, 0.0]
@@ -885,12 +887,22 @@ impl Ship {
         let ship_radius = vessel
             .map(|v| v.bottom_extent)
             .unwrap_or(SHIP_SIZE / 2.0);
-        let abs_pos = self.absolute_position(solar_system);
+
+        // Compute ship position relative to each body.
+        // For the SOI body, use rel_position directly to avoid floating-point
+        // precision loss from round-tripping through galactic-scale absolute coords.
+        let soi_pos = solar_system.body_position(self.soi_body);
 
         for (i, body) in solar_system.bodies.iter().enumerate() {
-            let body_pos = solar_system.body_position(i);
-            let dx = abs_pos[0] - body_pos[0];
-            let dy = abs_pos[1] - body_pos[1];
+            let (dx, dy) = if i == self.soi_body {
+                (self.rel_position[0], self.rel_position[1])
+            } else {
+                let body_pos = solar_system.body_position(i);
+                (
+                    soi_pos[0] + self.rel_position[0] - body_pos[0],
+                    soi_pos[1] + self.rel_position[1] - body_pos[1],
+                )
+            };
             let dist = (dx * dx + dy * dy).sqrt();
 
             // Check launchpad collision (raised surface)
@@ -995,7 +1007,8 @@ impl Ship {
         epoch: f64,
     ) -> Option<PatchedTrajectory> {
         let parent = &solar_system.bodies[parent_idx];
-        let (orbit, true_anomaly, retrograde) = self.calculate_orbit_from_state(pos, vel, parent.mass)?;
+        let r = (pos[0].powi(2) + pos[1].powi(2)).sqrt();
+        let (orbit, true_anomaly, retrograde) = self.calculate_orbit_from_state(pos, vel, parent.effective_mass_at(r))?;
 
         let segments = self.compute_patched_segments(
             orbit, true_anomaly, retrograde, parent_idx,

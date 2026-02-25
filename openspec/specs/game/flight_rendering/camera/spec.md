@@ -8,6 +8,20 @@ Camera position, zoom, body tracking, and coordinate conversions for flight mode
 
 The camera position is stored as `[f64; 2]` to prevent precision loss at large distances (billions of meters from origin). The GPU uniform receives a truncated `[f32; 2]` copy, but all camera math (panning, tracking, coordinate conversion) operates in f64.
 
+### Requirement: Two-step camera subtraction for vertex precision
+
+The camera position is decomposed into `body_center` (SOI body position in render units) and `ship_offset` (ship's relative position in render units) as two separate f64 values. When generating vertex positions, both are subtracted from world positions as two separate f64 operations before casting to f32:
+
+```
+vertex_f32 = ((world_pos - body_center) - ship_offset) as f32
+```
+
+This preserves full f32 precision for vertices near the ship. Adding `ship_offset` (~0.006 WU) to `body_center` (~2.46e11 WU) would introduce ~3e-5 WU error (f64 ULP at galaxy-scale), which is 30 km in physical units. The two-step subtraction keeps each f64 operation between values of similar magnitude.
+
+Ship parts are rendered at `(0, 0)` in camera-relative space (their `body_center` and `ship_offset` exactly cancel), so part vertex offsets (~1e-9 WU) have full f32 precision. The shader's `fine_offset` uniform is set to `[0.0, 0.0]` — all precision work happens on the CPU.
+
+When the user pans the camera, `body_center` is set to `camera.position` and `ship_offset` is zeroed, gracefully degrading to single-step subtraction.
+
 ### Requirement: Camera initial state
 
 A new Camera SHALL initialize with: position `[0.0, 0.0]`, zoom `1.0`, rotation `0.0`, `is_dragging = false`, `last_mouse_pos = [0.0, 0.0]`.

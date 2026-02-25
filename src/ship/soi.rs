@@ -8,7 +8,7 @@ impl Ship {
 
         match (body.parent, &body.orbit) {
             (Some(parent_idx), Some(orbit)) => {
-                let parent_mass = solar_system.bodies[parent_idx].mass;
+                let parent_mass = solar_system.bodies[parent_idx].effective_mass_at(orbit.semi_major_axis);
 
                 let body_pos = solar_system.body_position(body_index);
                 let parent_pos = solar_system.body_position(parent_idx);
@@ -308,7 +308,7 @@ impl Ship {
         let body = &solar_system.bodies[body_idx];
         if let (Some(parent_idx), Some(ref orbit)) = (body.parent, &body.orbit) {
             let parent = &solar_system.bodies[parent_idx];
-            orbit.position_at(time, parent.mass)
+            orbit.position_at(time, parent.effective_mass_at(orbit.semi_major_axis))
         } else {
             solar_system.body_position(body_idx)
         }
@@ -319,8 +319,9 @@ impl Ship {
         let body = &solar_system.bodies[body_idx];
         if let (Some(parent_idx), Some(ref orbit)) = (body.parent, &body.orbit) {
             let parent = &solar_system.bodies[parent_idx];
-            let mean_anomaly = orbit.mean_anomaly_at(time, parent.mass);
-            orbit.velocity_from_mean_anomaly(mean_anomaly, parent.mass)
+            let parent_mass = parent.effective_mass_at(orbit.semi_major_axis);
+            let mean_anomaly = orbit.mean_anomaly_at(time, parent_mass);
+            orbit.velocity_from_mean_anomaly(mean_anomaly, parent_mass)
         } else {
             self.get_body_velocity(body_idx, solar_system)
         }

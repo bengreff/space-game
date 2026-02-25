@@ -6,17 +6,25 @@ pub struct CameraUniform {
     pub zoom: f32,
     pub aspect_ratio: f32,
     pub rotation: f32,
-    pub _padding: [f32; 3],
+    pub fine_offset: [f32; 2],
+    pub _padding: f32,
 }
 
 /// Camera state for pan and zoom
 pub struct Camera {
+    /// Full camera position (body_center + ship_offset) for UI/hit-testing
     pub position: [f64; 2],
     pub zoom: f32,
     pub aspect_ratio: f32,
     pub rotation: f32,
     pub is_dragging: bool,
     pub last_mouse_pos: [f32; 2],
+    /// SOI body center in world units — used as the coarse camera origin for vertex generation.
+    /// Subtracting this from body positions preserves f64 precision at galaxy-scale distances.
+    pub body_center: [f64; 2],
+    /// Ship offset from body_center in world units — subtracted separately from body_center on the CPU.
+    /// Two-step f64 subtraction avoids adding a small offset (~0.006 WU) to a large position (~2.46e11 WU).
+    pub ship_offset: [f64; 2],
 }
 
 impl Camera {
@@ -28,6 +36,8 @@ impl Camera {
             rotation: 0.0,
             is_dragging: false,
             last_mouse_pos: [0.0, 0.0],
+            body_center: [0.0, 0.0],
+            ship_offset: [0.0, 0.0],
         }
     }
 
@@ -37,7 +47,8 @@ impl Camera {
             zoom: self.zoom,
             aspect_ratio: self.aspect_ratio,
             rotation: self.rotation,
-            _padding: [0.0; 3],
+            fine_offset: [0.0, 0.0],
+            _padding: 0.0,
         }
     }
 
@@ -71,27 +82,34 @@ impl Camera {
         let rotated_dy = -dx * sin_r + dy * cos_r;
         self.position[0] -= (rotated_dx / self.zoom) as f64;
         self.position[1] += (rotated_dy / self.zoom) as f64;
+        // Panning breaks ship-tracking precision; sync body_center to position
+        self.body_center = self.position;
+        self.ship_offset = [0.0, 0.0];
     }
 
     /// Zoom the camera by a factor, centered on a world position
     pub fn zoom_at(&mut self, factor: f32, world_pos: [f64; 2]) {
         let old_zoom = self.zoom;
         self.zoom *= factor;
-        self.zoom = self.zoom.clamp(0.001, 1e10);
+        self.zoom = self.zoom.clamp(1e-13, 1e10);
 
         let scale = (old_zoom / self.zoom) as f64;
         self.position[0] = world_pos[0] - (world_pos[0] - self.position[0]) * scale;
         self.position[1] = world_pos[1] - (world_pos[1] - self.position[1]) * scale;
+        self.body_center = self.position;
+        self.ship_offset = [0.0, 0.0];
     }
 
     /// Focus camera on a world position
     pub fn focus_on(&mut self, world_pos: [f64; 2]) {
         self.position = world_pos;
+        self.body_center = world_pos;
+        self.ship_offset = [0.0, 0.0];
     }
 
     /// Simple zoom (centered on camera position)
     pub fn zoom_by(&mut self, factor: f32) {
         self.zoom *= factor;
-        self.zoom = self.zoom.clamp(0.00001, 1e10);
+        self.zoom = self.zoom.clamp(1e-13, 1e10);
     }
 }

@@ -5,7 +5,7 @@ use crate::render::ManeuverNode;
 use crate::ship::{Ship, ShipInput};
 
 /// Launchpad constants
-pub const LAUNCHPAD_BODY_INDEX: usize = 3; // Earth
+pub const LAUNCHPAD_BODY_INDEX: usize = 4; // Earth
 pub const LAUNCHPAD_SURFACE_ANGLE: f64 = std::f64::consts::FRAC_PI_2;
 pub const LAUNCHPAD_HEIGHT: f64 = 10.0; // meters
 pub const LAUNCHPAD_TOP_WIDTH: f64 = 100.0; // meters

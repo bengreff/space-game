@@ -381,8 +381,8 @@ pub fn compute_interplanetary(
     ship_orbit: &Orbit,
     ship_retrograde: bool,
     _ship_mean_anomaly: f64,
-    ship_soi_body: usize,        // e.g. Earth (index 3)
-    target_body: usize,          // e.g. Mars (index 5)
+    ship_soi_body: usize,        // e.g. Earth (index 4)
+    target_body: usize,          // e.g. Mars (index 6)
     departure_time: f64,         // absolute sim time of departure
     arrival_time: f64,           // absolute sim time of arrival
     sim_time: f64,               // current simulation time

@@ -202,4 +202,26 @@ When zoomed into the ship (`!needs_indicator`, i.e. ship_pixels >= 5.0) and velo
 
 ### Requirement: Flight part click detection
 
-Clicking on a part in ship view SHALL select it by converting click position to vessel-local coordinates (un-scale, un-rotate) and testing against part hitboxes.
+Clicking on a part in ship view SHALL select it and testing against part hitboxes.
+
+#### Scenario: Precision-safe click coordinate conversion
+
+The click-to-vessel-local conversion SHALL compute the screen offset from camera center directly in f32, avoiding the precision loss that would occur from adding a tiny screen offset (~1e-8 render units) to a galaxy-scale camera position (~1e10 render units) in f64:
+1. Convert screen position to NDC
+2. Undo zoom and aspect ratio in f32
+3. Undo camera rotation in f32
+4. Cast to f64 — this is the click offset from camera center in render units
+5. Add `(camera.position - ship_render_position)` drift term (zero when tracking, non-zero after panning)
+6. Un-rotate by vessel visual rotation (`rotation - PI/2`)
+7. Divide by `ship_render_scale` (= SCALE = 1e-9) to get meters
+8. Test against each part's `local_x/y` and `hitbox_half_w/h` (all in meters relative to vessel COM)
+
+The naive approach (`screen_to_world()` then subtract `ship_render_position`) fails because `screen_to_world` adds the f32 screen offset to the f64 camera position, and the offset vanishes into the f64 ULP at galaxy-scale magnitudes.
+
+#### Scenario: Part selection with egui overlap
+
+Part selection runs unconditionally on left-click (before the egui consumption check), so clicking on a part works even when an egui window (e.g., part info popup) overlaps the ship. If no part is hit and egui did not consume the click, the selection is cleared.
+
+### Requirement: Background vessel orbit visibility
+
+Each background vessel's orbit line SHALL be visible when that vessel's own triangle indicator is showing (`needs_indicator` = true), independent of the active ship's zoom level.

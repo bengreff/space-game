@@ -9,7 +9,7 @@ Flight HUD panels: time warp, orbital info, autopilot, vessel stats, velocity/al
 An egui top panel named "time_warp_panel" SHALL display time warp controls and orbital information.
 
 #### Scenario: Time warp button labels
-- Warp levels: `[1, 2, 3, 5, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000]` (13 levels)
+- Warp levels: `[1, 2, 3, 5, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000, 10000000000, 100000000000, 1000000000000]` (16 levels, up to 1 trillion)
 - Labels: `>= 1,000,000,000` -> "{X}B", `>= 1,000,000` -> "{X}M", `>= 1,000` -> "{X}K", else "{X}x"
 - Current warp level shown as selected via `egui::SelectableLabel`
 
@@ -28,6 +28,10 @@ An egui top panel named "time_warp_panel" SHALL display time warp controls and o
 
 #### Scenario: Current warp display
 - After separator: "Current: {warp}x" where warp is cast to i64
+
+### Requirement: FPS counter
+
+A frames-per-second counter SHALL be displayed right-aligned in the time warp panel row. The value is smoothed using an exponential moving average (`fps = fps * 0.95 + instant * 0.05`). Displayed as "{fps:.0} fps" in gray text at size 11.
 
 ## Orbital Information
 

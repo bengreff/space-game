@@ -1,12 +1,12 @@
 // Camera uniform for view transformation
 struct CameraUniform {
-    position: vec2<f32>,  // Camera center in world space
-    zoom: f32,            // Zoom level
-    aspect_ratio: f32,    // Window aspect ratio
-    rotation: f32,        // Camera rotation in radians
-    _pad0: f32,           // Padding to 32 bytes
-    _pad1: f32,
-    _pad2: f32,
+    position: vec2<f32>,      // Camera center in world space (unused in shader)
+    zoom: f32,                // Zoom level
+    aspect_ratio: f32,        // Window aspect ratio
+    rotation: f32,            // Camera rotation in radians
+    fine_offset_x: f32,       // Ship offset X from SOI body center (applied here for precision)
+    fine_offset_y: f32,       // Ship offset Y from SOI body center
+    _pad0: f32,
 }
 
 @group(0) @binding(0)
@@ -36,15 +36,15 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
     // Transform camera-relative position to clip space:
-    // Positions are already relative to camera (computed in CPU for precision)
-    // 1. Apply rotation
-    // 2. Multiply by zoom
-    // 3. Correct for aspect ratio
+    // Positions are relative to SOI body center (computed in CPU for f64 precision).
+    // The fine_offset (ship's offset from body center) is subtracted here in f32
+    // to avoid adding a small value to a galaxy-scale f64 on the CPU.
+    let pos = in.position - vec2<f32>(camera.fine_offset_x, camera.fine_offset_y);
     let cos_r = cos(camera.rotation);
     let sin_r = sin(camera.rotation);
     let rotated = vec2<f32>(
-        in.position.x * cos_r - in.position.y * sin_r,
-        in.position.x * sin_r + in.position.y * cos_r,
+        pos.x * cos_r - pos.y * sin_r,
+        pos.x * sin_r + pos.y * cos_r,
     );
     let view_pos = rotated * camera.zoom;
     let corrected_x = view_pos.x / camera.aspect_ratio;

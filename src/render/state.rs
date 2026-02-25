@@ -7,8 +7,8 @@ use crate::ship::{AutopilotTarget, RAILS_WARP_THRESHOLD};
 use super::camera::Camera;
 use super::textures::BodyTextureMap;
 use super::types::{
-    BodyData, MainMenuAction, ManeuverNode, OrbitRenderData, PauseAction, ShipOrbitData, ShipRenderData,
-    TrackingStationAction, TrackingVesselData, Vertex,
+    BodyData, BodyInfoData, MainMenuAction, ManeuverNode, OrbitRenderData, PauseAction,
+    ShipOrbitData, ShipRenderData, TrackingStationAction, TrackingVesselData, Vertex,
     HYPERBOLIC_RENDER_MARGIN, HYPERBOLIC_SKIP_MARGIN,
 };
 
@@ -33,6 +33,46 @@ fn format_duration(seconds: f64) -> String {
     }
 }
 
+/// Format a distance in meters to a human-readable string with appropriate unit
+fn format_distance(meters: f64) -> String {
+    const AU: f64 = 1.496e11;
+    if meters >= AU * 0.1 {
+        format!("{:.3} AU", meters / AU)
+    } else if meters >= 1e9 {
+        format!("{:.1} Mm", meters / 1e6)
+    } else if meters >= 1e6 {
+        format!("{:.1} km", meters / 1e3)
+    } else if meters >= 1e3 {
+        format!("{:.1} km", meters / 1e3)
+    } else {
+        format!("{:.0} m", meters)
+    }
+}
+
+/// Format mass in kg to a human-readable string with scientific notation
+fn format_mass(kg: f64) -> String {
+    if kg >= 1e24 {
+        format!("{:.3e} kg", kg)
+    } else if kg >= 1e18 {
+        format!("{:.3e} kg", kg)
+    } else if kg >= 1e6 {
+        format!("{:.3e} kg", kg)
+    } else {
+        format!("{:.1} kg", kg)
+    }
+}
+
+/// Format pressure in Pascals to a human-readable string
+fn format_pressure(pa: f64) -> String {
+    if pa >= 101_325.0 * 0.5 {
+        format!("{:.2} atm", pa / 101_325.0)
+    } else if pa >= 1000.0 {
+        format!("{:.1} kPa", pa / 1000.0)
+    } else {
+        format!("{:.1} Pa", pa)
+    }
+}
+
 /// Main render state holding all wgpu resources
 pub struct RenderState {
     pub surface: wgpu::Surface<'static>,
@@ -54,6 +94,7 @@ pub struct RenderState {
     pub hovered_body: Option<usize>,
     pub tracked_body: Option<usize>, // Body the camera is following
     pub ship_orbit_info: Option<ShipOrbitData>, // Stored for UI display
+    pub fps: f32,              // Frames per second (smoothed)
     pub ship_velocity: f64,    // Current velocity (m/s)
     pub ship_altitude: f64,    // Current altitude (m)
     pub ship_throttle: f64,    // Current throttle (0.0 to 1.0)
@@ -401,6 +442,7 @@ impl RenderState {
             hovered_body: None,
             tracked_body: None,
             ship_orbit_info: None,
+            fps: 0.0,
             ship_velocity: 0.0,
             ship_altitude: 0.0,
             ship_throttle: 0.0,
@@ -529,10 +571,10 @@ impl RenderState {
     }
 
     /// Convert world position to screen position
-    pub fn world_to_screen(&self, world_x: f32, world_y: f32) -> (f32, f32) {
-        // Apply camera transform: view_pos = (world_pos - camera_pos)
-        let rel_x = world_x - self.camera.position[0] as f32;
-        let rel_y = world_y - self.camera.position[1] as f32;
+    pub fn world_to_screen(&self, world_x: f64, world_y: f64) -> (f32, f32) {
+        // Subtract in f64 to preserve precision at large distances, then cast to f32
+        let rel_x = (world_x - self.camera.position[0]) as f32;
+        let rel_y = (world_y - self.camera.position[1]) as f32;
 
         // Apply rotation
         let cos_r = self.camera.rotation.cos();
@@ -582,6 +624,7 @@ impl RenderState {
         let camera_rotation = self.camera.rotation;
         let aspect_ratio = self.camera.aspect_ratio;
         let scale_factor = self.window.scale_factor() as f32;
+        let fps = self.fps;
         let ship_orbit = self.ship_orbit_info.clone();
         let ship_velocity = self.ship_velocity;
         let ship_altitude = self.ship_altitude;
@@ -673,6 +716,10 @@ impl RenderState {
 
                     ui.separator();
                     ui.label(date_str);
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new(format!("{:.0} fps", fps)).size(11.0).color(egui::Color32::GRAY));
+                    });
                 });
 
                 // Orbital info display
@@ -1391,16 +1438,16 @@ impl RenderState {
                 // Compute screen position dynamically from the target's world position
                 // (world_to_screen inlined to avoid borrow conflict with egui closure)
                 // Output in egui logical points (divided by scale_factor)
-                let cam_x = self.camera.position[0] as f32;
-                let cam_y = self.camera.position[1] as f32;
+                let cam_x = self.camera.position[0];
+                let cam_y = self.camera.position[1];
                 let cam_zoom = self.camera.zoom;
                 let cam_rot = self.camera.rotation;
                 let cam_aspect = self.camera.aspect_ratio;
                 let scr_w = self.size.width as f32;
                 let scr_h = self.size.height as f32;
-                let w2s = |wx: f32, wy: f32| -> (f32, f32) {
-                    let rel_x = wx - cam_x;
-                    let rel_y = wy - cam_y;
+                let w2s = |wx: f64, wy: f64| -> (f32, f32) {
+                    let rel_x = (wx - cam_x) as f32;
+                    let rel_y = (wy - cam_y) as f32;
                     let cos_r = cam_rot.cos();
                     let sin_r = cam_rot.sin();
                     let rx = rel_x * cos_r - rel_y * sin_r;
@@ -1417,7 +1464,7 @@ impl RenderState {
                 let screen_pos = match popup.target {
                     super::types::SelectedTarget::Body(idx) => {
                         if let Some(body) = self.bodies.get(idx) {
-                            let (sx, sy) = w2s(body.x as f32, body.y as f32);
+                            let (sx, sy) = w2s(body.x, body.y);
                             let visual_radius = if body.indicator_radius > 0.0 {
                                 body.indicator_radius as f32 * points_per_world_unit
                             } else {
@@ -2287,8 +2334,10 @@ impl RenderState {
         let mut all_indices = Vec::new();
 
         // Get camera position for relative coordinate calculation
-        let cam_x = self.camera.position[0];
-        let cam_y = self.camera.position[1];
+        let cam_x = self.camera.body_center[0];
+        let cam_y = self.camera.body_center[1];
+        let off_x = self.camera.ship_offset[0];
+        let off_y = self.camera.ship_offset[1];
 
         // First, draw all orbit lines (so they appear behind bodies)
         for orbit_opt in orbits {
@@ -2340,13 +2389,13 @@ impl RenderState {
                     let ny = dx / len * line_width;
 
                     // Outer vertex
-                    let rel_outer_x = (px + nx - cam_x) as f32;
-                    let rel_outer_y = (py + ny - cam_y) as f32;
+                    let rel_outer_x = (px + nx - cam_x - off_x) as f32;
+                    let rel_outer_y = (py + ny - cam_y - off_y) as f32;
                     all_vertices.push(Vertex::new([rel_outer_x, rel_outer_y], orbit.color));
 
                     // Inner vertex
-                    let rel_inner_x = (px - nx - cam_x) as f32;
-                    let rel_inner_y = (py - ny - cam_y) as f32;
+                    let rel_inner_x = (px - nx - cam_x - off_x) as f32;
+                    let rel_inner_y = (py - ny - cam_y - off_y) as f32;
                     all_vertices.push(Vertex::new([rel_inner_x, rel_inner_y], [orbit.color[0] * 0.5, orbit.color[1] * 0.5, orbit.color[2] * 0.5, orbit.color[3] * 0.7]));
                 }
 
@@ -2387,7 +2436,7 @@ impl RenderState {
         scale: f64,
         part_defs: Option<&crate::parts::PartDefinitions>,
     ) {
-        self.update_bodies_orbits_ship_and_vessels(bodies, orbits, ship, scale, part_defs, &[]);
+        self.update_bodies_orbits_ship_and_vessels(bodies, orbits, ship, scale, part_defs, &[], &[], false);
     }
 
     /// Update geometry with bodies, orbits, optionally a ship, and background vessels
@@ -2399,6 +2448,8 @@ impl RenderState {
         scale: f64,
         part_defs: Option<&crate::parts::PartDefinitions>,
         background_vessels: &[TrackingVesselData],
+        accretion_discs: &[Option<crate::bodies::AccretionDisc>],
+        in_galaxy_view: bool,
     ) {
         // Store ship info for UI display
         self.ship_orbit_info = ship.and_then(|s| s.orbit.clone());
@@ -2446,11 +2497,19 @@ impl RenderState {
         let mut all_vertices = Vec::new();
         let mut all_indices = Vec::new();
 
-        let cam_x = self.camera.position[0];
-        let cam_y = self.camera.position[1];
+        let cam_x = self.camera.body_center[0];
+        let cam_y = self.camera.body_center[1];
+        let off_x = self.camera.ship_offset[0];
+        let off_y = self.camera.ship_offset[1];
 
         // Draw atmosphere behind everything
         self.add_atmosphere_vertices(&mut all_vertices, &mut all_indices, bodies, scale);
+
+        // Draw accretion discs (behind orbits and bodies)
+        self.add_accretion_disc_vertices(&mut all_vertices, &mut all_indices, bodies, accretion_discs, scale);
+
+        // Draw galaxy star field dots (behind orbits and bodies, on top of accretion disc)
+        self.add_galaxy_texture_quad(&mut all_vertices, &mut all_indices, in_galaxy_view, scale);
 
         // Draw all orbit lines (on top of atmosphere, behind bodies)
         for orbit_opt in orbits {
@@ -2493,12 +2552,12 @@ impl RenderState {
                     let nx = -dy / len * line_width;
                     let ny = dx / len * line_width;
 
-                    let rel_outer_x = (px + nx - cam_x) as f32;
-                    let rel_outer_y = (py + ny - cam_y) as f32;
+                    let rel_outer_x = (px + nx - cam_x - off_x) as f32;
+                    let rel_outer_y = (py + ny - cam_y - off_y) as f32;
                     all_vertices.push(Vertex::new([rel_outer_x, rel_outer_y], orbit.color));
 
-                    let rel_inner_x = (px - nx - cam_x) as f32;
-                    let rel_inner_y = (py - ny - cam_y) as f32;
+                    let rel_inner_x = (px - nx - cam_x - off_x) as f32;
+                    let rel_inner_y = (py - ny - cam_y - off_y) as f32;
                     all_vertices.push(Vertex::new([rel_inner_x, rel_inner_y], [orbit.color[0] * 0.5, orbit.color[1] * 0.5, orbit.color[2] * 0.5, orbit.color[3] * 0.7]));
                 }
 
@@ -2519,7 +2578,10 @@ impl RenderState {
             }
         }
 
-        // Draw ship orbit line (patched conics) - before bodies, so it appears behind
+        // Draw bodies on top of celestial orbits but BELOW ship orbit
+        self.add_body_vertices(&mut all_vertices, &mut all_indices, bodies, scale);
+
+        // Draw ship orbit line (patched conics) on top of bodies
         // Only show orbit line when ship is small on screen (< 5 pixels)
         self.ap_markers.clear();
         self.pe_markers.clear();
@@ -2627,12 +2689,12 @@ impl RenderState {
                                 let nx = -dy / len * line_width;
                                 let ny = dx / len * line_width;
 
-                                let rel_outer_x = (px + nx - cam_x) as f32;
-                                let rel_outer_y = (py + ny - cam_y) as f32;
+                                let rel_outer_x = (px + nx - cam_x - off_x) as f32;
+                                let rel_outer_y = (py + ny - cam_y - off_y) as f32;
                                 all_vertices.push(Vertex::new([rel_outer_x, rel_outer_y], segment.color));
 
-                                let rel_inner_x = (px - nx - cam_x) as f32;
-                                let rel_inner_y = (py - ny - cam_y) as f32;
+                                let rel_inner_x = (px - nx - cam_x - off_x) as f32;
+                                let rel_inner_y = (py - ny - cam_y - off_y) as f32;
                                 all_vertices.push(Vertex::new([rel_inner_x, rel_inner_y], [segment.color[0] * 0.5, segment.color[1] * 0.5, segment.color[2] * 0.5, segment.color[3] * 0.7]));
                             }
 
@@ -2678,12 +2740,12 @@ impl RenderState {
                             let pe_color = [0.3, 0.8, 1.0, alpha];
 
                             let pe_base = all_vertices.len() as u32;
-                            all_vertices.push(Vertex::new([(pe_x - cam_x) as f32, (pe_y - cam_y) as f32], pe_color));
+                            all_vertices.push(Vertex::new([(pe_x - cam_x - off_x) as f32, (pe_y - cam_y - off_y) as f32], pe_color));
                             for i in 0..marker_segments {
                                 let angle = (i as f64 / marker_segments as f64) * std::f64::consts::TAU;
                                 all_vertices.push(Vertex::new([
-                                        (pe_x + marker_radius * angle.cos() - cam_x) as f32,
-                                        (pe_y + marker_radius * angle.sin() - cam_y) as f32,
+                                        (pe_x + marker_radius * angle.cos() - cam_x - off_x) as f32,
+                                        (pe_y + marker_radius * angle.sin() - cam_y - off_y) as f32,
                                     ], pe_color));
                             }
                             for i in 0..marker_segments {
@@ -2695,7 +2757,7 @@ impl RenderState {
                             // Store position and altitude for UI hover
                             // pe_r is in scaled units, convert to meters then subtract body radius
                             let pe_altitude = (pe_r / segment.render_scale) - segment.parent_body_radius;
-                            self.pe_markers.push(([pe_x - cam_x, pe_y - cam_y], pe_altitude));
+                            self.pe_markers.push(([pe_x - cam_x - off_x, pe_y - cam_y - off_y], pe_altitude));
                         }
 
                         continue; // Skip ellipse drawing code
@@ -2777,12 +2839,12 @@ impl RenderState {
                         let nx = -dy / len * line_width;
                         let ny = dx / len * line_width;
 
-                        let rel_outer_x = (px + nx - cam_x) as f32;
-                        let rel_outer_y = (py + ny - cam_y) as f32;
+                        let rel_outer_x = (px + nx - cam_x - off_x) as f32;
+                        let rel_outer_y = (py + ny - cam_y - off_y) as f32;
                         all_vertices.push(Vertex::new([rel_outer_x, rel_outer_y], segment.color));
 
-                        let rel_inner_x = (px - nx - cam_x) as f32;
-                        let rel_inner_y = (py - ny - cam_y) as f32;
+                        let rel_inner_x = (px - nx - cam_x - off_x) as f32;
+                        let rel_inner_y = (py - ny - cam_y - off_y) as f32;
                         all_vertices.push(Vertex::new([rel_inner_x, rel_inner_y], [segment.color[0] * 0.5, segment.color[1] * 0.5, segment.color[2] * 0.5, segment.color[3] * 0.7]));
                     }
 
@@ -2865,12 +2927,12 @@ impl RenderState {
                         let pe_color = [0.3, 0.8, 1.0, alpha];
 
                         let pe_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex::new([(pe_x - cam_x) as f32, (pe_y - cam_y) as f32], pe_color));
+                        all_vertices.push(Vertex::new([(pe_x - cam_x - off_x) as f32, (pe_y - cam_y - off_y) as f32], pe_color));
                         for i in 0..marker_segments {
                             let angle = (i as f64 / marker_segments as f64) * std::f64::consts::TAU;
                             all_vertices.push(Vertex::new([
-                                    (pe_x + marker_radius * angle.cos() - cam_x) as f32,
-                                    (pe_y + marker_radius * angle.sin() - cam_y) as f32,
+                                    (pe_x + marker_radius * angle.cos() - cam_x - off_x) as f32,
+                                    (pe_y + marker_radius * angle.sin() - cam_y - off_y) as f32,
                                 ], pe_color));
                         }
                         for i in 0..marker_segments {
@@ -2879,7 +2941,7 @@ impl RenderState {
                             all_indices.push(pe_base + 1 + (i + 1) % marker_segments);
                         }
                         // Store for UI hover
-                        self.pe_markers.push(([pe_x - cam_x, pe_y - cam_y], pe_altitude));
+                        self.pe_markers.push(([pe_x - cam_x - off_x, pe_y - cam_y - off_y], pe_altitude));
                     }
 
                     // Apoapsis marker (at true anomaly π) - orange
@@ -2893,12 +2955,12 @@ impl RenderState {
                         let ap_color = [1.0, 0.6, 0.2, alpha];
 
                         let ap_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex::new([(ap_x - cam_x) as f32, (ap_y - cam_y) as f32], ap_color));
+                        all_vertices.push(Vertex::new([(ap_x - cam_x - off_x) as f32, (ap_y - cam_y - off_y) as f32], ap_color));
                         for i in 0..marker_segments {
                             let angle = (i as f64 / marker_segments as f64) * std::f64::consts::TAU;
                             all_vertices.push(Vertex::new([
-                                    (ap_x + marker_radius * angle.cos() - cam_x) as f32,
-                                    (ap_y + marker_radius * angle.sin() - cam_y) as f32,
+                                    (ap_x + marker_radius * angle.cos() - cam_x - off_x) as f32,
+                                    (ap_y + marker_radius * angle.sin() - cam_y - off_y) as f32,
                                 ], ap_color));
                         }
                         for i in 0..marker_segments {
@@ -2907,7 +2969,7 @@ impl RenderState {
                             all_indices.push(ap_base + 1 + (i + 1) % marker_segments);
                         }
                         // Store for UI hover
-                        self.ap_markers.push(([ap_x - cam_x, ap_y - cam_y], ap_altitude));
+                        self.ap_markers.push(([ap_x - cam_x - off_x, ap_y - cam_y - off_y], ap_altitude));
                     }
                 }
 
@@ -2918,12 +2980,12 @@ impl RenderState {
                     let ca_color = [1.0, 1.0, 0.0, 0.9_f32];
 
                     let ca_base = all_vertices.len() as u32;
-                    all_vertices.push(Vertex::new([(ca_x - cam_x) as f32, (ca_y - cam_y) as f32], ca_color));
+                    all_vertices.push(Vertex::new([(ca_x - cam_x - off_x) as f32, (ca_y - cam_y - off_y) as f32], ca_color));
                     for i in 0..marker_segments {
                         let angle = (i as f64 / marker_segments as f64) * std::f64::consts::TAU;
                         all_vertices.push(Vertex::new([
-                            (ca_x + marker_radius * angle.cos() - cam_x) as f32,
-                            (ca_y + marker_radius * angle.sin() - cam_y) as f32,
+                            (ca_x + marker_radius * angle.cos() - cam_x - off_x) as f32,
+                            (ca_y + marker_radius * angle.sin() - cam_y - off_y) as f32,
                         ], ca_color));
                     }
                     for i in 0..marker_segments {
@@ -2931,7 +2993,7 @@ impl RenderState {
                         all_indices.push(ca_base + 1 + i);
                         all_indices.push(ca_base + 1 + (i + 1) % marker_segments);
                     }
-                    self.closest_approach_marker = Some(([ca_x - cam_x, ca_y - cam_y], dist));
+                    self.closest_approach_marker = Some(([ca_x - cam_x - off_x, ca_y - cam_y - off_y], dist));
                 }
             }
         }
@@ -3008,10 +3070,10 @@ impl RenderState {
                         let nx_perp = -dy / len * line_width;
                         let ny_perp = dx / len * line_width;
 
-                        all_vertices.push(Vertex::new([(px + nx_perp - cam_x) as f32, (py + ny_perp - cam_y) as f32], seg_color));
-                        all_vertices.push(Vertex::new([(px - nx_perp - cam_x) as f32, (py - ny_perp - cam_y) as f32], seg_color));
-                        all_vertices.push(Vertex::new([(nx + nx_perp - cam_x) as f32, (ny + ny_perp - cam_y) as f32], seg_color));
-                        all_vertices.push(Vertex::new([(nx - nx_perp - cam_x) as f32, (ny - ny_perp - cam_y) as f32], seg_color));
+                        all_vertices.push(Vertex::new([(px + nx_perp - cam_x - off_x) as f32, (py + ny_perp - cam_y - off_y) as f32], seg_color));
+                        all_vertices.push(Vertex::new([(px - nx_perp - cam_x - off_x) as f32, (py - ny_perp - cam_y - off_y) as f32], seg_color));
+                        all_vertices.push(Vertex::new([(nx + nx_perp - cam_x - off_x) as f32, (ny + ny_perp - cam_y - off_y) as f32], seg_color));
+                        all_vertices.push(Vertex::new([(nx - nx_perp - cam_x - off_x) as f32, (ny - ny_perp - cam_y - off_y) as f32], seg_color));
 
                         all_indices.push(base_index);
                         all_indices.push(base_index + 2);
@@ -3040,12 +3102,12 @@ impl RenderState {
                         let pe_color = [0.2, 0.7, 0.9, marker_alpha];
 
                         let pe_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex::new([(pe_x - cam_x) as f32, (pe_y - cam_y) as f32], pe_color));
+                        all_vertices.push(Vertex::new([(pe_x - cam_x - off_x) as f32, (pe_y - cam_y - off_y) as f32], pe_color));
                         for j in 0..marker_segments {
                             let angle = (j as f64 / marker_segments as f64) * std::f64::consts::TAU;
                             all_vertices.push(Vertex::new([
-                                    (pe_x + marker_radius * angle.cos() - cam_x) as f32,
-                                    (pe_y + marker_radius * angle.sin() - cam_y) as f32,
+                                    (pe_x + marker_radius * angle.cos() - cam_x - off_x) as f32,
+                                    (pe_y + marker_radius * angle.sin() - cam_y - off_y) as f32,
                                 ], pe_color));
                         }
                         for j in 0..marker_segments {
@@ -3057,7 +3119,7 @@ impl RenderState {
                         // Store for UI hover display
                         let pe_distance = pe_r / segment.render_scale;
                         let pe_altitude = pe_distance - segment.parent_body_radius;
-                        self.pe_markers.push(([pe_x - cam_x, pe_y - cam_y], pe_altitude));
+                        self.pe_markers.push(([pe_x - cam_x - off_x, pe_y - cam_y - off_y], pe_altitude));
                     }
                 } else {
                     // Elliptical orbit segment
@@ -3111,10 +3173,10 @@ impl RenderState {
                                 let nx_perp = -dy / len * line_width;
                                 let ny_perp = dx / len * line_width;
 
-                                all_vertices.push(Vertex::new([(prev_x + nx_perp - cam_x) as f32, (prev_y + ny_perp - cam_y) as f32], seg_color));
-                                all_vertices.push(Vertex::new([(prev_x - nx_perp - cam_x) as f32, (prev_y - ny_perp - cam_y) as f32], seg_color));
-                                all_vertices.push(Vertex::new([(px + nx_perp - cam_x) as f32, (py + ny_perp - cam_y) as f32], seg_color));
-                                all_vertices.push(Vertex::new([(px - nx_perp - cam_x) as f32, (py - ny_perp - cam_y) as f32], seg_color));
+                                all_vertices.push(Vertex::new([(prev_x + nx_perp - cam_x - off_x) as f32, (prev_y + ny_perp - cam_y - off_y) as f32], seg_color));
+                                all_vertices.push(Vertex::new([(prev_x - nx_perp - cam_x - off_x) as f32, (prev_y - ny_perp - cam_y - off_y) as f32], seg_color));
+                                all_vertices.push(Vertex::new([(px + nx_perp - cam_x - off_x) as f32, (py + ny_perp - cam_y - off_y) as f32], seg_color));
+                                all_vertices.push(Vertex::new([(px - nx_perp - cam_x - off_x) as f32, (py - ny_perp - cam_y - off_y) as f32], seg_color));
 
                                 all_indices.push(base_index);
                                 all_indices.push(base_index + 2);
@@ -3168,12 +3230,12 @@ impl RenderState {
                         let pe_color = [0.2, 0.7, 0.9, marker_alpha];
 
                         let pe_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex::new([(pe_x - cam_x) as f32, (pe_y - cam_y) as f32], pe_color));
+                        all_vertices.push(Vertex::new([(pe_x - cam_x - off_x) as f32, (pe_y - cam_y - off_y) as f32], pe_color));
                         for j in 0..marker_segments {
                             let angle = (j as f64 / marker_segments as f64) * std::f64::consts::TAU;
                             all_vertices.push(Vertex::new([
-                                    (pe_x + marker_radius * angle.cos() - cam_x) as f32,
-                                    (pe_y + marker_radius * angle.sin() - cam_y) as f32,
+                                    (pe_x + marker_radius * angle.cos() - cam_x - off_x) as f32,
+                                    (pe_y + marker_radius * angle.sin() - cam_y - off_y) as f32,
                                 ], pe_color));
                         }
                         for j in 0..marker_segments {
@@ -3185,7 +3247,7 @@ impl RenderState {
                         // Store for UI hover display
                         let pe_distance = a * (1.0 - e) / segment.render_scale;
                         let pe_altitude = pe_distance - segment.parent_body_radius;
-                        self.pe_markers.push(([pe_x - cam_x, pe_y - cam_y], pe_altitude));
+                        self.pe_markers.push(([pe_x - cam_x - off_x, pe_y - cam_y - off_y], pe_altitude));
                     }
 
                     // Apoapsis (ta = π) - orange
@@ -3197,12 +3259,12 @@ impl RenderState {
                         let ap_color = [0.9, 0.5, 0.1, marker_alpha];
 
                         let ap_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex::new([(ap_x - cam_x) as f32, (ap_y - cam_y) as f32], ap_color));
+                        all_vertices.push(Vertex::new([(ap_x - cam_x - off_x) as f32, (ap_y - cam_y - off_y) as f32], ap_color));
                         for j in 0..marker_segments {
                             let angle = (j as f64 / marker_segments as f64) * std::f64::consts::TAU;
                             all_vertices.push(Vertex::new([
-                                    (ap_x + marker_radius * angle.cos() - cam_x) as f32,
-                                    (ap_y + marker_radius * angle.sin() - cam_y) as f32,
+                                    (ap_x + marker_radius * angle.cos() - cam_x - off_x) as f32,
+                                    (ap_y + marker_radius * angle.sin() - cam_y - off_y) as f32,
                                 ], ap_color));
                         }
                         for j in 0..marker_segments {
@@ -3214,14 +3276,11 @@ impl RenderState {
                         // Store for UI hover display
                         let ap_distance = a * (1.0 + e) / segment.render_scale;
                         let ap_altitude = ap_distance - segment.parent_body_radius;
-                        self.ap_markers.push(([ap_x - cam_x, ap_y - cam_y], ap_altitude));
+                        self.ap_markers.push(([ap_x - cam_x - off_x, ap_y - cam_y - off_y], ap_altitude));
                     }
                 }
             }
         }
-
-        // Draw bodies
-        self.add_body_vertices(&mut all_vertices, &mut all_indices, bodies, scale);
 
         // Draw launchpad on body surface (ship view only)
         if let Some(ship_data) = ship {
@@ -3230,8 +3289,11 @@ impl RenderState {
 
         // Draw ship on top of everything
         if let Some(ship_data) = ship {
-            let rel_x = (ship_data.x - cam_x) as f32;
-            let rel_y = (ship_data.y - cam_y) as f32;
+            // Ship part vertices are placed near origin (0,0) in camera-relative space.
+            // body_center and ship_offset are subtracted as two separate f64 operations
+            // in all other vertex code, so parts at rel=[0,0] land at the ship position.
+            let rel_x = 0.0_f32;
+            let rel_y = 0.0_f32;
             let size = ship_data.size as f32;
             let rotation = ship_data.rotation as f32;
 
@@ -3254,6 +3316,7 @@ impl RenderState {
                     let sin_r = visual_rotation.sin();
                     let render_scale = scale as f32;
 
+
                     for part_data in parts {
                         if let Some(def) = defs.get(&part_data.definition_id) {
                             // Transform part local position to world-relative position
@@ -3263,11 +3326,6 @@ impl RenderState {
                             // Rotate local position by vessel rotation
                             let rotated_x = local_x * cos_r - local_y * sin_r;
                             let rotated_y = local_x * sin_r + local_y * cos_r;
-
-                            // Generate part vertices at unrotated position first,
-                            // then rotate them around the vessel center
-                            let part_center_x = rel_x + rotated_x;
-                            let part_center_y = rel_y + rotated_y;
 
                             // Generate vertices at origin, then transform
                             // Skip base disc for fairing half debris (shell-only)
@@ -3302,7 +3360,11 @@ impl RenderState {
                             }
 
                             // Apply gimbal rotation for engine parts, then scale
-                            // and rotate each vertex by vessel rotation
+                            // and rotate each vertex by vessel rotation.
+                            // PRECISION: compute vertex as rel + (local + vert) not (rel + local) + vert.
+                            // The inner sum (local + vert) stays near zero with full f32 precision.
+                            // Adding rel (~0.006) last ensures adjacent part boundaries that share
+                            // the same mathematical position round to the same f32 value.
                             let gimbal = if def.engine.is_some() {
                                 part_data.gimbal_angle as f32
                             } else {
@@ -3327,7 +3389,7 @@ impl RenderState {
                                 let ry = vx * sin_r + vy * cos_r;
                                 // Apply per-part heat tinting (blackbody glow)
                                 let color = apply_heat_tint(vert.color, part_data.temperature);
-                                all_vertices.push(Vertex::new([part_center_x + rx, part_center_y + ry], color));
+                                all_vertices.push(Vertex::new([rel_x + (rotated_x + rx), rel_y + (rotated_y + ry)], color));
                             }
 
                             // Part vertices are triangle lists (every 3 verts = 1 triangle)
@@ -3627,15 +3689,17 @@ impl RenderState {
 
         // Background vessels (tracking station, flight map view)
         if !background_vessels.is_empty() {
-            let cam_x = self.camera.position[0];
-            let cam_y = self.camera.position[1];
+            let cam_x = self.camera.body_center[0];
+            let cam_y = self.camera.body_center[1];
+            let off_x = self.camera.ship_offset[0];
+            let off_y = self.camera.ship_offset[1];
             let pixels_per_world_unit = self.camera.zoom * self.size.height as f32 / 2.0;
 
             self.background_vessel_screen_positions.clear();
 
             for vessel in background_vessels {
-                let rel_x = (vessel.x - cam_x) as f32;
-                let rel_y = (vessel.y - cam_y) as f32;
+                let rel_x = (vessel.x - cam_x - off_x) as f32;
+                let rel_y = (vessel.y - cam_y - off_y) as f32;
 
                 let has_parts = vessel.parts.is_some() && part_defs.is_some();
 
@@ -3668,9 +3732,6 @@ impl RenderState {
                             let local_y = part_data.local_y as f32 * render_scale;
                             let rotated_x = local_x * cos_r - local_y * sin_r;
                             let rotated_y = local_x * sin_r + local_y * cos_r;
-                            let part_center_x = rel_x + rotated_x;
-                            let part_center_y = rel_y + rotated_y;
-
                             // Skip base disc for fairing half debris (shell-only)
                             let mut part_verts: Vec<Vertex> = Vec::new();
                             if part_data.fairing_half.is_none() {
@@ -3686,7 +3747,7 @@ impl RenderState {
                                 let vy = vert.position[1] * scale_factor;
                                 let rx = vx * cos_r - vy * sin_r;
                                 let ry = vx * sin_r + vy * cos_r;
-                                all_vertices.push(Vertex::new([part_center_x + rx, part_center_y + ry], vert.color));
+                                all_vertices.push(Vertex::new([rel_x + (rotated_x + rx), rel_y + (rotated_y + ry)], vert.color));
                             }
                             let num_part_verts = part_verts.len() as u32;
                             for i in (0..num_part_verts).step_by(3) {
@@ -3798,12 +3859,8 @@ impl RenderState {
                 let screen_y = (1.0 - ndc_y) * 0.5 * self.size.height as f32 / scale_factor;
                 self.background_vessel_screen_positions.push((vessel.id, [screen_x, screen_y]));
 
-                // Draw orbit line if available, but only in map view (active ship < 5px)
-                let in_map_view = ship.map(|s| {
-                    let sp = s.size as f32 * pixels_per_world_unit * 2.0;
-                    sp < 5.0
-                }).unwrap_or(true);
-                if in_map_view {
+                // Draw orbit line when this vessel's triangle indicator is showing
+                if needs_indicator {
                   if let Some(ref orbit) = vessel.orbit {
                     let e = orbit.eccentricity;
                     if e < 1.0 && orbit.semi_major_axis > 0.0 {
@@ -3840,12 +3897,12 @@ impl RenderState {
                             let ny = dx / len * line_width;
 
                             let base = all_vertices.len() as u32;
-                            all_vertices.push(Vertex::new([(px + nx - cam_x) as f32, (py + ny - cam_y) as f32], orbit.color));
-                            all_vertices.push(Vertex::new([(px - nx - cam_x) as f32, (py - ny - cam_y) as f32], orbit.color));
+                            all_vertices.push(Vertex::new([(px + nx - cam_x - off_x) as f32, (py + ny - cam_y - off_y) as f32], orbit.color));
+                            all_vertices.push(Vertex::new([(px - nx - cam_x - off_x) as f32, (py - ny - cam_y - off_y) as f32], orbit.color));
                             let next_px = center_x + next_rx;
                             let next_py = center_y + next_ry;
-                            all_vertices.push(Vertex::new([(next_px - nx - cam_x) as f32, (next_py - ny - cam_y) as f32], orbit.color));
-                            all_vertices.push(Vertex::new([(next_px + nx - cam_x) as f32, (next_py + ny - cam_y) as f32], orbit.color));
+                            all_vertices.push(Vertex::new([(next_px - nx - cam_x - off_x) as f32, (next_py - ny - cam_y - off_y) as f32], orbit.color));
+                            all_vertices.push(Vertex::new([(next_px + nx - cam_x - off_x) as f32, (next_py + ny - cam_y - off_y) as f32], orbit.color));
                             all_indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
                         }
                     }
@@ -3868,8 +3925,10 @@ impl RenderState {
         bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)],
         scale: f64,
     ) {
-        let cam_x = self.camera.position[0];
-        let cam_y = self.camera.position[1];
+        let cam_x = self.camera.body_center[0];
+        let cam_y = self.camera.body_center[1];
+        let off_x = self.camera.ship_offset[0];
+        let off_y = self.camera.ship_offset[1];
         let pixels_per_world_unit = self.camera.zoom * self.size.height as f32 / 2.0;
 
         // Atmosphere uses alpha channel to encode t (0=surface, 1=edge).
@@ -3906,8 +3965,9 @@ impl RenderState {
                     let cos_a = angle.cos();
                     let sin_a = angle.sin();
 
-                    all_vertices.push(Vertex::new([(cx + r_inner * cos_a - cam_x) as f32, (cy + r_inner * sin_a - cam_y) as f32], inner_color));
-                    all_vertices.push(Vertex::new([(cx + r_outer * cos_a - cam_x) as f32, (cy + r_outer * sin_a - cam_y) as f32], outer_color));
+                    // Subtract large values first to preserve precision at galaxy-scale distances
+                    all_vertices.push(Vertex::new([((cx - cam_x - off_x) + r_inner * cos_a) as f32, ((cy - cam_y - off_y) + r_inner * sin_a) as f32], inner_color));
+                    all_vertices.push(Vertex::new([((cx - cam_x - off_x) + r_outer * cos_a) as f32, ((cy - cam_y - off_y) + r_outer * sin_a) as f32], outer_color));
                 }
 
                 for i in 0..segments {
@@ -3926,8 +3986,8 @@ impl RenderState {
             } else {
                 let arc_segments = 4096u32;
 
-                let dx = cam_x - cx;
-                let dy = cam_y - cy;
+                let dx = (cam_x + off_x) - cx;
+                let dy = (cam_y + off_y) - cy;
                 let dist = (dx * dx + dy * dy).sqrt();
                 let cam_angle = dy.atan2(dx);
 
@@ -3950,8 +4010,9 @@ impl RenderState {
                     let cos_a = angle.cos();
                     let sin_a = angle.sin();
 
-                    all_vertices.push(Vertex::new([(cx + r_inner * cos_a - cam_x) as f32, (cy + r_inner * sin_a - cam_y) as f32], inner_color));
-                    all_vertices.push(Vertex::new([(cx + r_outer * cos_a - cam_x) as f32, (cy + r_outer * sin_a - cam_y) as f32], outer_color));
+                    // Subtract large values first to preserve precision at galaxy-scale distances
+                    all_vertices.push(Vertex::new([((cx - cam_x - off_x) + r_inner * cos_a) as f32, ((cy - cam_y - off_y) + r_inner * sin_a) as f32], inner_color));
+                    all_vertices.push(Vertex::new([((cx - cam_x - off_x) + r_outer * cos_a) as f32, ((cy - cam_y - off_y) + r_outer * sin_a) as f32], outer_color));
                 }
 
                 for i in 0..arc_segments {
@@ -3971,6 +4032,158 @@ impl RenderState {
         }
     }
 
+    /// Draw accretion disc rings around bodies that have them (e.g., Sgr A*)
+    fn add_accretion_disc_vertices(
+        &self,
+        all_vertices: &mut Vec<Vertex>,
+        all_indices: &mut Vec<u32>,
+        bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)],
+        accretion_discs: &[Option<crate::bodies::AccretionDisc>],
+        scale: f64,
+    ) {
+        let cam_x = self.camera.body_center[0];
+        let cam_y = self.camera.body_center[1];
+        let off_x = self.camera.ship_offset[0];
+        let off_y = self.camera.ship_offset[1];
+        let pixels_per_world_unit = self.camera.zoom * self.size.height as f32 / 2.0;
+
+        for &(bx, by, _radius, _, _, _, body_idx) in bodies {
+            let disc = match accretion_discs.get(body_idx) {
+                Some(Some(d)) => d,
+                _ => continue,
+            };
+
+            let cx = bx * scale;
+            let cy = by * scale;
+            let r_inner = disc.inner_radius * scale;
+            let r_outer = disc.outer_radius * scale;
+
+            let outer_pixel_radius = r_outer as f32 * pixels_per_world_unit;
+            if outer_pixel_radius < 1.0 {
+                continue;
+            }
+
+            // Use concentric ring strips with color gradient and atmosphere-style fade
+            let num_rings = 16u32;
+            let circumference_pixels = 2.0 * std::f32::consts::PI * outer_pixel_radius;
+            let segments = ((circumference_pixels / 3.0) as u32).clamp(64, 4096) & !1;
+
+            for ring in 0..num_rings {
+                let t0 = ring as f64 / num_rings as f64;
+                let t1 = (ring + 1) as f64 / num_rings as f64;
+                let ring_r_inner = r_inner + (r_outer - r_inner) * t0;
+                let ring_r_outer = r_inner + (r_outer - r_inner) * t1;
+
+                let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+
+                // Non-linear color mix: t^1.5 produces white → orange → red transition
+                let mix0 = (t0 as f32).powf(1.5);
+                let mix1 = (t1 as f32).powf(1.5);
+
+                // Brightness: exp(-6*t³) fades to the same blackness as atmospheres
+                // (exp(-6) ≈ 0.0025 at the outer edge), but with a gentler initial
+                // falloff so the white→orange→red gradient remains visible
+                let bright0 = (-6.0_f32 * (t0 as f32).powi(3)).exp();
+                let bright1 = (-6.0_f32 * (t1 as f32).powi(3)).exp();
+
+                let color_inner = [
+                    lerp(disc.color_inner[0], disc.color_outer[0], mix0) * bright0,
+                    lerp(disc.color_inner[1], disc.color_outer[1], mix0) * bright0,
+                    lerp(disc.color_inner[2], disc.color_outer[2], mix0) * bright0,
+                    bright0,
+                ];
+                let color_outer = [
+                    lerp(disc.color_inner[0], disc.color_outer[0], mix1) * bright1,
+                    lerp(disc.color_inner[1], disc.color_outer[1], mix1) * bright1,
+                    lerp(disc.color_inner[2], disc.color_outer[2], mix1) * bright1,
+                    bright1,
+                ];
+
+                let base = all_vertices.len() as u32;
+
+                for i in 0..segments {
+                    let angle = (i as f64 / segments as f64) * std::f64::consts::TAU;
+                    let cos_a = angle.cos();
+                    let sin_a = angle.sin();
+
+                    // Subtract large values first to preserve precision at galaxy-scale distances
+                    all_vertices.push(Vertex::new(
+                        [((cx - cam_x - off_x) + ring_r_inner * cos_a) as f32, ((cy - cam_y - off_y) + ring_r_inner * sin_a) as f32],
+                        color_inner,
+                    ));
+                    all_vertices.push(Vertex::new(
+                        [((cx - cam_x - off_x) + ring_r_outer * cos_a) as f32, ((cy - cam_y - off_y) + ring_r_outer * sin_a) as f32],
+                        color_outer,
+                    ));
+                }
+
+                for i in 0..segments {
+                    let i0 = base + i * 2;
+                    let i1 = base + i * 2 + 1;
+                    let i2 = base + ((i + 1) % segments) * 2;
+                    let i3 = base + ((i + 1) % segments) * 2 + 1;
+
+                    all_indices.push(i0);
+                    all_indices.push(i2);
+                    all_indices.push(i1);
+                    all_indices.push(i1);
+                    all_indices.push(i2);
+                    all_indices.push(i3);
+                }
+            }
+        }
+    }
+
+    /// Render galaxy star field with post-process blur.
+    /// 1. Rasterize solid squares (raw RON colors) into a 200×200 CPU pixel buffer
+    /// 2. Apply separable gaussian blur (5-tap kernel, 2 passes)
+    /// 3. Emit blurred pixels as vertex-colored quads
+    fn add_galaxy_texture_quad(
+        &self,
+        all_vertices: &mut Vec<Vertex>,
+        all_indices: &mut Vec<u32>,
+        in_galaxy_view: bool,
+        scale: f64,
+    ) {
+        if !in_galaxy_view {
+            return;
+        }
+        let layer = match self.body_texture_map.galaxy_layer {
+            Some(l) => l,
+            None => return,
+        };
+
+        // Galaxy image spans 100,000 ly centered on Sgr A* (body 0 at origin)
+        let half = 50_000.0 * crate::bodies::LIGHT_YEAR * scale;
+        let cam_x = self.camera.body_center[0];
+        let cam_y = self.camera.body_center[1];
+        let off_x = self.camera.ship_offset[0];
+        let off_y = self.camera.ship_offset[1];
+
+        let x0 = (-half - cam_x - off_x) as f32;
+        let x1 = (half - cam_x - off_x) as f32;
+        let y0 = (-half - cam_y - off_y) as f32;
+        let y1 = (half - cam_y - off_y) as f32;
+
+        let base = all_vertices.len() as u32;
+
+        // UV: y-flip so image top maps to +y world. Use epsilon to avoid (0,0) which
+        // the shader treats as "no texture" (solid color fallback).
+        let e = 0.001;
+        all_vertices.push(Vertex::textured([x0, y0], [e, 1.0], layer));
+        all_vertices.push(Vertex::textured([x1, y0], [1.0, 1.0], layer));
+        all_vertices.push(Vertex::textured([x1, y1], [1.0, e], layer));
+        all_vertices.push(Vertex::textured([x0, y1], [e, e], layer));
+
+        all_indices.push(base);
+        all_indices.push(base + 1);
+        all_indices.push(base + 2);
+
+        all_indices.push(base);
+        all_indices.push(base + 2);
+        all_indices.push(base + 3);
+    }
+
     /// Helper to add body vertices (extracted for reuse)
     fn add_body_vertices(
         &mut self,
@@ -3988,17 +4201,31 @@ impl RenderState {
         let indicator_world_radius = (indicator_screen_radius / pixels_per_world_unit) as f64;
         let min_body_pixels = 5.0f32;
 
-        let cam_x = self.camera.position[0];
-        let cam_y = self.camera.position[1];
+        let cam_x = self.camera.body_center[0];
+        let cam_y = self.camera.body_center[1];
+        let off_x = self.camera.ship_offset[0];
+        let off_y = self.camera.ship_offset[1];
 
         for (x, y, radius, color, _atmo_height, _atmo_color, body_idx) in bodies {
-            let rel_x = ((*x * scale) - cam_x) as f32;
-            let rel_y = ((*y * scale) - cam_y) as f32;
+            let rel_x = ((*x * scale) - cam_x - off_x) as f32;
+            let rel_y = ((*y * scale) - cam_y - off_y) as f32;
             let r = (*radius * scale) as f32;
 
             let cx = *x * scale;
             let cy = *y * scale;
             let r_f64 = *radius * scale;
+
+            // Bodies with radius=0 are hidden (e.g., planets/moons in galaxy view)
+            // Push empty BodyData to keep indices aligned but skip rendering/hit testing
+            if *radius <= 0.0 {
+                self.bodies.push(BodyData {
+                    x: cx,
+                    y: cy,
+                    radius: 0.0,
+                    indicator_radius: 0.0,
+                });
+                continue;
+            }
 
             let body_pixel_radius = r * pixels_per_world_unit;
             let body_pixels = body_pixel_radius * 2.0;
@@ -4057,8 +4284,8 @@ impl RenderState {
                     let arc_segments = 4096u32;
 
                     // Direction from body center to camera (f64 precision)
-                    let dx = cam_x - cx;
-                    let dy = cam_y - cy;
+                    let dx = (cam_x + off_x) - cx;
+                    let dy = (cam_y + off_y) - cy;
                     let dist = (dx * dx + dy * dy).sqrt();
                     let cam_angle = dy.atan2(dx);
 
@@ -4084,12 +4311,13 @@ impl RenderState {
                         for i in 0..=arc_segments {
                             let t = i as f64 / arc_segments as f64;
                             let angle = cam_angle - arc_half + t * 2.0 * arc_half;
-                            let vx = cx + r_f64 * angle.cos();
-                            let vy = cy + r_f64 * angle.sin();
+                            // Subtract large values first to preserve precision at galaxy-scale distances
+                            let vx = (cx - cam_x - off_x) + r_f64 * angle.cos();
+                            let vy = (cy - cam_y - off_y) + r_f64 * angle.sin();
                             let u = 0.5 + 0.5 * (angle.cos() as f32);
                             let v = 0.5 - 0.5 * (angle.sin() as f32);
                             all_vertices.push(Vertex::textured(
-                                [(vx - cam_x) as f32, (vy - cam_y) as f32],
+                                [vx as f32, vy as f32],
                                 [u, v],
                                 layer,
                             ));
@@ -4100,9 +4328,10 @@ impl RenderState {
                         for i in 0..=arc_segments {
                             let t = i as f64 / arc_segments as f64;
                             let angle = cam_angle - arc_half + t * 2.0 * arc_half;
-                            let vx = cx + r_f64 * angle.cos();
-                            let vy = cy + r_f64 * angle.sin();
-                            all_vertices.push(Vertex::new([(vx - cam_x) as f32, (vy - cam_y) as f32], *color));
+                            // Subtract large values first to preserve precision at galaxy-scale distances
+                            let vx = (cx - cam_x - off_x) + r_f64 * angle.cos();
+                            let vy = (cy - cam_y - off_y) + r_f64 * angle.sin();
+                            all_vertices.push(Vertex::new([vx as f32, vy as f32], *color));
                         }
                     }
 
@@ -4121,13 +4350,20 @@ impl RenderState {
                 let ring_inner = (indicator_world_radius * 0.7) as f32;
                 let ring_segments = 64u32;
 
+                // Use body color for ring, but apply brightness floor for very dark bodies (e.g., black holes)
+                let ring_color = if color[0] + color[1] + color[2] < 0.1 {
+                    [0.7, 0.5, 0.3, 1.0] // Warm amber fallback
+                } else {
+                    *color
+                };
+
                 for i in 0..ring_segments {
                     let angle = (i as f32 / ring_segments as f32) * std::f32::consts::TAU;
                     let cos_a = angle.cos();
                     let sin_a = angle.sin();
 
-                    all_vertices.push(Vertex::new([rel_x + ring_outer * cos_a, rel_y + ring_outer * sin_a], *color));
-                    all_vertices.push(Vertex::new([rel_x + ring_inner * cos_a, rel_y + ring_inner * sin_a], [color[0] * 0.3, color[1] * 0.3, color[2] * 0.3, color[3] * 0.5]));
+                    all_vertices.push(Vertex::new([rel_x + ring_outer * cos_a, rel_y + ring_outer * sin_a], ring_color));
+                    all_vertices.push(Vertex::new([rel_x + ring_inner * cos_a, rel_y + ring_inner * sin_a], [ring_color[0] * 0.3, ring_color[1] * 0.3, ring_color[2] * 0.3, ring_color[3] * 0.5]));
                 }
 
                 for i in 0..ring_segments {
@@ -4170,10 +4406,16 @@ impl RenderState {
         // Find the launchpad body
         let Some((bx, by, radius, _, _, _, _)) = bodies.get(LAUNCHPAD_BODY_INDEX) else { return };
 
-        let cam_x = self.camera.position[0];
-        let cam_y = self.camera.position[1];
-        let cx = bx * scale;
-        let cy = by * scale;
+        // Compute body center relative to camera in f64 first, preserving precision.
+        // At galaxy-scale distances (body position ~2.46e11 world units), the launchpad
+        // dimensions (~6e-8 world units) are below f64 ULP if computed in absolute coords.
+        // By subtracting body_center and ship_offset first, we keep all values near zero.
+        let cam_x = self.camera.body_center[0];
+        let cam_y = self.camera.body_center[1];
+        let off_x = self.camera.ship_offset[0];
+        let off_y = self.camera.ship_offset[1];
+        let rel_cx = bx * scale - cam_x - off_x;
+        let rel_cy = by * scale - cam_y - off_y;
         let r = radius * scale;
 
         let lp_angle = LAUNCHPAD_SURFACE_ANGLE;
@@ -4181,9 +4423,9 @@ impl RenderState {
         let lp_top_half = (LAUNCHPAD_TOP_WIDTH * 0.5) * scale;
         let lp_bot_half = (LAUNCHPAD_BOTTOM_WIDTH * 0.5) * scale;
 
-        // Surface point at launchpad center
-        let sx = cx + r * lp_angle.cos();
-        let sy = cy + r * lp_angle.sin();
+        // Surface point at launchpad center (relative to camera)
+        let sx = rel_cx + r * lp_angle.cos();
+        let sy = rel_cy + r * lp_angle.sin();
 
         // Radial outward and tangent directions
         let rad_x = lp_angle.cos();
@@ -4191,7 +4433,7 @@ impl RenderState {
         let tan_x = -rad_y;
         let tan_y = rad_x;
 
-        // 4 corners: bottom-left, bottom-right, top-left, top-right
+        // 4 corners relative to camera
         let bl_x = sx - lp_bot_half * tan_x;
         let bl_y = sy - lp_bot_half * tan_y;
         let br_x = sx + lp_bot_half * tan_x;
@@ -4204,10 +4446,10 @@ impl RenderState {
         let lp_color: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
         let base = all_vertices.len() as u32;
 
-        all_vertices.push(Vertex::new([(bl_x - cam_x) as f32, (bl_y - cam_y) as f32], lp_color));
-        all_vertices.push(Vertex::new([(br_x - cam_x) as f32, (br_y - cam_y) as f32], lp_color));
-        all_vertices.push(Vertex::new([(tl_x - cam_x) as f32, (tl_y - cam_y) as f32], lp_color));
-        all_vertices.push(Vertex::new([(tr_x - cam_x) as f32, (tr_y - cam_y) as f32], lp_color));
+        all_vertices.push(Vertex::new([bl_x as f32, bl_y as f32], lp_color));
+        all_vertices.push(Vertex::new([br_x as f32, br_y as f32], lp_color));
+        all_vertices.push(Vertex::new([tl_x as f32, tl_y as f32], lp_color));
+        all_vertices.push(Vertex::new([tr_x as f32, tr_y as f32], lp_color));
 
         // Two triangles for the trapezoid
         all_indices.push(base);
@@ -4234,20 +4476,34 @@ impl RenderState {
         let min_body_pixels = 5.0f32;
 
         // Get camera position for relative coordinate calculation
-        let cam_x = self.camera.position[0];
-        let cam_y = self.camera.position[1];
+        let cam_x = self.camera.body_center[0];
+        let cam_y = self.camera.body_center[1];
+        let off_x = self.camera.ship_offset[0];
+        let off_y = self.camera.ship_offset[1];
 
         for (x, y, radius, color, _atmo_height, _atmo_color, body_idx) in bodies {
             // Calculate position relative to camera in f64 first, then convert to f32
             // This preserves precision for small bodies far from origin
-            let rel_x = ((*x * scale) - cam_x) as f32;
-            let rel_y = ((*y * scale) - cam_y) as f32;
+            let rel_x = ((*x * scale) - cam_x - off_x) as f32;
+            let rel_y = ((*y * scale) - cam_y - off_y) as f32;
             let r = (*radius * scale) as f32;
 
             // For hit testing, we still need absolute world coordinates (f64 for precision)
             let cx = *x * scale;
             let cy = *y * scale;
             let r_f64 = *radius * scale;
+
+            // Bodies with radius=0 are hidden (e.g., planets/moons in galaxy view)
+            // Push empty BodyData to keep indices aligned but skip rendering/hit testing
+            if *radius <= 0.0 {
+                self.bodies.push(BodyData {
+                    x: cx,
+                    y: cy,
+                    radius: 0.0,
+                    indicator_radius: 0.0,
+                });
+                continue;
+            }
 
             // Calculate body size in pixels
             let body_pixel_radius = r * pixels_per_world_unit;
@@ -4361,6 +4617,13 @@ impl RenderState {
                 let ring_inner = (indicator_world_radius * 0.7) as f32;
                 let ring_segments = 4u32; // Smooth indicator rings
 
+                // Use body color for ring, but apply brightness floor for very dark bodies (e.g., black holes)
+                let ring_color = if color[0] + color[1] + color[2] < 0.1 {
+                    [0.7, 0.5, 0.3, 1.0] // Warm amber fallback
+                } else {
+                    *color
+                };
+
                 // Create ring vertices (inner and outer circles, relative to camera)
                 for i in 0..ring_segments {
                     let angle = (i as f32 / ring_segments as f32) * std::f32::consts::TAU;
@@ -4368,9 +4631,9 @@ impl RenderState {
                     let sin_a = angle.sin();
 
                     // Outer vertex
-                    all_vertices.push(Vertex::new([rel_x + ring_outer * cos_a, rel_y + ring_outer * sin_a], *color));
+                    all_vertices.push(Vertex::new([rel_x + ring_outer * cos_a, rel_y + ring_outer * sin_a], ring_color));
                     // Inner vertex
-                    all_vertices.push(Vertex::new([rel_x + ring_inner * cos_a, rel_y + ring_inner * sin_a], [color[0] * 0.3, color[1] * 0.3, color[2] * 0.3, color[3] * 0.5]));
+                    all_vertices.push(Vertex::new([rel_x + ring_inner * cos_a, rel_y + ring_inner * sin_a], [ring_color[0] * 0.3, ring_color[1] * 0.3, ring_color[2] * 0.3, ring_color[3] * 0.5]));
                 }
 
                 // Create ring triangles
@@ -4412,6 +4675,11 @@ impl RenderState {
         let mut closest_dist = f64::MAX;
 
         for (i, body) in self.bodies.iter().enumerate() {
+            // Skip hidden bodies (radius=0, indicator_radius=0)
+            if body.radius <= 0.0 && body.indicator_radius <= 0.0 {
+                continue;
+            }
+
             let dx = world_pos[0] - body.x;
             let dy = world_pos[1] - body.y;
             let dist = (dx * dx + dy * dy).sqrt();
@@ -4442,6 +4710,11 @@ impl RenderState {
         let mut closest: Option<(usize, f64)> = None;
 
         for (i, body) in self.bodies.iter().enumerate() {
+            // Skip hidden bodies (radius=0, indicator_radius=0)
+            if body.radius <= 0.0 && body.indicator_radius <= 0.0 {
+                continue;
+            }
+
             let dx = world_pos[0] - body.x;
             let dy = world_pos[1] - body.y;
             let dist = (dx * dx + dy * dy).sqrt();
@@ -4501,6 +4774,9 @@ impl RenderState {
                 // Set camera position directly to body position (in f64 for precision)
                 self.camera.position[0] = pos[0] * scale;
                 self.camera.position[1] = pos[1] * scale;
+                // When tracking a body (not ship), camera is at body center with no offset
+                self.camera.body_center = self.camera.position;
+                self.camera.ship_offset = [0.0, 0.0];
             }
         }
     }
@@ -4785,6 +5061,7 @@ impl RenderState {
         date_str: &str,
         vessels: &[TrackingVesselData],
         active_vessel_id: u64,
+        body_info: &[BodyInfoData],
     ) -> Result<(usize, PauseAction, TrackingStationAction), wgpu::SurfaceError> {
         self.update_camera_buffer();
 
@@ -4899,6 +5176,64 @@ impl RenderState {
                             }
                         });
                     });
+            }
+
+            // Body info right panel (shown when a body is tracked)
+            if let Some(idx) = self.tracked_body {
+                if let Some(info) = body_info.get(idx) {
+                    egui::SidePanel::right("body_info_panel")
+                        .default_width(220.0)
+                        .resizable(false)
+                        .show(ctx, |ui| {
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                ui.heading(egui::RichText::new(&info.name).size(18.0).color(egui::Color32::WHITE));
+                                if !info.description.is_empty() {
+                                    ui.label(egui::RichText::new(&info.description)
+                                        .size(12.0)
+                                        .italics()
+                                        .color(egui::Color32::from_rgb(160, 160, 160)));
+                                }
+                                ui.separator();
+
+                                // Physical properties
+                                ui.label(egui::RichText::new("Physical Properties").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                                ui.add_space(2.0);
+                                ui.label(format!("Radius: {}", format_distance(info.radius_m)));
+                                ui.label(format!("Surface gravity: {:.2} m/s\u{b2}", info.surface_gravity_ms2));
+                                ui.label(format!("Mass: {}", format_mass(info.mass_kg)));
+
+                                // Atmosphere
+                                ui.add_space(4.0);
+                                if let Some(pressure) = info.atmosphere_pressure_pa {
+                                    ui.label(egui::RichText::new("Atmosphere").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                                    ui.add_space(2.0);
+                                    ui.label(format!("Pressure: {}", format_pressure(pressure)));
+                                    if let Some(height) = info.atmosphere_height_m {
+                                        ui.label(format!("Height: {}", format_distance(height)));
+                                    }
+                                } else {
+                                    ui.label(egui::RichText::new("No atmosphere")
+                                        .size(12.0)
+                                        .color(egui::Color32::from_rgb(120, 120, 120)));
+                                }
+
+                                // Orbit (skip for root body / Sun)
+                                if let Some(sma) = info.orbit_semi_major_axis_m {
+                                    ui.add_space(4.0);
+                                    ui.separator();
+                                    ui.label(egui::RichText::new("Orbit").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                                    ui.add_space(2.0);
+                                    ui.label(format!("Semi-major axis: {}", format_distance(sma)));
+                                    if let Some(ecc) = info.orbit_eccentricity {
+                                        ui.label(format!("Eccentricity: {:.4}", ecc));
+                                    }
+                                    if let Some(period) = info.orbit_period_s {
+                                        ui.label(format!("Period: {}", format_duration(period)));
+                                    }
+                                }
+                            });
+                        });
+                }
             }
 
             // Bottom panel: Tracking Station label

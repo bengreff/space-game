@@ -363,6 +363,20 @@ pub enum SelectedTarget {
     Vessel(u64),
 }
 
+/// Static body info for the tracking station info panel
+pub struct BodyInfoData {
+    pub name: String,
+    pub description: String,
+    pub radius_m: f64,
+    pub surface_gravity_ms2: f64,
+    pub mass_kg: f64,
+    pub atmosphere_pressure_pa: Option<f64>,
+    pub atmosphere_height_m: Option<f64>,
+    pub orbit_semi_major_axis_m: Option<f64>,
+    pub orbit_eccentricity: Option<f64>,
+    pub orbit_period_s: Option<f64>,
+}
+
 /// Popup shown when single-clicking a body or vessel
 pub struct TargetPopup {
     pub target: SelectedTarget,

@@ -14,7 +14,7 @@ use sunscatter::editor::{
 use egui;
 use sunscatter::bodies::G;
 use sunscatter::game::{Game, GameMode};
-use sunscatter::render::{RenderState, MainMenuAction, PauseAction, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, SelectedTarget, StagedPartInfo, TargetPopup, Vertex};
+use sunscatter::render::{RenderState, MainMenuAction, PauseAction, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, SelectedTarget, StagedPartInfo, TargetPopup, Vertex, BodyInfoData};
 use sunscatter::ship::{AutopilotTarget, ShipState, VesselPhysicsData, SHIP_SIZE, MAX_THRUST_ACCELERATION, AMBIENT_TEMPERATURE, RAILS_WARP_THRESHOLD};
 use sunscatter::parts::default_heat_tolerance;
 
@@ -24,10 +24,18 @@ use sunscatter::parts::default_heat_tolerance;
 const SCALE: f64 = 1e-9;
 
 // Time warp levels (simulation seconds per real second)
-const WARP_LEVELS: &[f64] = &[1.0, 2.0, 3.0, 5.0, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, 10000000.0, 100000000.0, 1000000000.0];
+const WARP_LEVELS: &[f64] = &[1.0, 2.0, 3.0, 5.0, 10.0, 100.0, 1000.0, 10000.0, 100000.0, 1000000.0, 10000000.0, 100000000.0, 1000000000.0, 10000000000.0, 100000000000.0, 1000000000000.0];
 
 // Visual scale factor for bodies (1.0 = real proportions, no artificial enlargement)
 const BODY_SCALE: f64 = 1.0;
+
+// Galaxy view threshold: screen spans 0.1 light-years or more
+const GALAXY_VIEW_THRESHOLD_M: f64 = 0.1 * 9.461e15; // 0.1 light-years in meters
+
+fn is_galaxy_view(camera_zoom: f32, _screen_height: u32) -> bool {
+    let screen_span_m = 2.0 / (camera_zoom as f64 * SCALE);
+    screen_span_m >= GALAXY_VIEW_THRESHOLD_M
+}
 
 fn main() {
     env_logger::init();
@@ -67,9 +75,11 @@ fn main() {
 
     // Initial camera: focus on Sun, zoomed out to see all planets
     {
-        let sun_pos = game.solar_system.body_position(0);
+        let sun_pos = game.solar_system.body_position(1);
         render_state.camera.position[0] = sun_pos[0] * SCALE * BODY_SCALE;
         render_state.camera.position[1] = sun_pos[1] * SCALE * BODY_SCALE;
+        render_state.camera.body_center = render_state.camera.position;
+        render_state.camera.ship_offset = [0.0, 0.0];
         render_state.camera.zoom = 0.002; // Zoomed out to see full solar system
     }
 
@@ -92,6 +102,12 @@ fn main() {
                             let now = Instant::now();
                             let dt = now.duration_since(last_frame).as_secs_f32();
                             last_frame = now;
+
+                            // Update FPS (exponential moving average)
+                            if dt > 0.0 {
+                                let instant_fps = 1.0 / dt;
+                                render_state.fps = render_state.fps * 0.95 + instant_fps * 0.05;
+                            }
 
                             match game.mode {
                                 GameMode::MainMenu => {
@@ -733,9 +749,18 @@ fn render_flight_frame(
 
     // Update camera tracking
     if game.flight.tracking_ship {
-        let ship_abs_pos = game.flight.ship.absolute_position(&game.solar_system);
-        render_state.camera.position[0] = ship_abs_pos[0] * SCALE * BODY_SCALE;
-        render_state.camera.position[1] = ship_abs_pos[1] * SCALE * BODY_SCALE;
+        // Decompose camera into body_center + ship_offset for precision at galaxy-scale distances.
+        // body_center is subtracted from body positions in f64 (precise galaxy-scale subtraction).
+        // ship_offset is subtracted in the GPU shader in f32 (precise because it's a small value).
+        // camera.position is the full position (quantized) for backward compat with UI/hit-testing.
+        let soi_pos = scaled_positions[game.flight.ship.soi_body];
+        let rel = game.flight.ship.rel_position;
+        let body_center = [soi_pos[0] * SCALE, soi_pos[1] * SCALE];
+        let ship_offset = [rel[0] * SCALE * BODY_SCALE, rel[1] * SCALE * BODY_SCALE];
+        render_state.camera.body_center = body_center;
+        render_state.camera.ship_offset = ship_offset;
+        render_state.camera.position[0] = body_center[0] + ship_offset[0];
+        render_state.camera.position[1] = body_center[1] + ship_offset[1];
     } else {
         render_state.update_tracking(&scaled_positions, SCALE);
     }
@@ -799,9 +824,16 @@ fn render_flight_frame(
             let body = &game.solar_system.bodies[i];
             match (body.parent, &body.orbit) {
                 (Some(parent_idx), Some(orbit)) => {
+                    // Skip star orbits around galactic center (shown only in galaxy view)
+                    let parent_body = &game.solar_system.bodies[parent_idx];
+                    if parent_body.parent.is_none() {
+                        return None;
+                    }
+
                     let body_world_radius = (body.radius * BODY_SCALE * SCALE) as f32;
                     let body_pixels = body_world_radius * pixels_per_world_unit * 2.0;
-                    let is_moon = parent_idx != 0;
+                    let is_moon = parent_body.parent
+                        .map_or(false, |gp| game.solar_system.bodies[gp].parent.is_some());
                     let pixel_threshold = if is_moon { 100.0 } else { 5.0 };
 
                     if body_pixels >= pixel_threshold {
@@ -830,7 +862,6 @@ fn render_flight_frame(
         .collect();
 
     // Prepare ship render data
-    let ship_abs_pos = game.flight.ship.absolute_position(&game.solar_system);
     let _ = game.flight.ship.calculate_orbit(&game.solar_system);
     let ship_orbit = game.flight.ship.get_orbital_info(&game.solar_system).map(|info| {
         let parent_pos = scaled_positions[info.parent_idx];
@@ -867,7 +898,7 @@ fn render_flight_frame(
             traj.segments.iter().enumerate().map(|(i, seg)| {
                 let parent_pos = scaled_positions[seg.parent_idx];
                 let parent_soi = game.solar_system.bodies[seg.parent_idx].soi_radius;
-                let parent_mass = game.solar_system.bodies[seg.parent_idx].mass;
+                let parent_mass = game.solar_system.bodies[seg.parent_idx].effective_mass_at(seg.orbit.semi_major_axis);
                 let alpha = if i == 0 { 0.7 } else { 0.4 };
                 OrbitSegmentData {
                     parent_x: parent_pos[0] * SCALE,
@@ -1130,9 +1161,12 @@ fn render_flight_frame(
         drag_mag * mass_kg / 1000.0 // N -> kN
     };
 
+    // Use scaled_positions + rel_position to match body rendering precision
+    let soi_pos_render = scaled_positions[game.flight.ship.soi_body];
+    let rel_render = game.flight.ship.rel_position;
     let ship_render = ShipRenderData {
-        x: ship_abs_pos[0] * SCALE * BODY_SCALE,
-        y: ship_abs_pos[1] * SCALE * BODY_SCALE,
+        x: soi_pos_render[0] * SCALE + rel_render[0] * SCALE * BODY_SCALE,
+        y: soi_pos_render[1] * SCALE + rel_render[1] * SCALE * BODY_SCALE,
         rotation: game.flight.ship.rotation,
         size: vessel_size * SCALE * BODY_SCALE,
         color: game.flight.ship.color,
@@ -1188,7 +1222,9 @@ fn render_flight_frame(
     // Build background vessel data for inactive vessels
     let background_vessels: Vec<sunscatter::render::TrackingVesselData> = game.flight.inactive_vessels.iter()
         .map(|v| {
-            let abs_pos = v.ship.absolute_position(&game.solar_system);
+            // Use scaled_positions + rel_position for precision (same as active ship)
+            let soi_pos = scaled_positions[v.ship.soi_body];
+            let rel = v.ship.rel_position;
             let orbit_data = v.ship.get_render_orbit().map(|(orbit, parent_idx)| {
                 let parent_pos = scaled_positions[parent_idx];
                 OrbitRenderData {
@@ -1207,8 +1243,8 @@ fn render_flight_frame(
                 id: v.id,
                 name: v.name.clone(),
                 color: v.ship.color,
-                x: abs_pos[0] * SCALE * BODY_SCALE,
-                y: abs_pos[1] * SCALE * BODY_SCALE,
+                x: soi_pos[0] * SCALE + rel[0] * SCALE * BODY_SCALE,
+                y: soi_pos[1] * SCALE + rel[1] * SCALE * BODY_SCALE,
                 soi_body: v.ship.soi_body,
                 orbit: orbit_data,
                 parts,
@@ -1217,7 +1253,9 @@ fn render_flight_frame(
         })
         .collect();
 
-    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions), &background_vessels);
+    let accretion_discs = build_accretion_disc_data(game);
+    let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions), &background_vessels, &accretion_discs, in_galaxy_view);
 
     // Update simulation time for node epoch computation
     render_state.simulation_time = game.simulation_time;
@@ -1270,7 +1308,7 @@ fn render_flight_frame(
                 let e = seg.orbit.eccentricity;
                 let a = seg.orbit.semi_major_axis;
                 let arg_peri = seg.orbit.argument_of_periapsis;
-                let parent_mass = game.solar_system.bodies[seg.parent_idx].mass;
+                let parent_mass = game.solar_system.bodies[seg.parent_idx].effective_mass_at(seg.orbit.semi_major_axis);
                 let mu = G * parent_mass;
 
                 // Semi-latus rectum
@@ -1435,7 +1473,7 @@ fn render_flight_frame(
             let segments: Vec<OrbitSegmentData> = pred_traj.segments.iter().enumerate().map(|(i, seg)| {
                 let parent_pos = scaled_positions[seg.parent_idx];
                 let parent_soi = game.solar_system.bodies[seg.parent_idx].soi_radius;
-                let parent_mass = game.solar_system.bodies[seg.parent_idx].mass;
+                let parent_mass = game.solar_system.bodies[seg.parent_idx].effective_mass_at(seg.orbit.semi_major_axis);
                 let alpha = if i == 0 { 0.7 } else { 0.5 };
                 OrbitSegmentData {
                     parent_x: parent_pos[0] * SCALE,
@@ -1500,7 +1538,7 @@ fn render_flight_frame(
         render_state.transfer_display = if let (Some(target_idx), Some(ship_orbit)) =
             (render_state.transfer_selected_target, game.flight.ship.get_cached_orbit())
         {
-            let parent_mass = game.solar_system.bodies[ship_orbit.parent_idx].mass;
+            let parent_mass = game.solar_system.bodies[ship_orbit.parent_idx].effective_mass_at(ship_orbit.orbit.semi_major_axis);
             if render_state.transfer_planner_mode == 0 {
                 // Hohmann mode
                 if let Some(target_orbit) = game.solar_system.bodies[target_idx].orbit.as_ref() {
@@ -1597,7 +1635,7 @@ fn render_flight_frame(
                     (node_ma - ship_ma).rem_euclid(std::f64::consts::TAU)
                 };
 
-                let parent_mass = game.solar_system.bodies[ship_orbit.parent_idx].mass;
+                let parent_mass = game.solar_system.bodies[ship_orbit.parent_idx].effective_mass_at(ship_orbit.orbit.semi_major_axis);
                 let mean_motion = ship_orbit.orbit.mean_motion(parent_mass);
                 if mean_motion > 0.0 {
                     // Time to reach node on current orbit (0 to 1 period)
@@ -2056,30 +2094,88 @@ fn compute_scaled_positions(game: &Game) -> Vec<[f64; 2]> {
     scaled
 }
 
+/// Walk up the body hierarchy to find the nearest star (child of the root body).
+/// Returns the body index itself if it's already a star or the root.
+fn find_star_ancestor(game: &Game, mut idx: usize) -> usize {
+    loop {
+        let body = &game.solar_system.bodies[idx];
+        match body.parent {
+            None => return idx,                                    // Root body
+            Some(p) if game.solar_system.bodies[p].parent.is_none() => return idx, // Star (parent is root)
+            Some(p) => idx = p,                                    // Walk up
+        }
+    }
+}
+
 /// Build body render tuples from scaled positions
-fn build_body_data(game: &Game, scaled_positions: &[[f64; 2]]) -> Vec<(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)> {
+fn build_body_data(game: &Game, scaled_positions: &[[f64; 2]], in_galaxy_view: bool) -> Vec<(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)> {
     (0..game.solar_system.bodies.len())
         .map(|i| {
             let body = &game.solar_system.bodies[i];
             let pos = scaled_positions[i];
-            let atmo_height = body.atmosphere.map(|a| a.visible_height()).unwrap_or(0.0);
+            // In galaxy view, only show root + its direct children (stars)
+            let visible = if in_galaxy_view {
+                body.parent.is_none() || body.parent.map_or(false, |p|
+                    game.solar_system.bodies[p].parent.is_none())
+            } else {
+                true
+            };
+            let radius = if visible { body.radius * BODY_SCALE } else { 0.0 };
+            let atmo_height = if visible { body.atmosphere.map(|a| a.visible_height()).unwrap_or(0.0) } else { 0.0 };
             let atmo_color = body.atmosphere.map(|a| a.color).unwrap_or([0.0; 3]);
-            (pos[0], pos[1], body.radius * BODY_SCALE, body.color, atmo_height, atmo_color, i)
+            (pos[0], pos[1], radius, body.color, atmo_height, atmo_color, i)
         })
+        .collect()
+}
+
+/// Build accretion disc render data from game bodies
+fn build_accretion_disc_data(game: &Game) -> Vec<Option<sunscatter::bodies::AccretionDisc>> {
+    game.solar_system.bodies.iter()
+        .map(|b| b.accretion_disc)
         .collect()
 }
 
 /// Build orbit render data from scaled positions
 fn build_orbit_data(game: &Game, scaled_positions: &[[f64; 2]], render_state: &RenderState) -> Vec<Option<OrbitRenderData>> {
     let pixels_per_world_unit = render_state.camera.zoom * render_state.size.height as f32 / 2.0;
+    let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
     (0..game.solar_system.bodies.len())
         .map(|i| {
             let body = &game.solar_system.bodies[i];
             match (body.parent, &body.orbit) {
                 (Some(parent_idx), Some(orbit)) => {
+                    let parent_body = &game.solar_system.bodies[parent_idx];
+                    if parent_body.parent.is_none() {
+                        // Star orbit: only show in galaxy view when this star is tracked
+                        if in_galaxy_view && render_state.tracked_body == Some(i) {
+                            let parent_pos = scaled_positions[parent_idx];
+                            let orbit_color = [
+                                body.color[0] * 0.4,
+                                body.color[1] * 0.4,
+                                body.color[2] * 0.4,
+                                0.5,
+                            ];
+                            return Some(OrbitRenderData {
+                                parent_x: parent_pos[0] * SCALE,
+                                parent_y: parent_pos[1] * SCALE,
+                                semi_major_axis: orbit.semi_major_axis * SCALE * BODY_SCALE,
+                                eccentricity: orbit.eccentricity,
+                                argument_of_periapsis: orbit.argument_of_periapsis,
+                                color: orbit_color,
+                            });
+                        }
+                        return None;
+                    }
+
+                    // In galaxy view, skip all non-star orbits
+                    if in_galaxy_view {
+                        return None;
+                    }
+
                     let body_world_radius = (body.radius * BODY_SCALE * SCALE) as f32;
                     let body_pixels = body_world_radius * pixels_per_world_unit * 2.0;
-                    let is_moon = parent_idx != 0;
+                    let is_moon = parent_body.parent
+                        .map_or(false, |gp| game.solar_system.bodies[gp].parent.is_some());
                     let pixel_threshold = if is_moon { 100.0 } else { 5.0 };
                     if body_pixels >= pixel_threshold {
                         return None;
@@ -2169,7 +2265,9 @@ fn build_tracking_vessel_data(
 
     // All vessels are in inactive_vessels when not in flight
     for v in &game.flight.inactive_vessels {
-        let abs_pos = v.ship.absolute_position(&game.solar_system);
+        // Use scaled_positions + rel_position for precision at galaxy-scale distances
+        let soi_pos = scaled_positions[v.ship.soi_body];
+        let rel = v.ship.rel_position;
         let orbit_data = v.ship.get_render_orbit().map(|(orbit, parent_idx)| {
             let parent_pos = scaled_positions[parent_idx];
             sunscatter::render::OrbitRenderData {
@@ -2188,8 +2286,8 @@ fn build_tracking_vessel_data(
             id: v.id,
             name: v.name.clone(),
             color: v.ship.color,
-            x: abs_pos[0] * SCALE * BODY_SCALE,
-            y: abs_pos[1] * SCALE * BODY_SCALE,
+            x: soi_pos[0] * SCALE + rel[0] * SCALE * BODY_SCALE,
+            y: soi_pos[1] * SCALE + rel[1] * SCALE * BODY_SCALE,
             soi_body: v.ship.soi_body,
             orbit: orbit_data,
             parts,
@@ -2207,9 +2305,11 @@ fn render_main_menu_frame(
     _elwt: &winit::event_loop::EventLoopWindowTarget<()>,
 ) {
     // Always keep camera focused on the Sun at a fixed zoom
-    let sun_pos = game.solar_system.body_position(0);
+    let sun_pos = game.solar_system.body_position(1);
     render_state.camera.position[0] = sun_pos[0] * SCALE * BODY_SCALE;
     render_state.camera.position[1] = sun_pos[1] * SCALE * BODY_SCALE;
+    render_state.camera.body_center = render_state.camera.position;
+    render_state.camera.ship_offset = [0.0, 0.0];
     render_state.camera.zoom = 0.002;
 
     if !game.paused {
@@ -2234,7 +2334,7 @@ fn render_main_menu_frame(
     }
 
     let scaled_positions = compute_scaled_positions(game);
-    let bodies = build_body_data(game, &scaled_positions);
+    let bodies = build_body_data(game, &scaled_positions, false);
     let orbits = build_orbit_data(game, &scaled_positions, render_state);
 
     // Update camera tracking (body focus)
@@ -2342,7 +2442,19 @@ fn render_tracking_station_frame(
     }
 
     let scaled_positions = compute_scaled_positions(game);
-    let bodies = build_body_data(game, &scaled_positions);
+    let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
+
+    // In galaxy view, redirect tracked planet/moon to its parent star
+    if in_galaxy_view {
+        if let Some(tracked_idx) = render_state.tracked_body {
+            let star_idx = find_star_ancestor(game, tracked_idx);
+            if star_idx != tracked_idx {
+                render_state.tracked_body = Some(star_idx);
+            }
+        }
+    }
+
+    let bodies = build_body_data(game, &scaled_positions, in_galaxy_view);
     let orbits = build_orbit_data(game, &scaled_positions, render_state);
 
     // Update camera tracking (body or vessel focus)
@@ -2354,6 +2466,14 @@ fn render_tracking_station_frame(
     // Update camera tracking for focused vessel
     if let Some(vessel_id) = render_state.tracked_vessel {
         if let Some(vessel_data) = tracking_vessels.iter().find(|v| v.id == vessel_id) {
+            // Use SOI body center + vessel offset for precision
+            let soi_pos = scaled_positions[vessel_data.soi_body];
+            render_state.camera.body_center = [soi_pos[0] * SCALE, soi_pos[1] * SCALE];
+            // vessel_data.x/y already include the offset; recover it by subtraction
+            render_state.camera.ship_offset = [
+                vessel_data.x - render_state.camera.body_center[0],
+                vessel_data.y - render_state.camera.body_center[1],
+            ];
             render_state.camera.position[0] = vessel_data.x;
             render_state.camera.position[1] = vessel_data.y;
         } else {
@@ -2363,13 +2483,37 @@ fn render_tracking_station_frame(
         }
     }
 
-    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &tracking_vessels);
+    let accretion_discs = build_accretion_disc_data(game);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &tracking_vessels, &accretion_discs, in_galaxy_view);
 
     let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
     let date_str = sunscatter::game::format_date(game.simulation_time);
     let active_id = game.flight.active_vessel_id;
 
-    match render_state.render_tracking_station(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, &tracking_vessels, active_id) {
+    // Build body info data for the info panel
+    let body_info: Vec<BodyInfoData> = game.solar_system.bodies.iter().map(|body| {
+        let orbit_period_s = body.orbit.as_ref().and_then(|orbit| {
+            body.parent.map(|pi| {
+                let parent_mass = game.solar_system.bodies[pi].effective_mass_at(orbit.semi_major_axis);
+                let mu = G * parent_mass;
+                std::f64::consts::TAU * (orbit.semi_major_axis.powi(3) / mu).sqrt()
+            })
+        });
+        BodyInfoData {
+            name: body.name.clone(),
+            description: body.description.clone(),
+            radius_m: body.radius,
+            surface_gravity_ms2: body.surface_gravity(),
+            mass_kg: body.mass,
+            atmosphere_pressure_pa: body.atmosphere.as_ref().map(|a| a.surface_pressure),
+            atmosphere_height_m: body.atmosphere.as_ref().map(|a| a.visible_height()),
+            orbit_semi_major_axis_m: body.orbit.as_ref().map(|o| o.semi_major_axis),
+            orbit_eccentricity: body.orbit.as_ref().map(|o| o.eccentricity),
+            orbit_period_s,
+        }
+    }).collect();
+
+    match render_state.render_tracking_station(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, &tracking_vessels, active_id, &body_info) {
         Ok((new_warp_index, pause_action, ts_action)) => {
             game.warp_index = new_warp_index;
             match pause_action {
@@ -2392,6 +2536,12 @@ fn render_tracking_station_frame(
                 sunscatter::render::TrackingStationAction::FocusVessel(id) => {
                     // Focus camera on vessel and track it continuously
                     if let Some(vessel_data) = tracking_vessels.iter().find(|v| v.id == id) {
+                        let soi_pos = scaled_positions[vessel_data.soi_body];
+                        render_state.camera.body_center = [soi_pos[0] * SCALE, soi_pos[1] * SCALE];
+                        render_state.camera.ship_offset = [
+                            vessel_data.x - render_state.camera.body_center[0],
+                            vessel_data.y - render_state.camera.body_center[1],
+                        ];
                         render_state.camera.position[0] = vessel_data.x;
                         render_state.camera.position[1] = vessel_data.y;
                         render_state.tracked_body = None;
@@ -2428,6 +2578,20 @@ fn handle_flight_mouse_input(
     const DOUBLE_CLICK_TIME: Duration = Duration::from_millis(300);
     const DOUBLE_CLICK_DIST: f32 = 10.0;
 
+    // Part selection runs unconditionally so clicking on a part always works,
+    // even when the part info window overlaps the ship and egui consumes the click.
+    let part_clicked = if button == MouseButton::Left && state == ElementState::Pressed {
+        let mouse_pos = render_state.camera.last_mouse_pos;
+        if let Some(cache_idx) = render_state.flight_part_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
+            render_state.selected_flight_part = Some(cache_idx);
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
     if !egui_consumed && button == MouseButton::Left {
         if state == ElementState::Pressed {
             let now = Instant::now();
@@ -2436,18 +2600,16 @@ fn handle_flight_mouse_input(
             let dy = mouse_pos[1] - last_click_pos[1];
             let dist = (dx * dx + dy * dy).sqrt();
 
-            // Check if clicking on a flight part (highest priority when zoomed in)
-            if let Some(cache_idx) = render_state.flight_part_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
-                render_state.selected_flight_part = Some(cache_idx);
-            }
-            // Check if clicking on a maneuver node
-            else if let Some(node_id) = render_state.maneuver_node_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
-                render_state.start_dragging_node(node_id);
-                render_state.selected_maneuver_node = Some(node_id);
-                render_state.pending_orbit_click = None;
-                render_state.selected_flight_part = None;
-            } else {
-                render_state.selected_flight_part = None;
+            if !part_clicked {
+                // Check if clicking on a maneuver node
+                if let Some(node_id) = render_state.maneuver_node_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
+                    render_state.start_dragging_node(node_id);
+                    render_state.selected_maneuver_node = Some(node_id);
+                    render_state.pending_orbit_click = None;
+                    render_state.selected_flight_part = None;
+                } else {
+                    render_state.selected_flight_part = None;
+                }
             }
 
             // Helper: single-click target/orbit detection
