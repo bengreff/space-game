@@ -8,9 +8,17 @@ Three technology tiers:
   Antimatter: AM-Cat Fusion, Antimatter Torch, Gamma Conversion
 
 Each engine has a distinctive visual design reflecting its propulsion physics.
-Interstellar engines are dramatically larger than chemical engines (11-27 grid
+Interstellar engines are dramatically larger than chemical engines (9-27 grid
 wide vs 1-8 for chemical), with accent colors for magnetic coils (copper),
 reactor housings (blue-steel), and antimatter containment (purple).
+
+Dimensions are based on reaction area requirements, not mass:
+  - Daedalus: Wide (40m-class dome), moderate length
+  - Z-Pinch: Narrow (tube confinement), tall
+  - AM-Cat: Moderate compact (ICAN-II style)
+  - AM Torch: Very compact (magnetic bottle)
+  - Gamma Conv: Wide base (parabolic reflector)
+  - Orion: Very wide (massive pusher plate)
 """
 
 from PIL import Image, ImageDraw
@@ -299,82 +307,88 @@ def draw_structural_truss(d, cx, y, top_w, bot_w, h, n_bays=4, scale=1.0):
     return y + h
 
 
-def draw_magnetic_nozzle(d, cx, y, throat_w, exit_w, height,
-                         coil_fracs=None, bell_exp=2.0,
-                         wall_base=8, tint_shift=(0, 0, 0), scale=1.0):
-    """Draw a magnetic nozzle with toroidal coils and thin structural walls.
+def draw_open_magnetic_nozzle(d, cx, y, throat_w, exit_w, height,
+                               coil_fracs=None, bell_exp=2.0,
+                               wall_base=8, n_longerons=3, scale=1.0,
+                               tint_shift=(0, 0, 0)):
+    """Draw an open magnetic cage nozzle — coil rings connected by longerons.
 
-    Unlike chemical nozzles (solid-walled), magnetic nozzles have thin
-    structural supports holding field coils that magnetically contain the
-    plasma exhaust. The wall is much thinner and the interior is visible.
+    Draws full-width coil ring bands at specified positions along a bell curve,
+    connected by thin structural longerons. Space between rings is transparent,
+    creating a clearly open cage structure.
+
+    From side view, each superconducting coil ring appears as a full-width
+    horizontal band (the torus profile). The gaps between rings are empty/
+    transparent — this is the defining visual of a magnetic nozzle.
     """
     if coil_fracs is None:
-        coil_fracs = [0.1, 0.25, 0.4, 0.55, 0.7, 0.85]
+        coil_fracs = [0.08, 0.22, 0.37, 0.52, 0.67, 0.82, 0.95]
 
-    n_strips = max(40, int(height / 5))
-    sh = height / n_strips
+    sorted_fracs = sorted(coil_fracs)
+    coil_th = max(3, int(5 * scale))
+    longeron_w = max(2, int(4 * scale))
 
-    for i in range(n_strips):
-        t = i / n_strips
-        t1 = (i + 1) / n_strips
-        ow1 = bell_w(t, throat_w, exit_w, exp=bell_exp)
-        ow2 = bell_w(t1, throat_w, exit_w, exp=bell_exp)
-        sy = y + t * height
+    # Step 1: Draw structural longerons (vertical rails) evenly across the cage
+    # Each longeron traces from a position on the throat to the same
+    # proportional position on the exit, following the bell curve.
+    n_pts = max(60, int(height / 3))
+    # Total number of vertical bars evenly spaced across full width
+    # Scale with exit width so larger nozzles get more bars
+    total_longerons = max(4, n_longerons, int(exit_w / (80 * scale)))
+    for li in range(total_longerons):
+        # Position as fraction of full width: 0.0 = left edge, 1.0 = right edge
+        pos_frac = li / max(1, total_longerons - 1)
+        # x offset from center: -0.5 to +0.5 of width
+        offset_frac = pos_frac - 0.5
 
-        # Wall thickness tapers from throat to exit
-        wt = wall_base * (1.0 - 0.5 * t)
-        iw1 = max(0, ow1 - wt * 2)
-        iw2 = max(0, ow2 - wt * 2)
+        pts = []
+        for j in range(n_pts):
+            t = j / (n_pts - 1)
+            w = bell_w(t, throat_w, exit_w, exp=bell_exp)
+            lx = cx + int(w * offset_frac)
+            ly = y + int(t * height)
+            pts.append((lx, ly))
 
-        # Color: gradual darkening from throat to exit (heat tint)
-        heat = t ** 1.5
-        r = int(STEEL_MID[0] - 5 + heat * 12 + tint_shift[0])
-        g = int(STEEL_MID[1] - 5 + heat * 4 + tint_shift[1])
-        b = int(STEEL_MID[2] - 5 - heat * 10 + tint_shift[2])
+        # Draw the longeron
+        for k in range(len(pts) - 1):
+            d.line([pts[k], pts[k + 1]], fill=STEEL_MID, width=longeron_w)
+        # Left edge highlight
+        if li == 0:
+            hl_c = clamp_color((
+                int(STEEL_LIGHT[0] + tint_shift[0]),
+                int(STEEL_LIGHT[1] + tint_shift[1]),
+                int(STEEL_LIGHT[2] + tint_shift[2])))
+            for k in range(len(pts) - 1):
+                d.line([pts[k], pts[k + 1]], fill=hl_c, width=1)
 
-        # Subtle sine banding
-        band = math.sin(t * math.pi * 8) * 3
-        r += int(band)
-        g += int(band)
-        b += int(band)
-
-        oc = clamp_color((r, g, b))
-        trap(d, cx, int(sy), ow1, ow2, int(sh) + 1, fill=oc)
-
-        # Interior darkness
-        if iw1 > 6 and iw2 > 6:
-            ir = int(INTERIOR[0] + heat * 8)
-            ig = int(INTERIOR[1] + heat * 3)
-            ib = int(INTERIOR[2])
-            trap(d, cx, int(sy), iw1, iw2, int(sh) + 1, fill=(ir, ig, ib))
-
-    # Stiffening rings between coils
-    n_rings = max(3, int(height / (60 * scale)))
-    ring_fracs = [(i + 0.5) / n_rings for i in range(n_rings)]
-    rh = max(2, int(2 * scale))
-    for rf in ring_fracs:
-        # Skip if too close to a coil position
-        if any(abs(rf - cf) < 0.06 for cf in coil_fracs):
-            continue
-        ry = int(y + rf * height)
-        rw = bell_w(rf, throat_w, exit_w, exp=bell_exp)
-        rhw = int(rw / 2)
-        d.rectangle([cx - rhw, ry - rh, cx + rhw, ry + rh], fill=STEEL_LIGHT)
-        d.rectangle([cx - rhw + 1, ry + rh, cx + rhw - 1, ry + rh + 1], fill=STEEL_DARK)
-
-    # Magnetic coils at specified positions
-    coil_th = max(5, int(5 * scale))
-    for cf in coil_fracs:
+    # Step 2: Draw thin grey coil rings (cage bars)
+    for cf in sorted_fracs:
         cy_pos = int(y + cf * height)
         cw = bell_w(cf, throat_w, exit_w, exp=bell_exp)
-        draw_magnetic_coil(d, cx, cy_pos, cw, coil_th, scale=scale)
+        band_y = cy_pos - coil_th // 2
+        hw = int(cw / 2)
 
-    # Exit lip
-    lip_h = max(4, int(5 * scale))
-    ey = int(y + height - lip_h)
-    ehw = int(exit_w / 2)
-    d.rectangle([cx - ehw, ey, cx + ehw, ey + lip_h],
-                fill=ABLATIVE_TIP, outline=STEEL_VERY_DARK)
+        if hw < 4:
+            continue
+
+        # Thin steel-grey ring with subtle shading
+        for row in range(coil_th):
+            t = row / max(1, coil_th - 1)
+            shade = 0.3 + 0.5 * math.sin(t * math.pi)
+            r = int(STEEL_DARK[0] + (STEEL_LIGHT[0] - STEEL_DARK[0]) * shade)
+            g = int(STEEL_DARK[1] + (STEEL_LIGHT[1] - STEEL_DARK[1]) * shade)
+            b = int(STEEL_DARK[2] + (STEEL_LIGHT[2] - STEEL_DARK[2]) * shade)
+            ry = band_y + row
+            d.rectangle([cx - hw, ry, cx + hw, ry + 1],
+                        fill=clamp_color((r, g, b)))
+
+        # Top highlight
+        d.line([(cx - hw + 2, band_y), (cx + hw - 2, band_y)],
+               fill=STEEL_HIGHLIGHT, width=1)
+        # Bottom shadow
+        d.line([(cx - hw + 2, band_y + coil_th - 1),
+                (cx + hw - 2, band_y + coil_th - 1)],
+               fill=STEEL_VERY_DARK, width=1)
 
     return y + height
 
@@ -384,13 +398,13 @@ def draw_magnetic_nozzle(d, cx, y, throat_w, exit_w, height,
 # ================================================================
 
 def generate_orion():
-    """Orion Pulse Drive — 27w × 30h grid, 7000t
+    """Orion Pulse Drive — 70w x 52h grid, 7000t
 
     Nuclear pulse propulsion. The most raw, industrial interstellar engine.
     Distinctive anvil silhouette: massive pusher plate at bottom, shock
     absorber column above, pulse unit magazine, narrower mount at top.
     """
-    W, H, TOP = 27, 30, 14
+    W, H, TOP = 70, 52, 30
     img_w = int(W * PX) + PAD * 2
     img_h = int(H * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -411,7 +425,6 @@ def generate_orion():
     adapter_h = int(total_h * 0.04)
     magazine_w = exit_w * 0.68
     trap(d, cx, y, ring_w, magazine_w, adapter_h, STEEL_MID, outline=STEEL_DARK)
-    # Panel lines on adapter
     for frac in [0.3, 0.6]:
         ly = y + int(adapter_h * frac)
         lw = ring_w + (magazine_w - ring_w) * frac
@@ -422,20 +435,16 @@ def generate_orion():
     # --- PULSE UNIT MAGAZINE ---
     mag_h = int(total_h * 0.13)
     mag_w = magazine_w
-    # Main housing
     rect(d, cx, y, mag_w, mag_h, STEEL_MID, outline=STEEL_DARK)
-    # Left highlight
     d.line([(cx - int(mag_w / 2) + 3, y + 3),
             (cx - int(mag_w / 2) + 3, y + mag_h - 3)],
            fill=STEEL_LIGHT, width=2)
-    # Horizontal structural bands
     for frac in [0.33, 0.66]:
         by = y + int(mag_h * frac)
         mhw = int(mag_w / 2)
         d.rectangle([cx - mhw, by, cx + mhw, by + max(3, int(3 * scale))],
                     fill=STEEL_LIGHT)
         d.rectangle([cx - mhw, by + 3, cx + mhw, by + 4], fill=STEEL_DARK)
-    # Access hatches (evenly spaced rectangular outlines)
     n_hatches = max(4, int(mag_w / (60 * scale)))
     hatch_w = max(20, int(30 * scale))
     hatch_h = max(15, int(mag_h * 0.25))
@@ -449,7 +458,7 @@ def generate_orion():
                          hx + hatch_w // 2 - 1, hy + 2], fill=STEEL_HIGHLIGHT)
     y += mag_h
 
-    # --- STRUCTURAL TRUSS (open frame connecting magazine to absorbers) ---
+    # --- STRUCTURAL TRUSS ---
     truss_h = int(total_h * 0.10)
     absorber_col_w = exit_w * 0.30
     y = draw_structural_truss(d, cx, y, mag_w, absorber_col_w + 40,
@@ -458,31 +467,41 @@ def generate_orion():
     # --- SHOCK ABSORBER ASSEMBLY ---
     absorber_h = int(total_h * 0.27)
     abs_w = absorber_col_w
-    # Outer housing
     trap(d, cx, y, abs_w + 40, abs_w + 60, absorber_h, STEEL_DARK, outline=STEEL_VERY_DARK)
     trap(d, cx, y + 3, abs_w + 20, abs_w + 40, absorber_h - 3, STEEL_MID)
 
-    # Piston assemblies (4 visible)
     n_pistons = 4
     piston_w = max(30, int(abs_w * 0.18))
     piston_spacing = (abs_w - piston_w) / max(1, n_pistons - 1)
     for i in range(n_pistons):
         px = cx - int(abs_w / 2) + int(piston_w / 2) + int(i * piston_spacing)
-        # Piston cylinder
         cyl_h = int(absorber_h * 0.85)
         cyl_w = piston_w
         rect(d, px, y + int(absorber_h * 0.08), cyl_w, cyl_h,
              STEEL_VERY_DARK, outline=STEEL_DARK)
-        # Piston rod (lighter, narrower, extending partway)
-        rod_w = cyl_w * 0.4
+        rod_w = cyl_w * 0.45
         rod_h = cyl_h * 0.6
-        rect(d, px, y + int(absorber_h * 0.08) + int(cyl_h * 0.35),
-             rod_w, rod_h, STEEL_HIGHLIGHT)
-        # Piston rings (horizontal bands on the rod)
+        rod_top = y + int(absorber_h * 0.08) + int(cyl_h * 0.35)
+        rect(d, px, rod_top, rod_w, rod_h, STEEL_HIGHLIGHT)
         for rf in [0.4, 0.55, 0.7]:
             ry = y + int(absorber_h * 0.08) + int(cyl_h * rf)
             d.rectangle([px - int(rod_w / 2) - 2, ry,
                          px + int(rod_w / 2) + 2, ry + 2], fill=STEEL_DARK)
+        # Compression springs wrapping around piston rod
+        spring_r = max(2, int(rod_w * 0.65))
+        spring_start = y + int(absorber_h * 0.08) + int(cyl_h * 0.08)
+        spring_end = rod_top - 2
+        if spring_end > spring_start:
+            n_spring_coils = max(6, int((spring_end - spring_start) / (6 * scale)))
+            coil_step = (spring_end - spring_start) / max(1, n_spring_coils)
+            for j in range(n_spring_coils):
+                sy = spring_start + int(j * coil_step)
+                d.line([(px - int(spring_r), sy),
+                        (px + int(spring_r), sy + int(coil_step * 0.5))],
+                       fill=STEEL_LIGHT, width=max(1, int(2 * scale)))
+                d.line([(px + int(spring_r), sy + int(coil_step * 0.5)),
+                        (px - int(spring_r), sy + int(coil_step))],
+                       fill=STEEL_MID, width=max(1, int(2 * scale)))
 
     # Spring coils between pistons
     spring_w = max(10, int(piston_spacing * 0.4))
@@ -491,7 +510,6 @@ def generate_orion():
         n_coils = max(8, int(absorber_h / (15 * scale)))
         for j in range(n_coils):
             sy = y + int(absorber_h * 0.1) + int(j * absorber_h * 0.78 / n_coils)
-            # Zigzag spring pattern
             if j % 2 == 0:
                 d.line([(sx, sy), (sx + spring_w, sy + int(absorber_h * 0.78 / n_coils / 2))],
                        fill=STEEL_LIGHT, width=max(1, int(2 * scale)))
@@ -500,7 +518,6 @@ def generate_orion():
                         (sx, sy + int(absorber_h * 0.78 / n_coils / 2))],
                        fill=STEEL_LIGHT, width=max(1, int(2 * scale)))
 
-    # Structural bands on absorber housing
     for frac in [0.15, 0.45, 0.75]:
         by = y + int(absorber_h * frac)
         ahw = int((abs_w + 50) / 2)
@@ -508,49 +525,52 @@ def generate_orion():
                     fill=STEEL_LIGHT)
     y += absorber_h
 
-    # --- PLATE ADAPTER (widens from absorber column to full plate width) ---
+    # --- PLATE ADAPTER ---
     plate_adapter_h = int(total_h * 0.06)
     trap(d, cx, y, abs_w + 60, exit_w, plate_adapter_h, PLATE_MID, outline=PLATE_DARK)
-    # Structural ribbing
     n_ribs = max(6, int(exit_w / (50 * scale)))
     for i in range(n_ribs):
         rx = cx - int(exit_w / 2) + int((i + 0.5) * exit_w / n_ribs)
         top_x = cx - int((abs_w + 60) / 2) + int((i + 0.5) * (abs_w + 60) / n_ribs)
         d.line([(top_x, y + 2), (rx, y + plate_adapter_h - 2)],
                fill=PLATE_DARK, width=max(2, int(2 * scale)))
+    # Charge ejection channel
+    channel_r = max(6, int(10 * scale))
+    circ(d, cx, y + plate_adapter_h // 2, channel_r + 2, fill=PLATE_DARK)
+    circ(d, cx, y + plate_adapter_h // 2, channel_r, fill=INTERIOR)
     y += plate_adapter_h
 
-    # --- PUSHER PLATE (the massive flat bottom) ---
+    # --- PUSHER PLATE ---
     plate_h = int(total_h * 0.38)
     plate_w = exit_w
-
-    # Main plate body - layered for depth
     rect(d, cx, y, plate_w, plate_h, PLATE_MID, outline=PLATE_DARK)
 
-    # Concentric reinforcement rings (viewed edge-on, appear as horizontal bands)
+    # Center boss
+    boss_r = max(20, int(plate_w * 0.06))
+    boss_y = y + int(plate_h * 0.5)
+    circ(d, cx, boss_y, boss_r + 3, fill=PLATE_LIGHT)
+    circ(d, cx, boss_y, boss_r, fill=PLATE_HIGHLIGHT)
+    circ(d, cx, boss_y, boss_r - 4, fill=PLATE_LIGHT)
+
     n_rings = max(8, int(plate_h / (20 * scale)))
     for i in range(n_rings):
         ry = y + int((i + 0.5) * plate_h / n_rings)
         phw = int(plate_w / 2)
         ring_h = max(2, int(3 * scale))
-        # Alternating lighter/darker bands for depth
         if i % 2 == 0:
             d.rectangle([cx - phw + 4, ry, cx + phw - 4, ry + ring_h], fill=PLATE_LIGHT)
         else:
             d.rectangle([cx - phw + 4, ry, cx + phw - 4, ry + ring_h], fill=PLATE_DARK)
 
-    # Ablation texture (random darker spots on the bottom half)
-    random.seed(42)  # reproducible
+    random.seed(42)
     n_spots = max(30, int(plate_w * plate_h / (200 * scale)))
     for _ in range(n_spots):
         sx = cx + random.randint(-int(plate_w / 2) + 8, int(plate_w / 2) - 8)
-        # Concentrate spots toward the bottom (most ablation)
-        sy_frac = random.random() ** 0.5  # biased toward 1.0 (bottom)
+        sy_frac = random.random() ** 0.5
         sy = y + int(plate_h * 0.3) + int(plate_h * 0.65 * sy_frac)
         sr = max(3, int(random.randint(4, 12) * scale))
         circ(d, sx, sy, sr, fill=PLATE_ABLATION)
 
-    # Gas channel ports around the plate edge
     n_ports = max(12, int(plate_w / (30 * scale)))
     port_r = max(4, int(6 * scale))
     port_y = y + int(plate_h * 0.85)
@@ -559,12 +579,10 @@ def generate_orion():
         circ(d, px, port_y, port_r + 1, fill=PLATE_DARK)
         circ(d, px, port_y, port_r - 1, fill=INTERIOR)
 
-    # Bottom face of the plate (thick ablative lip)
     lip_h = max(6, int(10 * scale))
     phw = int(plate_w / 2)
     d.rectangle([cx - phw, y + plate_h - lip_h, cx + phw, y + plate_h],
                 fill=PLATE_DARK, outline=STEEL_VERY_DARK)
-    # Chamfered edges
     chamfer = max(10, int(15 * scale))
     d.polygon([(cx - phw, y + plate_h - lip_h),
                (cx - phw + chamfer, y + plate_h),
@@ -572,8 +590,6 @@ def generate_orion():
     d.polygon([(cx + phw, y + plate_h - lip_h),
                (cx + phw - chamfer, y + plate_h),
                (cx + phw, y + plate_h)], fill=PLATE_DARK)
-
-    # Left edge highlight on the whole plate
     d.line([(cx - phw + 3, y + 3), (cx - phw + 3, y + plate_h - 3)],
            fill=PLATE_HIGHLIGHT, width=max(2, int(3 * scale)))
 
@@ -581,16 +597,16 @@ def generate_orion():
 
 
 def generate_daedalus(stage=1):
-    """Daedalus ICF Fusion Engine — S1: 20w×26h, S2: 14w×19h
+    """Daedalus ICF Fusion Engine — S1: 60w x 48h, S2: 44w x 34h
 
-    Inertial confinement fusion with magnetic nozzle. Beautiful parabolic
-    bell with prominent copper toroidal field coils. Bulging reactor
-    chamber houses the fusion pellet injection and laser/beam systems.
+    Inertial confinement fusion. Wide hemispherical reaction dome feeds
+    into an open magnetic cage nozzle. Electron beam emitters on the reactor.
+    Dimensions based on 40m-class reaction chamber.
     """
     if stage == 1:
-        W, H, TOP = 20, 26, 12
+        W, H, TOP = 60, 48, 20
     else:
-        W, H, TOP = 14, 19, 9
+        W, H, TOP = 44, 34, 16
 
     img_w = int(W * PX) + PAD * 2
     img_h = int(H * PX) + PAD * 2
@@ -608,56 +624,127 @@ def generate_daedalus(stage=1):
     ring_w = top_w + 20
     y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
 
-    # --- REACTOR HOUSING (bulging section above nozzle) ---
-    reactor_h = int(total_h * 0.22)
+    # --- REACTOR HOUSING ---
+    reactor_h = int(total_h * 0.18)
     reactor_top_w = ring_w + 10
-    reactor_bot_w = exit_w * 0.55  # bulges wider than mount
+    reactor_bot_w = exit_w * 0.55
     y = draw_reactor_housing(d, cx, y, reactor_top_w, reactor_bot_w,
                               reactor_h, tint="reactor", scale=scale)
 
-    # Laser/beam injection ports on reactor sides
-    port_r = max(6, int(10 * scale))
-    for s in [-1, 1]:
-        for frac in [0.3, 0.6]:
-            py = y - int(reactor_h * (1 - frac))
-            pw = reactor_top_w + (reactor_bot_w - reactor_top_w) * frac
-            px = cx + s * int(pw / 2 - port_r)
-            circ(d, px, py, port_r + 2, fill=REACTOR_DARK)
-            circ(d, px, py, port_r, fill=ENERGY_DARK)
-            circ(d, px, py, port_r - 3, fill=ENERGY_MID)
+    # --- HEMISPHERICAL DOME (reaction chamber) ---
+    dome_h = int(total_h * 0.14)
+    dome_top_w = reactor_bot_w
+    dome_max_w = reactor_bot_w * 1.25
+    throat_w = exit_w * 0.16
 
-    # --- TRANSITION TO NOZZLE ---
-    trans_h = int(total_h * 0.04)
-    throat_w = exit_w * 0.18
-    trap(d, cx, y, reactor_bot_w, throat_w + 40, trans_h, STEEL_DARK, outline=STEEL_VERY_DARK)
-    # Containment ring at transition
-    draw_containment_ring(d, cx, y + trans_h // 2, reactor_bot_w, max(6, int(8 * scale)),
+    # Helper to get dome width at fractional height
+    def dome_w_at(frac):
+        if frac < 0.45:
+            curve = math.sin(frac / 0.45 * math.pi / 2)
+            return dome_top_w + (dome_max_w - dome_top_w) * curve
+        else:
+            curve = (frac - 0.45) / 0.55
+            return dome_max_w - (dome_max_w - throat_w - 30) * curve
+
+    # Draw the dome body
+    n_strips = max(25, int(dome_h / 4))
+    sh = dome_h / n_strips
+    for i in range(n_strips):
+        t = i / n_strips
+        t1 = (i + 1) / n_strips
+        w1 = dome_w_at(t)
+        w2 = dome_w_at(t1)
+        sy = y + t * dome_h
+        trap(d, cx, int(sy), w1, w2, int(sh) + 1, fill=REACTOR_MID,
+             outline=REACTOR_DARK)
+
+    # Structural bands on dome
+    for frac in [0.25, 0.5, 0.75]:
+        by = y + int(dome_h * frac)
+        bw = dome_w_at(frac)
+        bhw = int(bw / 2)
+        d.rectangle([cx - bhw, by, cx + bhw, by + max(2, int(2 * scale))],
+                    fill=REACTOR_LIGHT)
+
+    # Left edge highlight
+    d.line([(cx - int(dome_top_w / 2) + 2, y + 2),
+            (cx - int(dome_max_w / 2) + 2, y + int(dome_h * 0.45))],
+           fill=REACTOR_LIGHT, width=max(1, int(2 * scale)))
+
+    # Containment ring at dome exit
+    draw_containment_ring(d, cx, y + dome_h - max(4, int(5 * scale)),
+                          throat_w + 30, max(6, int(8 * scale)),
                           tint="energy", scale=scale)
-    y += trans_h
+    y += dome_h
 
-    # --- MAGNETIC NOZZLE ---
-    nozzle_h = int(total_h * 0.72)
-    n_coils = 7 if stage == 1 else 5
+    # --- OPEN MAGNETIC NOZZLE CAGE ---
+    nozzle_h = int(total_h * 0.68)  # slightly shorter to keep last ring in bounds
+    n_coils = 8 if stage == 1 else 6
     coil_fracs = [(i + 0.5) / n_coils for i in range(n_coils)]
-    y = draw_magnetic_nozzle(d, cx, y, throat_w, exit_w, nozzle_h,
-                              coil_fracs=coil_fracs, bell_exp=2.0,
-                              wall_base=max(6, int(10 * scale)),
-                              scale=scale)
+    nozzle_y_start = y
+    y = draw_open_magnetic_nozzle(d, cx, y, throat_w, exit_w, nozzle_h,
+                                   coil_fracs=coil_fracs, bell_exp=2.0,
+                                   wall_base=max(6, int(10 * scale)),
+                                   n_longerons=3, scale=scale)
+
+    # --- ELECTRON BEAM EMITTERS (one between each pair of coil rings) ---
+    # Each emitter sits in the gap between two adjacent rings, with its
+    # housing aligned to the outer nozzle edge. Barrel angles toward the
+    # exact bottom center of the nozzle (cx, nozzle_y_start + nozzle_h).
+    target_x = cx
+    target_y = nozzle_y_start + nozzle_h  # bottom center of nozzle
+    emitter_h = max(3, int(4 * scale))
+    housing_w = max(5, int(8 * scale))  # width along the nozzle edge
+    barrel_len = max(8, int(exit_w * 0.06))
+
+    for i in range(len(coil_fracs) - 1):
+        # Midpoint between two adjacent coil rings
+        mid_frac = (coil_fracs[i] + coil_fracs[i + 1]) / 2.0
+        mid_y = nozzle_y_start + int(mid_frac * nozzle_h)
+        mid_w = bell_w(mid_frac, throat_w, exit_w, exp=2.0)
+        mid_hw = int(mid_w / 2)
+
+        for s in [-1, 1]:
+            # Housing box on the outer edge of the nozzle
+            edge_x = cx + s * mid_hw
+            hx1 = edge_x - housing_w // 2
+            hx2 = edge_x + housing_w // 2
+            d.rectangle([hx1, mid_y - emitter_h // 2,
+                         hx2, mid_y + emitter_h // 2],
+                        fill=REACTOR_LIGHT, outline=REACTOR_DARK)
+
+            # Barrel angled toward bottom center of nozzle
+            dx = target_x - edge_x
+            dy = target_y - mid_y
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist > 0:
+                ux, uy = dx / dist, dy / dist
+            else:
+                ux, uy = 0, 1
+            tip_x = edge_x + int(ux * barrel_len)
+            tip_y = mid_y + int(uy * barrel_len)
+            barrel_h = max(2, int(3 * scale))
+            # Draw barrel as a line from housing to tip
+            d.line([(edge_x, mid_y), (tip_x, tip_y)],
+                   fill=STEEL_MID, width=barrel_h)
+            # Emitter tip glow
+            circ(d, tip_x, tip_y, max(2, int(3 * scale)), fill=ENERGY_LIGHT)
+            circ(d, tip_x, tip_y, max(1, int(2 * scale)), fill=(120, 180, 220))
 
     return img
 
 
 def generate_zpinch(variant="probe"):
-    """Z-Pinch Fusion Engine — Probe: 11w×15h, Advanced: 18w×24h
+    """Z-Pinch Fusion Engine — Probe: 10w x 18h, Advanced: 16w x 26h
 
-    Z-pinch confinement compresses plasma with intense magnetic fields.
-    Distinctive: nearly cylindrical body studded with prominent pinch coil
-    rings along the full length. Short flared nozzle. Industrial, utilitarian.
+    Z-pinch confinement in a narrow tube with intense magnetic fields.
+    Dimensions based on narrow tube confinement geometry — tall and narrow.
+    Open magnetic cage nozzle with dramatic divergence from the narrow tube.
     """
     if variant == "probe":
-        W, H, TOP = 11, 15, 7
+        W, H, TOP = 10, 18, 6
     else:
-        W, H, TOP = 18, 24, 12
+        W, H, TOP = 16, 26, 10
 
     img_w = int(W * PX) + PAD * 2
     img_h = int(H * PX) + PAD * 2
@@ -676,22 +763,20 @@ def generate_zpinch(variant="probe"):
     y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
 
     # --- REACTOR/DRIVER SECTION ---
-    reactor_h = int(total_h * 0.18)
+    reactor_h = int(total_h * 0.16)
     reactor_w = top_w + 30
     y = draw_reactor_housing(d, cx, y, ring_w, reactor_w, reactor_h,
                               tint="reactor", scale=scale)
 
-    # --- Z-PINCH COIL BODY (the main feature — cylindrical with coil rings) ---
-    body_h = int(total_h * 0.55)
+    # --- Z-PINCH COIL BODY ---
+    body_h = int(total_h * 0.52)
     body_top_w = reactor_w
-    body_bot_w = exit_w * 0.75  # slight taper outward
+    body_bot_w = exit_w * 0.72
 
-    # Draw the body as strips with coil rings overlaid
     n_coils = 5 if variant == "probe" else 8
     coil_spacing = body_h / (n_coils + 1)
     coil_th = max(5, int(5 * scale))
 
-    # Body shell
     n_strips = max(30, int(body_h / 6))
     sh = body_h / n_strips
     for i in range(n_strips):
@@ -700,15 +785,12 @@ def generate_zpinch(variant="probe"):
         w1 = body_top_w + (body_bot_w - body_top_w) * t
         w2 = body_top_w + (body_bot_w - body_top_w) * t1
         sy = y + t * body_h
-
-        # Subtle color variation
         band = math.sin(t * math.pi * n_coils * 2) * 5
         r = int(STEEL_MID[0] + band)
         g = int(STEEL_MID[1] + band)
-        b = int(STEEL_MID[2] + band + 5)  # slight blue tint
+        b = int(STEEL_MID[2] + band + 5)
         trap(d, cx, int(sy), w1, w2, int(sh) + 1, fill=clamp_color((r, g, b)))
 
-    # Interior visible as dark center stripe
     for i in range(n_strips):
         t = i / n_strips
         t1 = (i + 1) / n_strips
@@ -719,19 +801,33 @@ def generate_zpinch(variant="probe"):
         sy = y + t * body_h
         trap(d, cx, int(sy), iw1, iw2, int(sh) + 1, fill=INTERIOR)
 
-    # Left edge highlight
     d.line([(cx - int(body_top_w / 2) + 3, y),
             (cx - int(body_bot_w / 2) + 3, y + body_h)],
            fill=STEEL_LIGHT, width=max(2, int(2 * scale)))
 
-    # Pinch coils — the star of the show
+    # Electrode structures
+    electrode_len = max(8, int(14 * scale))
+    electrode_w = max(3, int(4 * scale))
+    for pos_frac, body_frac in [(0.02, 0.02), (0.96, 0.96)]:
+        ey = y + int(body_h * pos_frac)
+        ew = body_top_w + (body_bot_w - body_top_w) * body_frac
+        for s in [-1, 1]:
+            ex = cx + s * int(ew / 2)
+            ex2 = ex + s * electrode_len
+            d.rectangle([min(ex, ex2), ey - electrode_w,
+                         max(ex, ex2), ey + electrode_w],
+                        fill=COIL_MID, outline=COIL_DARK)
+            tip_x1 = ex + s * (electrode_len - 3)
+            d.rectangle([min(tip_x1, ex2), ey - electrode_w + 1,
+                         max(tip_x1, ex2), ey + electrode_w - 1],
+                        fill=COIL_LIGHT)
+
     for i in range(n_coils):
         cy_pos = y + int((i + 1) * coil_spacing)
         frac = (i + 1) / (n_coils + 1)
         cw = body_top_w + (body_bot_w - body_top_w) * frac
         draw_magnetic_coil(d, cx, cy_pos, cw, coil_th, scale=scale)
 
-    # Structural ribs between coils
     rib_h = max(2, int(3 * scale))
     for i in range(n_coils + 1):
         if i == 0:
@@ -747,57 +843,32 @@ def generate_zpinch(variant="probe"):
 
     y += body_h
 
-    # --- NOZZLE FLARE (short, opening to full width) ---
-    flare_h = int(total_h * 0.20)
-    throat_w = body_bot_w * 0.6
-
-    # Converging section
-    conv_h = int(flare_h * 0.25)
+    # --- CONVERGING SECTION ---
+    conv_h = int(total_h * 0.05)
+    throat_w = body_bot_w * 0.5
     trap(d, cx, y, body_bot_w, throat_w, conv_h, STEEL_DARK, outline=STEEL_VERY_DARK)
     y += conv_h
 
-    # Flared nozzle
-    nozzle_h = flare_h - conv_h
-    n_strips = max(20, int(nozzle_h / 5))
-    sh = nozzle_h / n_strips
-    for i in range(n_strips):
-        t = i / n_strips
-        t1 = (i + 1) / n_strips
-        w1 = bell_w(t, throat_w, exit_w, exp=1.5)
-        w2 = bell_w(t1, throat_w, exit_w, exp=1.5)
-        sy = y + t * nozzle_h
-        heat = t ** 1.5
-        r = int(STEEL_MID[0] - 3 + heat * 15)
-        g = int(STEEL_MID[1] - 3 + heat * 5)
-        b = int(STEEL_MID[2] - 3 - heat * 8)
-        trap(d, cx, int(sy), w1, w2, int(sh) + 1, fill=clamp_color((r, g, b)))
-
-    # Coil at nozzle throat
-    draw_magnetic_coil(d, cx, y + int(nozzle_h * 0.05), throat_w + 10,
-                       max(5, int(5 * scale)), scale=scale)
-    # Coil at nozzle mid
-    mid_w = bell_w(0.5, throat_w, exit_w, exp=1.5)
-    draw_magnetic_coil(d, cx, y + int(nozzle_h * 0.5), mid_w,
-                       max(5, int(5 * scale)), scale=scale)
-
-    # Exit lip
-    lip_h = max(4, int(5 * scale))
-    ehw = int(exit_w / 2)
-    ey = y + nozzle_h - lip_h
-    d.rectangle([cx - ehw, int(ey), cx + ehw, int(ey + lip_h)],
-                fill=ABLATIVE_TIP, outline=STEEL_VERY_DARK)
+    # --- OPEN MAGNETIC CAGE NOZZLE ---
+    nozzle_h = int(total_h * 0.22)
+    n_nozzle_coils = 4 if variant == "probe" else 6
+    nozzle_coil_fracs = [(i + 0.5) / n_nozzle_coils for i in range(n_nozzle_coils)]
+    y = draw_open_magnetic_nozzle(d, cx, y, throat_w, exit_w, nozzle_h,
+                                   coil_fracs=nozzle_coil_fracs, bell_exp=1.5,
+                                   wall_base=max(5, int(8 * scale)),
+                                   n_longerons=3, scale=scale)
 
     return img
 
 
 def generate_amcat():
-    """Antimatter-Catalyzed Fusion Engine — 16w × 21h, 2500t
+    """Antimatter-Catalyzed Fusion Engine — 22w x 16h, 2000t
 
-    Hybrid: a fusion reactor with trace antimatter injection to catalyze
-    ignition. Two-section silhouette: bulging reactor section with a
-    distinctive antimatter injection collar, feeding into a magnetic nozzle.
+    ICAN-II style hybrid. Compact design — Penning trap antimatter storage
+    feeds into a fusion reactor with ion beam injectors. Open magnetic cage
+    nozzle. More compact than Daedalus (less reaction area needed).
     """
-    W, H, TOP = 16, 21, 10
+    W, H, TOP = 22, 16, 12
     img_w = int(W * PX) + PAD * 2
     img_h = int(H * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -814,37 +885,48 @@ def generate_amcat():
     ring_w = top_w + 20
     y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
 
-    # --- ANTIMATTER INJECTION COLLAR (distinctive purple ring) ---
-    collar_h = max(12, int(total_h * 0.035))
-    collar_w = ring_w + 10
-    y = draw_containment_ring(d, cx, y, collar_w, collar_h,
-                               tint="antimatter", scale=scale)
-    # Injection port nozzles on the collar
-    port_r = max(4, int(6 * scale))
-    for s in [-1, 1]:
-        px = cx + s * int(collar_w / 2 + 4)
-        circ(d, px, y - collar_h // 2, port_r + 2, fill=AM_DARK)
-        circ(d, px, y - collar_h // 2, port_r, fill=AM_LIGHT)
+    # --- PENNING TRAP MODULE ---
+    trap_h = max(20, int(total_h * 0.07))
+    trap_w = ring_w + 16
+    rect(d, cx, y, trap_w, trap_h, AM_MID, outline=AM_DARK)
+    coil_ring_h = max(3, int(4 * scale))
+    for frac in [0.2, 0.5, 0.8]:
+        ry = y + int(trap_h * frac)
+        hw = int(trap_w / 2)
+        extra = max(3, int(5 * scale))
+        d.rectangle([cx - hw - extra, ry - coil_ring_h,
+                     cx + hw + extra, ry + coil_ring_h], fill=AM_LIGHT)
+        d.rectangle([cx - hw - extra, ry - coil_ring_h,
+                     cx + hw + extra, ry - coil_ring_h + 1], fill=AM_HIGHLIGHT)
+        d.rectangle([cx - hw - extra, ry + coil_ring_h - 1,
+                     cx + hw + extra, ry + coil_ring_h], fill=AM_DARK)
+    glow_y = y + trap_h // 2
+    glow_hw = int(trap_w * 0.35)
+    d.line([(cx - glow_hw, glow_y), (cx + glow_hw, glow_y)],
+           fill=AM_HIGHLIGHT, width=max(2, int(3 * scale)))
+    d.line([(cx - glow_hw + 4, glow_y - 1), (cx + glow_hw - 4, glow_y - 1)],
+           fill=(180, 150, 210), width=1)
+    d.line([(cx - int(trap_w / 2) + 2, y + 2),
+            (cx - int(trap_w / 2) + 2, y + trap_h - 2)],
+           fill=AM_LIGHT, width=max(1, int(2 * scale)))
+    y += trap_h
 
-    # --- FUSION REACTOR (wider bulging section) ---
-    reactor_h = int(total_h * 0.22)
-    reactor_top_w = collar_w + 10
-    reactor_max_w = exit_w * 0.62  # widest point
+    # --- FUSION REACTOR ---
+    reactor_h = int(total_h * 0.20)
+    reactor_top_w = trap_w + 10
+    reactor_max_w = exit_w * 0.62
     reactor_bot_w = reactor_max_w - 20
 
-    # Upper half: expanding
     half_h = reactor_h // 2
-    trap(d, cx, y, reactor_top_w, reactor_max_w, half_h, REACTOR_MID, outline=REACTOR_DARK)
-    # Lower half: contracting slightly
+    trap(d, cx, y, reactor_top_w, reactor_max_w, half_h,
+         REACTOR_MID, outline=REACTOR_DARK)
     trap(d, cx, y + half_h, reactor_max_w, reactor_bot_w, half_h,
          REACTOR_MID, outline=REACTOR_DARK)
 
-    # Left highlight
     d.line([(cx - int(reactor_top_w / 2) + 2, y + 2),
             (cx - int(reactor_max_w / 2) + 2, y + half_h)],
            fill=REACTOR_LIGHT, width=max(1, int(2 * scale)))
 
-    # Structural bands
     band_h = max(3, int(3 * scale))
     for frac in [0.25, 0.5, 0.75]:
         by = y + int(reactor_h * frac)
@@ -854,16 +936,26 @@ def generate_amcat():
             bw = reactor_max_w + (reactor_bot_w - reactor_max_w) * ((frac - 0.5) / 0.5)
         bhw = int(bw / 2)
         d.rectangle([cx - bhw, by, cx + bhw, by + band_h], fill=REACTOR_LIGHT)
-        d.rectangle([cx - bhw, by + band_h, cx + bhw, by + band_h + 1], fill=REACTOR_DARK)
+        d.rectangle([cx - bhw, by + band_h, cx + bhw, by + band_h + 1],
+                    fill=REACTOR_DARK)
 
-    # Panel lines
-    n_panels = max(3, int(reactor_max_w / (50 * scale)))
-    for i in range(n_panels):
-        frac = (i + 1) / (n_panels + 1)
-        px = cx - int(reactor_max_w / 2) + int(reactor_max_w * frac)
-        d.line([(px, y + 4), (px, y + reactor_h - 4)], fill=REACTOR_DARK, width=1)
+    # Ion beam injector nubs
+    nub_len = max(6, int(10 * scale))
+    nub_h = max(4, int(6 * scale))
+    for s in [-1, 1]:
+        for frac in [0.3, 0.5, 0.7]:
+            ny = y + int(reactor_h * frac)
+            if frac < 0.5:
+                nw = reactor_top_w + (reactor_max_w - reactor_top_w) * (frac / 0.5)
+            else:
+                nw = reactor_max_w + (reactor_bot_w - reactor_max_w) * ((frac - 0.5) / 0.5)
+            nx = cx + s * int(nw / 2)
+            nx2 = nx + s * nub_len
+            d.rectangle([min(nx, nx2), ny - nub_h // 2,
+                         max(nx, nx2), ny + nub_h // 2],
+                        fill=STEEL_MID, outline=STEEL_DARK)
+            circ(d, nx2, ny, max(2, nub_h // 3), fill=ENERGY_MID)
 
-    # Viewport/sensor windows on reactor
     vp_r = max(5, int(8 * scale))
     for s in [-1, 1]:
         vpx = cx + s * int(reactor_max_w * 0.3)
@@ -873,39 +965,38 @@ def generate_amcat():
         circ(d, vpx, vpy, vp_r - 2, fill=ENERGY_LIGHT)
     y += reactor_h
 
-    # --- CONTAINMENT RING (at reactor/nozzle junction) ---
+    # --- CONTAINMENT RING ---
     cont_h = max(10, int(total_h * 0.03))
     y = draw_containment_ring(d, cx, y, reactor_bot_w, cont_h,
                                tint="copper", scale=scale)
 
-    # --- TRANSITION TO NOZZLE ---
+    # --- TRANSITION ---
     trans_h = int(total_h * 0.04)
     throat_w = exit_w * 0.16
     trap(d, cx, y, reactor_bot_w, throat_w + 30, trans_h,
          STEEL_DARK, outline=STEEL_VERY_DARK)
     y += trans_h
 
-    # --- MAGNETIC NOZZLE ---
-    nozzle_h = int(total_h * 0.65)
-    coil_fracs = [0.08, 0.22, 0.38, 0.55, 0.72, 0.88]
-    y = draw_magnetic_nozzle(d, cx, y, throat_w, exit_w, nozzle_h,
-                              coil_fracs=coil_fracs, bell_exp=1.8,
-                              wall_base=max(6, int(9 * scale)),
-                              tint_shift=(5, -2, -5),  # slightly warmer
-                              scale=scale)
+    # --- OPEN MAGNETIC NOZZLE CAGE ---
+    nozzle_h = int(total_h * 0.60)
+    coil_fracs = [0.1, 0.28, 0.46, 0.65, 0.84]
+    y = draw_open_magnetic_nozzle(d, cx, y, throat_w, exit_w, nozzle_h,
+                                   coil_fracs=coil_fracs, bell_exp=1.8,
+                                   wall_base=max(6, int(9 * scale)),
+                                   n_longerons=3, scale=scale,
+                                   tint_shift=(5, -2, -5))
 
     return img
 
 
 def generate_am_torch():
-    """Antimatter Torch — 12w × 16h, 1200t
+    """Antimatter Torch — 8w x 12h, 800t
 
-    Pure matter-antimatter annihilation engine. Sleek and narrow with
-    magnetic confinement rings. Nearly cylindrical profile. Minimal
-    bell flare — magnetic nozzle is so efficient it barely needs
-    physical expansion. The most refined-looking engine.
+    Beam-core antimatter annihilation in a magnetic bottle. Very compact —
+    the magnetic bottle solenoid is the entire reaction vessel. Open cage
+    of coil rings with magnetic mirrors at both ends.
     """
-    W, H, TOP = 12, 16, 7
+    W, H, TOP = 8, 12, 6
     img_w = int(W * PX) + PAD * 2
     img_h = int(H * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -922,121 +1013,127 @@ def generate_am_torch():
     ring_w = top_w + 16
     y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
 
-    # --- ANTIMATTER CONTAINMENT MODULE ---
-    # Narrow cylindrical section with purple-tinted housing
-    contain_h = int(total_h * 0.30)
-    contain_top_w = ring_w + 8
-    contain_bot_w = exit_w * 0.55
+    # --- ANTIMATTER FEED SYSTEM ---
+    feed_h = int(total_h * 0.16)
+    feed_top_w = ring_w + 4
+    feed_bot_w = exit_w * 0.42
+    y = draw_reactor_housing(d, cx, y, feed_top_w, feed_bot_w, feed_h,
+                              tint="antimatter", scale=scale)
 
-    # Body with AM tint
-    y = draw_reactor_housing(d, cx, y, contain_top_w, contain_bot_w,
-                              contain_h, tint="antimatter", scale=scale)
-
-    # Superconducting containment rings (3 rings)
-    for frac in [0.25, 0.50, 0.75]:
-        ry = y - int(contain_h * (1 - frac))
-        rw = contain_top_w + (contain_bot_w - contain_top_w) * frac
-        ring_h = max(6, int(8 * scale))
+    for frac in [0.25, 0.55, 0.85]:
+        ry = y - int(feed_h * (1 - frac))
+        rw = feed_top_w + (feed_bot_w - feed_top_w) * frac
+        ring_h = max(4, int(5 * scale))
         draw_containment_ring(d, cx, ry - ring_h // 2, rw, ring_h,
                                tint="antimatter", scale=scale)
 
-    # --- MAGNETIC CONFINEMENT CHANNEL ---
-    # Nearly uniform diameter tube — the annihilation zone
-    channel_h = int(total_h * 0.35)
-    channel_w = contain_bot_w
-    channel_bot_w = channel_w + 10  # barely tapers
+    # --- UPPER MAGNETIC MIRROR ---
+    # Width matches the narrow bottom of the purple feed trapezoid
+    mirror_w = feed_bot_w + 10
+    mirror_coil_th = max(5, int(7 * scale))
 
-    # Draw as strips with glow
-    n_strips = max(25, int(channel_h / 5))
-    sh = channel_h / n_strips
-    for i in range(n_strips):
-        t = i / n_strips
-        t1 = (i + 1) / n_strips
-        w1 = channel_w + (channel_bot_w - channel_w) * t
-        w2 = channel_w + (channel_bot_w - channel_w) * t1
-        sy = y + t * channel_h
+    hw = int(mirror_w / 2)
+    for row in range(mirror_coil_th):
+        t = row / max(1, mirror_coil_th - 1)
+        shade = 0.3 + 0.5 * math.sin(t * math.pi)
+        r = int(STEEL_DARK[0] + (STEEL_LIGHT[0] - STEEL_DARK[0]) * shade)
+        g = int(STEEL_DARK[1] + (STEEL_LIGHT[1] - STEEL_DARK[1]) * shade)
+        b = int(STEEL_DARK[2] + (STEEL_LIGHT[2] - STEEL_DARK[2]) * shade)
+        d.rectangle([cx - hw, y + row, cx + hw, y + row + 1],
+                    fill=clamp_color((r, g, b)))
+    d.line([(cx - hw + 2, y), (cx + hw - 2, y)],
+           fill=STEEL_HIGHLIGHT, width=1)
+    d.line([(cx - hw + 2, y + mirror_coil_th - 1),
+            (cx + hw - 2, y + mirror_coil_th - 1)],
+           fill=STEEL_VERY_DARK, width=1)
+    y += mirror_coil_th + 4
 
-        # AM-tinted steel
-        r = int(AM_MID[0] - 10 + t * 15)
-        g = int(AM_MID[1] - 10 + t * 10)
-        b = int(AM_MID[2] - 5 + t * 8)
-        band = math.sin(t * math.pi * 6) * 4
-        trap(d, cx, int(sy), w1, w2, int(sh) + 1,
-             fill=clamp_color((int(r + band), int(g + band), int(b + band))))
+    # --- OPEN SOLENOID CAGE (Magnetic Bottle) ---
+    # Narrow rectangular cage matching the feed exit width
+    cage_h = int(total_h * 0.30)
+    cage_w = feed_bot_w  # matches narrow end of purple trapezoid
+    n_cage_coils = 5
+    cage_coil_th = max(3, int(5 * scale))
+    cage_coil_spacing = cage_h / (n_cage_coils + 1)
+    longeron_w = max(3, int(4 * scale))
 
-    # Interior — bright energy channel
-    for i in range(n_strips):
-        t = i / n_strips
-        t1 = (i + 1) / n_strips
-        w1 = channel_w + (channel_bot_w - channel_w) * t
-        w2 = channel_w + (channel_bot_w - channel_w) * t1
-        iw1 = w1 * 0.4
-        iw2 = w2 * 0.4
-        sy = y + t * channel_h
-        # Deep interior with faint purple glow
-        ir = int(25 + t * 8)
-        ig = int(20 + t * 5)
-        ib = int(35 + t * 12)
-        trap(d, cx, int(sy), iw1, iw2, int(sh) + 1, fill=(ir, ig, ib))
+    cage_hw = int(cage_w / 2)
+    n_cage_longerons = max(3, int(cage_w / (60 * scale)))
+    for li in range(n_cage_longerons):
+        pos_frac = li / max(1, n_cage_longerons - 1)
+        lx = cx - cage_hw + int(pos_frac * cage_w)
+        d.rectangle([lx - longeron_w // 2, y,
+                     lx + longeron_w // 2, y + cage_h],
+                    fill=STEEL_MID)
+        if li == 0:
+            d.rectangle([lx - longeron_w // 2, y,
+                         lx - longeron_w // 2 + 1, y + cage_h],
+                        fill=STEEL_LIGHT)
 
-    # Superconducting rings along channel
-    n_rings = 4
-    for i in range(n_rings):
-        frac = (i + 0.5) / n_rings
-        ry = y + int(channel_h * frac)
-        rw = channel_w + (channel_bot_w - channel_w) * frac
-        ring_h = max(5, int(7 * scale))
-        # These are thinner, more delicate rings than the containment ones
-        hw = int(rw / 2)
-        extra = max(3, int(5 * scale))
-        d.rectangle([cx - hw - extra, ry - ring_h // 2,
-                     cx + hw + extra, ry + ring_h // 2], fill=AM_LIGHT)
-        d.rectangle([cx - hw - extra, ry - ring_h // 2,
-                     cx + hw + extra, ry - ring_h // 2 + 2], fill=AM_HIGHLIGHT)
-        d.rectangle([cx - hw - extra, ry + ring_h // 2 - 2,
-                     cx + hw + extra, ry + ring_h // 2], fill=AM_DARK)
+    coil_positions = [(i + 1) * cage_coil_spacing for i in range(n_cage_coils)]
+    for i in range(n_cage_coils):
+        cy_pos = int(y + coil_positions[i])
+        band_y = cy_pos - cage_coil_th // 2
 
-    # Left edge highlight
-    d.line([(cx - int(channel_w / 2) + 2, y),
-            (cx - int(channel_bot_w / 2) + 2, y + channel_h)],
-           fill=AM_LIGHT, width=max(1, int(2 * scale)))
-    y += channel_h
+        for row in range(cage_coil_th):
+            t = row / max(1, cage_coil_th - 1)
+            shade = 0.3 + 0.5 * math.sin(t * math.pi)
+            r = int(STEEL_DARK[0] + (STEEL_LIGHT[0] - STEEL_DARK[0]) * shade)
+            g = int(STEEL_DARK[1] + (STEEL_LIGHT[1] - STEEL_DARK[1]) * shade)
+            b = int(STEEL_DARK[2] + (STEEL_LIGHT[2] - STEEL_DARK[2]) * shade)
+            ry = band_y + row
+            d.rectangle([cx - cage_hw, ry, cx + cage_hw, ry + 1],
+                        fill=clamp_color((r, g, b)))
 
-    # --- NOZZLE (minimal flare) ---
-    nozzle_h = int(total_h * 0.30)
-    throat_w = channel_bot_w * 0.7
+        d.line([(cx - cage_hw + 2, band_y), (cx + cage_hw - 2, band_y)],
+               fill=STEEL_HIGHLIGHT, width=1)
+        d.line([(cx - cage_hw + 2, band_y + cage_coil_th - 1),
+                (cx + cage_hw - 2, band_y + cage_coil_th - 1)],
+               fill=STEEL_VERY_DARK, width=1)
 
-    # Converging
-    conv_h = int(nozzle_h * 0.15)
-    trap(d, cx, y, channel_bot_w, throat_w, conv_h, STEEL_DARK, outline=STEEL_VERY_DARK)
-    y += conv_h
+    y += cage_h
 
-    # Short magnetic nozzle with just 3 coils
-    bell_h = nozzle_h - conv_h
-    coil_fracs = [0.15, 0.5, 0.85]
-    y = draw_magnetic_nozzle(d, cx, y, throat_w, exit_w, bell_h,
-                              coil_fracs=coil_fracs, bell_exp=1.6,
-                              wall_base=max(5, int(7 * scale)),
-                              tint_shift=(8, -3, -8),  # warm AM tint
-                              scale=scale)
+    # --- LOWER MAGNETIC MIRROR ---
+    lower_mirror_w = cage_w + 10
+    hw = int(lower_mirror_w / 2)
+    for row in range(mirror_coil_th):
+        t = row / max(1, mirror_coil_th - 1)
+        shade = 0.3 + 0.5 * math.sin(t * math.pi)
+        r = int(STEEL_DARK[0] + (STEEL_LIGHT[0] - STEEL_DARK[0]) * shade)
+        g = int(STEEL_DARK[1] + (STEEL_LIGHT[1] - STEEL_DARK[1]) * shade)
+        b = int(STEEL_DARK[2] + (STEEL_LIGHT[2] - STEEL_DARK[2]) * shade)
+        d.rectangle([cx - hw, y + row, cx + hw, y + row + 1],
+                    fill=clamp_color((r, g, b)))
+    d.line([(cx - hw + 2, y), (cx + hw - 2, y)],
+           fill=STEEL_HIGHLIGHT, width=1)
+    d.line([(cx - hw + 2, y + mirror_coil_th - 1),
+            (cx + hw - 2, y + mirror_coil_th - 1)],
+           fill=STEEL_VERY_DARK, width=1)
+    y += mirror_coil_th + 2
+
+    # --- EXPANDING OPEN NOZZLE CAGE (trapezoid shape) ---
+    nozzle_h = int(total_h * 0.22)
+    nozzle_throat = cage_w
+    nozzle_exit = exit_w * 0.9
+    n_nozzle_coils = 4
+    nozzle_coil_fracs = [(i + 0.5) / n_nozzle_coils for i in range(n_nozzle_coils)]
+    y = draw_open_magnetic_nozzle(d, cx, y, nozzle_throat, nozzle_exit, nozzle_h,
+                                   coil_fracs=nozzle_coil_fracs, bell_exp=1.5,
+                                   wall_base=max(4, int(6 * scale)),
+                                   n_longerons=2, scale=scale)
 
     return img
 
 
 def generate_gamma_conversion():
-    """Gamma Conversion Engine — 13w × 20h, 1800t
+    """Gamma Conversion Drive — 34w x 26h, 1800t
 
-    The most exotic engine. Converts antimatter annihilation gamma rays
-    into directed thrust via pair production and gamma reflection.
-
-    Three visually distinct sections:
-    1. Annihilation reactor (top, slight bulge, purple)
-    2. Pair production chamber (middle, narrow, blue-steel)
-    3. Gamma reflector array (bottom, wider, angled panels)
-
-    Segmented appearance with visible separation rings between sections.
+    Gamma ray laser from antimatter annihilation in pinch discharge.
+    Three-section design: compact annihilation reactor at top, pair production
+    chamber in the middle, massive parabolic reflector at bottom with
+    focal point structure.
     """
-    W, H, TOP = 13, 20, 7
+    W, H, TOP = 34, 26, 14
     img_w = int(W * PX) + PAD * 2
     img_h = int(H * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -1049,215 +1146,236 @@ def generate_gamma_conversion():
     y = PAD
 
     # --- MOUNT RING ---
-    mount_h = max(10, int(total_h * 0.02))
-    ring_w = top_w + 16
+    mount_h = max(10, int(total_h * 0.025))
+    ring_w = top_w + 20
     y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
 
-    # === SECTION 1: ANNIHILATION REACTOR (top, purple, slight bulge) ===
-    s1_h = int(total_h * 0.22)
-    s1_top_w = ring_w + 10
-    s1_max_w = exit_w * 0.65
-    s1_bot_w = s1_max_w - 10
+    # --- ANNIHILATION REACTOR (compact purple dome) ---
+    dome_h = int(total_h * 0.10)
+    dome_w = ring_w + 30
 
-    # Upper expanding
-    s1_upper_h = int(s1_h * 0.45)
-    trap(d, cx, y, s1_top_w, s1_max_w, s1_upper_h, AM_MID, outline=AM_DARK)
-    # Lower contracting
-    s1_lower_h = s1_h - s1_upper_h
-    trap(d, cx, y + s1_upper_h, s1_max_w, s1_bot_w, s1_lower_h, AM_MID, outline=AM_DARK)
+    n_strips = max(15, int(dome_h / 4))
+    sh = dome_h / n_strips
+    for i in range(n_strips):
+        t = i / n_strips
+        t1 = (i + 1) / n_strips
+        # Dome expansion curve
+        curve = math.sin(t * math.pi * 0.5)
+        curve1 = math.sin(t1 * math.pi * 0.5)
+        w1 = ring_w + (dome_w - ring_w) * curve
+        w2 = ring_w + (dome_w - ring_w) * curve1
+        sy = y + t * dome_h
+        shade = 0.3 + 0.5 * curve
+        c = lerp_color(AM_DARK, AM_MID, shade)
+        trap(d, cx, int(sy), w1, w2, int(sh) + 1, fill=c)
 
-    # Panel lines and details
-    d.line([(cx - int(s1_top_w / 2) + 2, y + 2),
-            (cx - int(s1_max_w / 2) + 2, y + s1_upper_h)],
+    d.line([(cx - int(ring_w / 2) + 2, y + 2),
+            (cx - int(dome_w / 2) + 2, y + dome_h - 2)],
            fill=AM_LIGHT, width=max(1, int(2 * scale)))
-
-    # Structural bands
+    # Containment bands
     for frac in [0.3, 0.6]:
-        by = y + int(s1_h * frac)
-        if frac < 0.45:
-            bw = s1_top_w + (s1_max_w - s1_top_w) * (frac / 0.45)
-        else:
-            bw = s1_max_w + (s1_bot_w - s1_max_w) * ((frac - 0.45) / 0.55)
-        bhw = int(bw / 2)
-        d.rectangle([cx - bhw, by, cx + bhw, by + max(2, int(3 * scale))],
-                    fill=AM_LIGHT)
+        by = y + int(dome_h * frac)
+        curve = math.sin(frac * math.pi * 0.5)
+        bw = ring_w + (dome_w - ring_w) * curve
+        bhw = int(bw / 2) + 3
+        d.rectangle([cx - bhw, by, cx + bhw, by + max(3, int(3 * scale))],
+                    fill=AM_HIGHLIGHT)
+        d.rectangle([cx - bhw, by + 3, cx + bhw, by + 4], fill=AM_DARK)
+    y += dome_h
 
-    # Containment rings
-    for frac in [0.2, 0.5, 0.8]:
-        ry = y + int(s1_h * frac)
-        if frac < 0.45:
-            rw = s1_top_w + (s1_max_w - s1_top_w) * (frac / 0.45)
-        else:
-            rw = s1_max_w + (s1_bot_w - s1_max_w) * ((frac - 0.45) / 0.55)
-        ring_h = max(5, int(6 * scale))
-        hw = int(rw / 2)
-        extra = max(3, int(4 * scale))
-        d.rectangle([cx - hw - extra, ry - ring_h // 2,
-                     cx + hw + extra, ry + ring_h // 2], fill=AM_HIGHLIGHT)
-        d.rectangle([cx - hw - extra, ry + ring_h // 2 - 1,
-                     cx + hw + extra, ry + ring_h // 2], fill=AM_DARK)
-    y += s1_h
+    # --- PAIR PRODUCTION CHAMBER (blue cylinder) ---
+    chamber_h = int(total_h * 0.12)
+    chamber_w = dome_w + 10
 
-    # --- SEPARATION RING 1 ---
-    sep_h = max(8, int(total_h * 0.02))
-    y = draw_containment_ring(d, cx, y, s1_bot_w, sep_h, tint="steel", scale=scale)
+    rect(d, cx, y, chamber_w, chamber_h, ENERGY_MID, outline=ENERGY_DARK)
+    d.line([(cx - int(chamber_w / 2) + 3, y + 2),
+            (cx - int(chamber_w / 2) + 3, y + chamber_h - 2)],
+           fill=ENERGY_LIGHT, width=max(2, int(2 * scale)))
 
-    # === SECTION 2: PAIR PRODUCTION CHAMBER (middle, narrow, blue-steel) ===
-    s2_h = int(total_h * 0.28)
-    s2_w = s1_bot_w * 0.75  # narrower than reactor
-    s2_bot_w = s2_w + 15
-
-    # Cylindrical body with energy tint
-    n_strips = max(20, int(s2_h / 5))
-    sh = s2_h / n_strips
-    for i in range(n_strips):
-        t = i / n_strips
-        t1 = (i + 1) / n_strips
-        w1 = s2_w + (s2_bot_w - s2_w) * t
-        w2 = s2_w + (s2_bot_w - s2_w) * t1
-        sy = y + t * s2_h
-        # Blue-steel color with subtle variation
-        r = int(ENERGY_DARK[0] + 10 + math.sin(t * math.pi * 4) * 5)
-        g = int(ENERGY_DARK[1] + 15 + math.sin(t * math.pi * 4) * 5)
-        b = int(ENERGY_DARK[2] + 20 + math.sin(t * math.pi * 4) * 5)
-        trap(d, cx, int(sy), w1, w2, int(sh) + 1, fill=clamp_color((r, g, b)))
-
-    # Interior
-    for i in range(n_strips):
-        t = i / n_strips
-        t1 = (i + 1) / n_strips
-        w1 = s2_w + (s2_bot_w - s2_w) * t
-        w2 = s2_w + (s2_bot_w - s2_w) * t1
-        iw1 = w1 * 0.45
-        iw2 = w2 * 0.45
-        sy = y + t * s2_h
-        trap(d, cx, int(sy), iw1, iw2, int(sh) + 1, fill=INTERIOR)
-
-    # Left edge highlight
-    d.line([(cx - int(s2_w / 2) + 2, y + 2),
-            (cx - int(s2_bot_w / 2) + 2, y + s2_h - 2)],
-           fill=ENERGY_LIGHT, width=max(1, int(2 * scale)))
-
-    # Structural rings
-    n_rings = 4
-    ring_h = max(3, int(4 * scale))
-    for i in range(n_rings):
-        frac = (i + 0.5) / n_rings
-        ry = y + int(s2_h * frac)
-        rw = s2_w + (s2_bot_w - s2_w) * frac
-        rhw = int(rw / 2)
-        d.rectangle([cx - rhw - 3, ry - ring_h, cx + rhw + 3, ry + ring_h],
+    # Horizontal bands
+    for frac in [0.3, 0.6]:
+        by = y + int(chamber_h * frac)
+        chw = int(chamber_w / 2)
+        d.rectangle([cx - chw, by, cx + chw, by + max(3, int(3 * scale))],
                     fill=ENERGY_LIGHT)
-        d.rectangle([cx - rhw - 3, ry + ring_h, cx + rhw + 3, ry + ring_h + 1],
-                    fill=ENERGY_DARK)
-    y += s2_h
 
-    # --- SEPARATION RING 2 ---
-    y = draw_containment_ring(d, cx, y, s2_bot_w, sep_h, tint="steel", scale=scale)
+    # Viewport windows
+    vp_r = max(5, int(7 * scale))
+    for s in [-1, 1]:
+        vpx = cx + s * int(chamber_w * 0.32)
+        vpy = y + chamber_h // 2
+        circ(d, vpx, vpy, vp_r + 2, fill=ENERGY_DARK)
+        circ(d, vpx, vpy, vp_r, fill=(70, 130, 180))
+        circ(d, vpx, vpy, vp_r - 2, fill=(90, 150, 200))
+    y += chamber_h
 
-    # === SECTION 3: GAMMA REFLECTOR ARRAY (bottom, wider, angled panels) ===
-    s3_h = int(total_h * 0.42)
-    s3_top_w = s2_bot_w + 10
-    s3_bot_w = exit_w
+    # --- TRANSITION ---
+    trans_h = int(total_h * 0.04)
+    reflector_top_w = chamber_w + 20
+    trap(d, cx, y, chamber_w, reflector_top_w, trans_h,
+         STEEL_DARK, outline=STEEL_VERY_DARK)
+    y += trans_h
 
-    # Main reflector body — wider, with distinctive angled panels
-    n_strips = max(30, int(s3_h / 5))
-    sh = s3_h / n_strips
+    # --- PARABOLIC REFLECTOR ---
+    reflector_h = int(total_h * 0.65)
+    reflector_bot_w = exit_w
+
+    # Draw parabolic profile (curves inward at top, flares at bottom)
+    n_strips = max(50, int(reflector_h / 4))
+    sh = reflector_h / n_strips
+
     for i in range(n_strips):
         t = i / n_strips
         t1 = (i + 1) / n_strips
-        w1 = s3_top_w + (s3_bot_w - s3_top_w) * (t ** 0.8)  # aggressive flare
-        w2 = s3_top_w + (s3_bot_w - s3_top_w) * (t1 ** 0.8)
-        sy = y + t * s3_h
-        # Warm silver color
-        heat = t ** 1.2
-        r = int(GAMMA_MID[0] + heat * 10)
-        g = int(GAMMA_MID[1] + heat * 6)
-        b = int(GAMMA_MID[2] + heat * 3 - heat * 8)
-        band = math.sin(t * math.pi * 6) * 4
-        trap(d, cx, int(sy), w1, w2, int(sh) + 1,
-             fill=clamp_color((int(r + band), int(g + band), int(b + band))))
+        # Parabolic curve: w = top + (bot-top) * t^0.6
+        w1 = reflector_top_w + (reflector_bot_w - reflector_top_w) * (t ** 0.6)
+        w2 = reflector_top_w + (reflector_bot_w - reflector_top_w) * (t1 ** 0.6)
+        sy = y + t * reflector_h
 
-    # Interior
+        shade = 0.3 + 0.5 * t
+        c = lerp_color(GAMMA_DARK, GAMMA_MID, shade)
+        trap(d, cx, int(sy), w1, w2, int(sh) + 1, fill=c)
+
+    # Interior surface (reflective)
+    wall_base = max(8, int(12 * scale))
     for i in range(n_strips):
         t = i / n_strips
         t1 = (i + 1) / n_strips
-        w1 = s3_top_w + (s3_bot_w - s3_top_w) * (t ** 0.8)
-        w2 = s3_top_w + (s3_bot_w - s3_top_w) * (t1 ** 0.8)
-        iw1 = w1 * 0.5
-        iw2 = w2 * 0.5
-        sy = y + t * s3_h
-        heat = t ** 1.5
-        ir = int(INTERIOR[0] + heat * 10)
-        ig = int(INTERIOR[1] + heat * 3)
-        ib = int(INTERIOR[2] + heat * 5)
-        trap(d, cx, int(sy), iw1, iw2, int(sh) + 1, fill=(ir, ig, ib))
+        w1 = reflector_top_w + (reflector_bot_w - reflector_top_w) * (t ** 0.6)
+        w2 = reflector_top_w + (reflector_bot_w - reflector_top_w) * (t1 ** 0.6)
+        wt = wall_base * (1.0 - 0.3 * t)
+        iw1 = max(0, w1 - wt * 2)
+        iw2 = max(0, w2 - wt * 2)
+        sy = y + t * reflector_h
+        if iw1 > 4 and iw2 > 4:
+            # Slightly warm-tinted interior
+            heat = t ** 0.5
+            ir = int(GAMMA_DARK[0] - 10 + heat * 5)
+            ig = int(GAMMA_DARK[1] - 10 + heat * 3)
+            ib = int(GAMMA_DARK[2] - 10 + heat * 3)
+            trap(d, cx, int(sy), iw1, iw2, int(sh) + 1,
+                 fill=clamp_color((ir, ig, ib)))
 
-    # Angled reflector panel lines (diagonal hatching — the distinctive feature)
-    n_panels = max(8, int(s3_bot_w / (25 * scale)))
-    for i in range(n_panels):
-        frac = (i + 0.5) / n_panels
-        # Panel line goes from top-left to bottom-right at an angle
-        top_x = cx - int(s3_top_w / 2) + int(s3_top_w * frac)
-        bot_frac = min(1.0, frac + 0.08)
-        bot_x = cx - int(s3_bot_w / 2) + int(s3_bot_w * bot_frac)
-        d.line([(top_x, y + 4), (bot_x, y + s3_h - 4)],
-               fill=GAMMA_DARK, width=max(1, int(2 * scale)))
+    # Curved panel lines following the parabola
+    n_panel_lines = max(6, int(reflector_bot_w / (60 * scale)))
+    for pi in range(n_panel_lines):
+        pfrac = (pi + 1) / (n_panel_lines + 1)
+        pts = []
+        for j in range(30):
+            t = j / 29
+            w = reflector_top_w + (reflector_bot_w - reflector_top_w) * (t ** 0.6)
+            wt = wall_base * (1.0 - 0.3 * t)
+            outer_hw = w / 2
+            inner_hw = max(0, outer_hw - wt)
+            panel_x = inner_hw + (outer_hw - inner_hw) * pfrac
+            py = y + int(t * reflector_h)
+            pts.append((cx - int(panel_x), py))
+        for k in range(len(pts) - 1):
+            d.line([pts[k], pts[k + 1]], fill=GAMMA_DARK, width=1)
+        # Mirror for right side
+        pts_r = [(2 * cx - px, py) for px, py in pts]
+        for k in range(len(pts_r) - 1):
+            d.line([pts_r[k], pts_r[k + 1]], fill=GAMMA_DARK, width=1)
 
-    # Left highlight
-    d.line([(cx - int(s3_top_w / 2) + 2, y + 2),
-            (cx - int(s3_bot_w / 2) + 2, y + s3_h - 2)],
-           fill=GAMMA_HIGHLIGHT, width=max(2, int(3 * scale)))
+    # Horizontal structural bands (curved)
+    for frac in [0.2, 0.4, 0.6, 0.8]:
+        by = y + int(reflector_h * frac)
+        bw = reflector_top_w + (reflector_bot_w - reflector_top_w) * (frac ** 0.6)
+        bhw = int(bw / 2)
+        band_h = max(2, int(3 * scale))
+        d.rectangle([cx - bhw, by, cx + bhw, by + band_h], fill=GAMMA_LIGHT)
+        d.rectangle([cx - bhw, by + band_h, cx + bhw, by + band_h + 1],
+                    fill=GAMMA_DARK)
 
-    # Structural rings on reflector
-    for frac in [0.2, 0.45, 0.7]:
-        ry = y + int(s3_h * frac)
-        rw = s3_top_w + (s3_bot_w - s3_top_w) * (frac ** 0.8)
-        rhw = int(rw / 2)
-        ring_h = max(3, int(4 * scale))
-        d.rectangle([cx - rhw, ry - ring_h, cx + rhw, ry + ring_h], fill=GAMMA_LIGHT)
-        d.rectangle([cx - rhw, ry + ring_h, cx + rhw, ry + ring_h + 1], fill=GAMMA_DARK)
+    # Focal point structure — a small crosshair at the parabolic focus
+    focal_frac = 0.35  # focal point ~35% down the reflector
+    focal_y = y + int(reflector_h * focal_frac)
+    focal_w = reflector_top_w + (reflector_bot_w - reflector_top_w) * (focal_frac ** 0.6)
+    wt_focal = wall_base * (1.0 - 0.3 * focal_frac)
+    focal_inner_hw = max(0, focal_w / 2 - wt_focal)
+    focal_arm_len = max(8, int(focal_inner_hw * 0.3))
 
-    # Magnetic coils near exit
-    for frac in [0.6, 0.85]:
-        cy_pos = y + int(s3_h * frac)
-        cw = s3_top_w + (s3_bot_w - s3_top_w) * (frac ** 0.8)
-        draw_magnetic_coil(d, cx, cy_pos, cw, max(5, int(5 * scale)), scale=scale)
+    # Support struts to focal element
+    for s in [-1, 1]:
+        strut_x = cx + s * int(focal_inner_hw)
+        d.line([(strut_x, focal_y), (cx + s * int(focal_arm_len * 0.5), focal_y)],
+               fill=STEEL_MID, width=max(2, int(2 * scale)))
+    # Focal element (small bright point)
+    focal_r = max(4, int(6 * scale))
+    circ(d, cx, focal_y, focal_r + 2, fill=STEEL_DARK)
+    circ(d, cx, focal_y, focal_r, fill=ENERGY_MID)
+    circ(d, cx, focal_y, max(2, focal_r - 3), fill=ENERGY_LIGHT)
+
+    # Magnetic collimation coils near exit — full-width bands within the nozzle
+    coil_th = max(5, int(6 * scale))
+    for frac in [0.85, 0.92]:
+        cy_pos = y + int(reflector_h * frac)
+        cw = reflector_top_w + (reflector_bot_w - reflector_top_w) * (frac ** 0.6)
+        chw = int(cw / 2)
+        band_y = cy_pos - coil_th // 2
+        for row in range(coil_th):
+            t_r = row / max(1, coil_th - 1)
+            shade = 0.15 + 0.55 * math.sin(t_r * math.pi)
+            r = int(COIL_DARK[0] + (COIL_LIGHT[0] - COIL_DARK[0]) * shade)
+            g = int(COIL_DARK[1] + (COIL_LIGHT[1] - COIL_DARK[1]) * shade)
+            b = int(COIL_DARK[2] + (COIL_LIGHT[2] - COIL_DARK[2]) * shade)
+            d.rectangle([cx - chw, band_y + row, cx + chw, band_y + row + 1],
+                        fill=clamp_color((r, g, b)))
+        d.line([(cx - chw + 2, band_y + 1), (cx + chw - 2, band_y + 1)],
+               fill=COIL_HIGHLIGHT, width=1)
+
+    # Right edge highlight (stays within reflector bounds)
+    n_hl = 30
+    for j in range(n_hl):
+        t = j / (n_hl - 1)
+        t1 = (j + 1) / (n_hl - 1)
+        if t1 > 1.0:
+            break
+        w1 = reflector_top_w + (reflector_bot_w - reflector_top_w) * (t ** 0.6)
+        w2 = reflector_top_w + (reflector_bot_w - reflector_top_w) * (t1 ** 0.6)
+        py1 = y + int(t * reflector_h)
+        py2 = y + int(t1 * reflector_h)
+        # Stop before the exit lip
+        if py2 >= y + reflector_h:
+            break
+        d.line([(cx + int(w1 / 2) - 2, py1), (cx + int(w2 / 2) - 2, py2)],
+               fill=GAMMA_HIGHLIGHT, width=max(1, int(2 * scale)))
 
     # Exit lip
-    lip_h = max(5, int(6 * scale))
-    ehw = int(exit_w / 2)
-    d.rectangle([cx - ehw, y + s3_h - lip_h, cx + ehw, y + s3_h],
-                fill=ABLATIVE_TIP, outline=STEEL_VERY_DARK)
+    lip_h = max(4, int(6 * scale))
+    bhw = int(reflector_bot_w / 2)
+    d.rectangle([cx - bhw, y + reflector_h - lip_h,
+                 cx + bhw, y + reflector_h],
+                fill=GAMMA_DARK, outline=STEEL_VERY_DARK)
 
     return img
 
 
 # ================================================================
-# Main
+# Engine registry and main
 # ================================================================
 
 ENGINES = {
-    "engine_orion_pulse": generate_orion,
-    "engine_daedalus_s1": lambda: generate_daedalus(stage=1),
-    "engine_daedalus_s2": lambda: generate_daedalus(stage=2),
-    "engine_zpinch_probe": lambda: generate_zpinch(variant="probe"),
-    "engine_zpinch_advanced": lambda: generate_zpinch(variant="advanced"),
-    "engine_amcat_fusion": generate_amcat,
-    "engine_am_torch": generate_am_torch,
-    "engine_gamma_conversion": generate_gamma_conversion,
+    "engine_orion_pulse":       ("Orion Pulse Drive", generate_orion),
+    "engine_daedalus_s1":       ("Daedalus S1", lambda: generate_daedalus(stage=1)),
+    "engine_daedalus_s2":       ("Daedalus S2", lambda: generate_daedalus(stage=2)),
+    "engine_zpinch_probe":      ("Z-Pinch Probe", lambda: generate_zpinch(variant="probe")),
+    "engine_zpinch_advanced":   ("Z-Pinch Advanced", lambda: generate_zpinch(variant="advanced")),
+    "engine_amcat_fusion":      ("AM-Cat Fusion", generate_amcat),
+    "engine_am_torch":          ("Antimatter Torch", generate_am_torch),
+    "engine_gamma_conversion":  ("Gamma Conversion", generate_gamma_conversion),
 }
 
+
 if __name__ == "__main__":
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
-    output_dir = os.path.join(project_root, "data", "sprites", "engines")
-    os.makedirs(output_dir, exist_ok=True)
+    out_dir = os.path.join(os.path.dirname(__file__), "..", "..", "data", "sprites", "engines")
+    os.makedirs(out_dir, exist_ok=True)
 
-    for name, gen_fn in ENGINES.items():
-        img = gen_fn()
-        out = os.path.join(output_dir, f"{name}.png")
-        img.save(out)
-        print(f"  {name:30s}  {img.size[0]:5d}x{img.size[1]:5d}")
+    for engine_id, (name, gen_func) in ENGINES.items():
+        print(f"Generating {name}...")
+        img = gen_func()
+        path = os.path.join(out_dir, f"{engine_id}.png")
+        img.save(path)
+        print(f"  -> {path}  ({img.size[0]}x{img.size[1]})")
 
-    print(f"\nGenerated {len(ENGINES)} interstellar engine sprites in {output_dir}")
+    print(f"\nDone! Generated {len(ENGINES)} engine sprites.")

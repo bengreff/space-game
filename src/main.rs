@@ -300,6 +300,10 @@ fn render_flight_frame(
 ) {
     let dt = 1.0 / 60.0; // Approximate for now, actual dt passed separately
 
+    // Power system state (updated each frame, read when building render data)
+    let mut power_generation = 0.0_f64;
+    let mut power_consumption = 0.0_f64;
+
     // --- Simulation (skipped when paused) ---
     let vessel_physics = if !game.paused {
         // Force warp to 1x if ship is below landing altitude at on-rails warp speeds (>10x)
@@ -443,6 +447,18 @@ fn render_flight_frame(
             vessel.consume_rcs_translation_fuel(effective_dt, game.flight.ship.rcs_translate, &game.part_definitions);
 
             vessel.recalculate_mass(&game.part_definitions);
+
+            // Power update: compute sun distance and update electricity
+            {
+                let ship_abs = game.flight.ship.absolute_position(&game.solar_system);
+                let sun_pos = game.solar_system.body_position(1); // Sun is index 1
+                let dx = ship_abs[0] - sun_pos[0];
+                let dy = ship_abs[1] - sun_pos[1];
+                let sun_distance_m = (dx * dx + dy * dy).sqrt();
+                let (gen, cons) = vessel.update_power(effective_dt, sun_distance_m, &game.part_definitions);
+                power_generation = gen;
+                power_consumption = cons;
+            }
 
             // Sync vessel state from ship
             vessel.rel_position = game.flight.ship.rel_position;
@@ -929,6 +945,15 @@ fn render_flight_frame(
 
     // Build part render data and vessel stats from flight vessel
 
+    // Sun distance for solar panel output display
+    let sun_distance_m = {
+        let ship_abs = game.flight.ship.absolute_position(&game.solar_system);
+        let sun_pos = game.solar_system.body_position(1);
+        let dx = ship_abs[0] - sun_pos[0];
+        let dy = ship_abs[1] - sun_pos[1];
+        (dx * dx + dy * dy).sqrt()
+    };
+
     let (part_render_data, vessel_mass, vessel_fuel_frac, vessel_thrust, vessel_delta_v, vessel_stage_delta_vs, vessel_size) =
         if let Some(ref vessel) = game.flight.vessel {
             let parts: Vec<ShipPartRenderData> = vessel.parts.iter()
@@ -1071,6 +1096,14 @@ fn render_flight_frame(
                         crew_capacity,
                         monoprop_current,
                         monoprop_max,
+                        battery_current: if p.max_electricity > 0.0 { Some(p.electricity) } else { None },
+                        battery_max: if p.max_electricity > 0.0 { Some(p.max_electricity) } else { None },
+                        solar_output: def.and_then(|d| d.solar_panel.as_ref().map(|sp| {
+                            let au_m = 1.496e11_f64;
+                            let ratio = au_m / sun_distance_m.max(1.0);
+                            sp.output_1au * ratio * ratio
+                        })),
+                        rtg_output: def.and_then(|d| d.rtg.as_ref().map(|r| r.output_watts)),
                         is_decoupler: def.map(|d| d.decoupler.is_some()).unwrap_or(false),
                         crossfeed_enabled: p.crossfeed_enabled,
                         gimbal_angle: p.gimbal_angle,
@@ -1182,6 +1215,10 @@ fn render_flight_frame(
         parts: part_render_data,
         total_mass: vessel_mass,
         fuel_fraction: vessel_fuel_frac,
+        power_generation: if game.flight.vessel.is_some() { Some(power_generation) } else { None },
+        power_consumption: if game.flight.vessel.is_some() { Some(power_consumption) } else { None },
+        electricity_fraction: game.flight.vessel.as_ref().and_then(|v| v.electricity_fraction()),
+        electricity_stored: game.flight.vessel.as_ref().map(|v| v.total_electricity()),
         thrust_kn: vessel_thrust,
         drag_kn,
         delta_v: vessel_delta_v,
@@ -1944,10 +1981,10 @@ fn render_editor_frame(
     vertices.extend(generate_grid_vertices(&game.editor, screen_width, screen_height));
 
     // Placed parts
-    vertices.extend(generate_part_vertices(&game.editor, &game.part_definitions));
+    vertices.extend(generate_part_vertices(&game.editor, &game.part_definitions, Some(&render_state.sprite_atlas)));
 
     // Ghost preview
-    vertices.extend(generate_ghost_vertices(&game.editor, &game.part_definitions));
+    vertices.extend(generate_ghost_vertices(&game.editor, &game.part_definitions, Some(&render_state.sprite_atlas)));
 
     // Get blueprint names for load dialog
     let blueprint_names: Vec<&str> = game.blueprints.names();
@@ -2245,6 +2282,10 @@ fn build_vessel_part_render_data(
                 crew_capacity: def.and_then(|d| d.pod.as_ref().map(|pod| pod.crew_capacity)),
                 monoprop_current: None,
                 monoprop_max: None,
+                battery_current: if p.max_electricity > 0.0 { Some(p.electricity) } else { None },
+                battery_max: if p.max_electricity > 0.0 { Some(p.max_electricity) } else { None },
+                solar_output: None, // Inactive vessels don't compute solar output
+                rtg_output: def.and_then(|d| d.rtg.as_ref().map(|r| r.output_watts)),
                 is_decoupler: def.map(|d| d.decoupler.is_some()).unwrap_or(false),
                 crossfeed_enabled: p.crossfeed_enabled,
                 gimbal_angle: 0.0,

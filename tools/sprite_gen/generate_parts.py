@@ -22,7 +22,7 @@ STEEL_VERY_DARK = (32, 34, 38)
 INTERIOR = (20, 18, 16)
 
 PX = 90   # Pixels per grid square
-PAD = 6   # Padding on each side
+PAD = 0   # No padding — atlas packer adds 1px spacing between sprites
 
 
 # ================================================================
@@ -279,9 +279,9 @@ def generate_nosecone(spec):
     x1, y1 = x0 + w, y0 + h
     cx = cw // 2
 
-    tip_color = (130, 135, 145)
-    base_color = (90, 94, 104)
-    edge_color = (50, 52, 58)
+    tip_color = (210, 215, 225)
+    base_color = (195, 200, 210)
+    edge_color = (145, 150, 160)
 
     if shape == "Triangle":
         # Isosceles: tip at top center, base at bottom
@@ -309,7 +309,7 @@ def generate_nosecone(spec):
             if half_w > 3:
                 px = cx - half_w + 2
                 py = y0 + i
-                hl = lerp_color((140, 145, 155), (100, 104, 114), frac)
+                hl = lerp_color((220, 225, 235), (200, 205, 215), frac)
                 d.point((px, py), fill=hl)
 
         # Center seam line
@@ -318,7 +318,7 @@ def generate_nosecone(spec):
             half_w = int(w / 2 * frac)
             if half_w > 4:
                 py = y0 + i
-                d.point((cx, py), fill=(80, 84, 94))
+                d.point((cx, py), fill=(178, 183, 193))
 
         # Structural ring near base
         ring_y = y1 - max(4, h // 8)
@@ -348,7 +348,7 @@ def generate_nosecone(spec):
         # Right edge highlight
         for i in range(2, h - 2):
             py = y0 + i
-            hl = lerp_color((140, 145, 155), (100, 104, 114), i / max(1, h))
+            hl = lerp_color((220, 225, 235), (200, 205, 215), i / max(1, h))
             d.point((x1 - 2, py), fill=hl)
 
         # Structural ring near base
@@ -377,7 +377,7 @@ def generate_nosecone(spec):
         # Left edge highlight
         for i in range(2, h - 2):
             py = y0 + i
-            hl = lerp_color((140, 145, 155), (100, 104, 114), i / max(1, h))
+            hl = lerp_color((220, 225, 235), (200, 205, 215), i / max(1, h))
             d.point((x0 + 2, py), fill=hl)
 
         # Structural ring near base
@@ -494,6 +494,149 @@ def generate_rcs(spec):
     return img
 
 
+def generate_battery(spec):
+    """Battery bank: black rectangle with horizontal cell lines and terminals."""
+    gw, gh = spec["grid_width"], spec["grid_height"]
+    w, h = int(gw * PX), int(gh * PX)
+    cw, ch = w + PAD * 2, h + PAD * 2
+    img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+
+    x0, y0 = PAD, PAD
+    x1, y1 = x0 + w, y0 + h
+    cx = cw // 2
+
+    # Body — black
+    body_color = (22, 22, 26)
+    d.rectangle([x0, y0, x1, y1], fill=body_color)
+
+    # Vertical cell division lines
+    n_cells = max(2, int(gw))
+    cell_w = w / n_cells
+    for i in range(1, n_cells):
+        lx = x0 + int(i * cell_w)
+        d.line([(lx, y0 + 3), (lx, y1 - 3)], fill=(35, 35, 40), width=1)
+
+    # Terminal indicators at top
+    term_h = max(3, h // 6)
+    d.rectangle([x0, y0, x1, y0 + term_h], fill=(38, 38, 44))
+
+    # Terminal dots
+    n_terms = max(1, int(gw) // 2)
+    term_spacing = w / (n_terms + 1)
+    for i in range(1, n_terms + 1):
+        tx = x0 + int(i * term_spacing)
+        tr = max(2, min(5, int(PX * 0.06)))
+        circ(d, tx, y0 + term_h // 2, tr, fill=(180, 200, 80))
+
+    # Metallic outline
+    d.rectangle([x0, y0, x1, y1], outline=STEEL_MID)
+
+    return img
+
+
+def generate_solar_panel(spec):
+    """Solar panel: dark navy with bright blue photovoltaic cell grid."""
+    gw, gh = spec["grid_width"], spec["grid_height"]
+    w, h = int(gw * PX), int(gh * PX)
+    cw, ch = w + PAD * 2, h + PAD * 2
+    img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+
+    x0, y0 = PAD, PAD
+    x1, y1 = x0 + w, y0 + h
+
+    # Frame (silver)
+    frame_color = (140, 145, 155)
+    d.rectangle([x0, y0, x1, y1], fill=frame_color)
+
+    # Panel hinge at bottom
+    hinge_h = max(4, int(PX * 0.08))
+    d.rectangle([x0, y1 - hinge_h, x1, y1], fill=STEEL_MID)
+    d.line([(x0, y1 - hinge_h), (x1, y1 - hinge_h)], fill=STEEL_DARK, width=1)
+
+    # Photovoltaic cell area (inset)
+    inset = max(2, int(PX * 0.04))
+    cell_color = (40, 80, 160)
+    cell_x0 = x0 + inset
+    cell_y0 = y0 + inset
+    cell_x1 = x1 - inset
+    cell_y1 = y1 - hinge_h - inset
+    d.rectangle([cell_x0, cell_y0, cell_x1, cell_y1], fill=cell_color)
+
+    # Cell grid lines
+    cell_h = cell_y1 - cell_y0
+    cell_w = cell_x1 - cell_x0
+    grid_line_color = (30, 60, 130)
+
+    # Horizontal grid (every ~0.5 grid units)
+    n_rows = max(2, int(gh * 2) - 1)
+    for i in range(1, n_rows):
+        ly = cell_y0 + int(i * cell_h / n_rows)
+        d.line([(cell_x0, ly), (cell_x1, ly)], fill=grid_line_color, width=1)
+
+    # Vertical center line
+    if cell_w > 20:
+        d.line([(cell_x0 + cell_w // 2, cell_y0), (cell_x0 + cell_w // 2, cell_y1)],
+               fill=grid_line_color, width=1)
+
+    # Specular highlight
+    highlight_color = (60, 110, 200)
+    hl_y = cell_y0 + cell_h // 4
+    hl_h = max(2, cell_h // 8)
+    d.rectangle([cell_x0 + 2, hl_y, cell_x1 - 2, hl_y + hl_h], fill=highlight_color)
+
+    # Outline
+    d.rectangle([x0, y0, x1, y1], outline=STEEL_DARK)
+
+    return img
+
+
+def generate_rtg(spec):
+    """RTG: dark grey body with red/orange heat dissipation fins."""
+    gw, gh = spec["grid_width"], spec["grid_height"]
+    w, h = int(gw * PX), int(gh * PX)
+    cw, ch = w + PAD * 2, h + PAD * 2
+    img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+
+    x0, y0 = PAD, PAD
+    x1, y1 = x0 + w, y0 + h
+    cx = cw // 2
+
+    # Body — dark grey
+    body_color = (55, 55, 60)
+    d.rectangle([x0, y0, x1, y1], fill=body_color)
+
+    # Heat dissipation fin stripes (red/orange horizontal bands)
+    n_fins = max(4, int(gh * 3))
+    fin_spacing = h / (n_fins + 1)
+    for i in range(1, n_fins + 1):
+        fy = y0 + int(i * fin_spacing)
+        t = i / (n_fins + 1)
+        fin_color = lerp_color((180, 60, 30), (200, 120, 40), t)
+        d.line([(x0 + 2, fy), (x1 - 2, fy)], fill=fin_color, width=2)
+
+    # Top cap
+    cap_h = max(4, int(PX * 0.1))
+    d.rectangle([x0, y0, x1, y0 + cap_h], fill=STEEL_MID)
+
+    # Bottom cap
+    d.rectangle([x0, y1 - cap_h, x1, y1], fill=STEEL_MID)
+
+    # Industrial warning mark (small yellow rectangle near top)
+    mark_w = max(4, w // 4)
+    mark_h = max(3, int(PX * 0.06))
+    d.rectangle([cx - mark_w // 2, y0 + cap_h + 4,
+                 cx + mark_w // 2, y0 + cap_h + 4 + mark_h],
+                fill=(200, 180, 40))
+
+    # Outline
+    d.rectangle([x0, y0, x1, y1], outline=STEEL_DARK)
+
+    return img
+
+
 # ================================================================
 # Part catalog
 # ================================================================
@@ -580,6 +723,22 @@ PARTS = {
     "rcs_small_left":  {"type": "rcs", "grid_width": 0.5, "grid_height": 0.75, "mirrored": True},
     "rcs_medium":      {"type": "rcs", "grid_width": 0.5, "grid_height": 1.0,  "mirrored": False},
     "rcs_medium_left": {"type": "rcs", "grid_width": 0.5, "grid_height": 1.0,  "mirrored": True},
+
+    # --- BATTERIES ---
+    "battery_z1":      {"type": "battery", "grid_width": 1.0,  "grid_height": 1.0},
+    "battery_z3":      {"type": "battery", "grid_width": 3.0,  "grid_height": 1.0},
+    "battery_z5":      {"type": "battery", "grid_width": 5.0,  "grid_height": 1.0},
+    "battery_z9":      {"type": "battery", "grid_width": 9.0,  "grid_height": 1.0},
+    "battery_z13":     {"type": "battery", "grid_width": 13.0, "grid_height": 1.0},
+
+    # --- SOLAR PANELS ---
+    "solar_sp3":       {"type": "solar_panel", "grid_width": 1.0, "grid_height": 3.0},
+    "solar_sp6":       {"type": "solar_panel", "grid_width": 1.0, "grid_height": 6.0},
+    "solar_sp12":      {"type": "solar_panel", "grid_width": 2.0, "grid_height": 6.0},
+    "solar_sp24":      {"type": "solar_panel", "grid_width": 2.0, "grid_height": 12.0},
+
+    # --- RTG ---
+    "rtg_pbnuk":       {"type": "rtg", "grid_width": 1.0, "grid_height": 2.0},
 }
 
 
@@ -598,6 +757,9 @@ def generate_part(name, spec):
         "nosecone": generate_nosecone,
         "heatshield": generate_heatshield,
         "rcs": generate_rcs,
+        "battery": generate_battery,
+        "solar_panel": generate_solar_panel,
+        "rtg": generate_rtg,
     }
     gen = generators.get(ptype)
     if gen is None:

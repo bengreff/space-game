@@ -40,7 +40,7 @@ NOZZLE_UPPER = (85, 88, 96)
 VALVE_COLOR = (72, 75, 82)
 
 PX = 90
-PAD = 6
+PAD = 0
 BELL_EXP = 1.5
 
 
@@ -409,88 +409,100 @@ ENGINE_DEFS = {
     "engine_hummingbird": {
         "exit_w": 0.85, "top_w": 0.5, "er": 22,
         "vacuum": False, "gimbal": 8, "cycle": "staged",
-        "preburner": 1,
+        "preburner": 1, "hitbox_w": 1, "hitbox_h": 2,
     },
     "engine_gecko": {
         "exit_w": 0.85, "top_w": 0.55, "er": 16,
         "vacuum": False, "gimbal": 4, "cycle": "gasgen",
+        "hitbox_w": 1, "hitbox_h": 2,
     },
     "engine_firefly": {
         "exit_w": 0.9, "top_w": 0.25, "er": 80,
         "vacuum": True, "gimbal": 0, "cycle": "expander",
         "heat_fins": True, "fixed_frame": True, "extension_seam": True,
+        "hitbox_w": 1, "hitbox_h": 1,
     },
     # --- SMALL ---
     "engine_wolf": {
         "exit_w": 2.6, "top_w": 1.3, "er": 16,
         "vacuum": False, "gimbal": 8, "cycle": "staged",
         "preburner": 1, "regen_manifold": True, "thrust_skirt": True,
+        "hitbox_w": 3, "hitbox_h": 4,
     },
     "engine_falcon": {
         "exit_w": 1.7, "top_w": 0.9, "er": 28,
         "vacuum": False, "gimbal": 12, "cycle": "fullflow",
         "preburner": 2, "valves": True,
+        "hitbox_w": 2, "hitbox_h": 3,
     },
     "engine_wren": {
         "exit_w": 2.1, "top_w": 0.5, "er": 80,
         "vacuum": True, "gimbal": 3, "cycle": "expander",
         "heat_fins": True, "extension_seam": True,
+        "hitbox_w": 3, "hitbox_h": 3,
     },
     "engine_owl": {
         "exit_w": 2.8, "top_w": 0.6, "er": 100,
         "vacuum": True, "gimbal": 4, "cycle": "expander",
         "heat_fins": True, "transition_flange": True,
+        "hitbox_w": 3, "hitbox_h": 4,
     },
     "engine_viper": {
         "exit_w": 2.6, "top_w": 1.6, "er": 20,
         "vacuum": False, "gimbal": 0, "cycle": "staged",
         "preburner": 1, "fixed_frame": True, "throat_shield": True,
-        "regen_manifold": True,
+        "regen_manifold": True, "hitbox_w": 3, "hitbox_h": 4,
     },
     # --- MEDIUM ---
     "engine_bear": {
         "exit_w": 4.2, "top_w": 2.0, "er": 28,
         "vacuum": False, "gimbal": 8, "cycle": "staged",
         "preburner": 1, "valves": True, "thrust_skirt": True,
-        "regen_manifold": True,
+        "regen_manifold": True, "hitbox_w": 4, "hitbox_h": 6,
     },
     "engine_eagle": {
         "exit_w": 4.6, "top_w": 1.2, "er": 70,
         "vacuum": True, "gimbal": 10.5, "cycle": "fullflow",
         "preburner": 2, "inlet_ducts": True, "transition_flange": True,
+        "hitbox_w": 5, "hitbox_h": 6,
     },
     "engine_panther": {
         "exit_w": 4.4, "top_w": 2.2, "er": 18,
         "vacuum": False, "gimbal": 6, "cycle": "staged",
         "twin": True, "preburner": 1, "crossover": True,
+        "hitbox_w": 4, "hitbox_h": 4,
     },
     "engine_crane": {
         "exit_w": 3.4, "top_w": 1.6, "er": 35,
         "vacuum": False, "gimbal": 15, "cycle": "staged",
         "preburner": 1, "regen_manifold": True,
+        "hitbox_w": 3, "hitbox_h": 5,
     },
     # --- LARGE ---
     "engine_mammoth": {
         "exit_w": 8.0, "top_w": 3.8, "er": 12,
         "vacuum": False, "gimbal": 6, "cycle": "gasgen",
         "thrust_skirt": True, "inlet_ducts": True, "exhaust_wrap": True,
+        "hitbox_w": 8, "hitbox_h": 11,
     },
     "engine_whale": {
         "exit_w": 8.2, "top_w": 2.4, "er": 80,
         "vacuum": True, "gimbal": 8, "cycle": "staged",
         "preburner": 1, "inlet_ducts": True, "transition_flange": True,
+        "hitbox_w": 8, "hitbox_h": 11,
     },
     "engine_bison": {
         "exit_w": 6.0, "top_w": 3.0, "er": 28,
         "vacuum": False, "gimbal": 12, "cycle": "fullflow",
         "preburner": 2, "valves": True, "inlet_ducts": True,
-        "regen_manifold": True,
+        "regen_manifold": True, "hitbox_w": 6, "hitbox_h": 8,
     },
     "engine_titan": {
         "exit_w": 8.4, "top_w": 1.8, "er": 60,
         "vacuum": True, "gimbal": 0, "cycle": "staged",
         "preburner": 1, "fixed_frame": True, "inlet_ducts": True,
         "transition_flange": True, "extension_seam": True,
+        "hitbox_w": 8, "hitbox_h": 11,
     },
 }
 
@@ -513,12 +525,15 @@ def generate_engine(name, spec):
     throat_w_px = exit_w_px / math.sqrt(er)
     throat_w_px = max(throat_w_px, 12)
 
-    canvas_w = int(exit_w_px) + PAD * 2
-    canvas_h = int(total_h) + PAD * 2
+    # Canvas sized to hitbox dims — engine drawing centered horizontally, top-aligned
+    hitbox_w = spec["hitbox_w"]
+    hitbox_h = spec["hitbox_h"]
+    canvas_w = hitbox_w * PX
+    canvas_h = hitbox_h * PX
     img = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     cx = canvas_w // 2
-    y = PAD
+    y = 0
 
     # Scale detail size proportionally to engine pixel size
     # Reference: ~200px exit width (small engine like Wolf)

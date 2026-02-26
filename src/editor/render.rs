@@ -1,5 +1,6 @@
 use crate::parts::{PartDefinitions, PartShape, PartDefinition, PartCategory, FairingShape, GRID_SQUARE_SIZE};
 use crate::render::Vertex;
+use crate::render::sprites::SpriteAtlas;
 use super::EditorState;
 
 /// Grid line color
@@ -40,6 +41,73 @@ const HEAT_SHIELD_BACK_COLOR: [f32; 4] = [0.12, 0.12, 0.12, 1.0];  // Dark backi
 const FAIRING_BASE_COLOR: [f32; 4] = [0.30, 0.30, 0.33, 1.0];      // Lighter metallic disc
 const FAIRING_SHELL_COLOR: [f32; 4] = [0.35, 0.35, 0.38, 1.0];     // Light grey shell panels
 const FAIRING_SHELL_LINE_COLOR: [f32; 4] = [0.20, 0.20, 0.22, 1.0]; // Panel seam lines
+
+/// Emit 6 sprite vertices (2 triangles) for a textured quad at the given position and size.
+/// Uses the part's visual dimensions (width/height in meters).
+fn generate_sprite_quad(
+    vertices: &mut Vec<Vertex>,
+    rect: &crate::render::sprites::SpriteRect,
+    x: f32,
+    y: f32,
+    half_w: f32,
+    half_h: f32,
+    tint: [f32; 4],
+) {
+    let u0 = rect.u_min;
+    let v0 = rect.v_min;
+    let u1 = rect.u_max;
+    let v1 = rect.v_max;
+
+    // Two triangles: bottom-left, bottom-right, top-right / bottom-left, top-right, top-left
+    // Note: sprite v0 is atlas top, v1 is atlas bottom. In game coords, +y is up, so
+    // bottom of quad (y - half_h) maps to v1 (bottom of sprite) and top (y + half_h) maps to v0.
+    vertices.push(Vertex::sprite([x - half_w, y - half_h], [u0, v1], tint));
+    vertices.push(Vertex::sprite([x + half_w, y - half_h], [u1, v1], tint));
+    vertices.push(Vertex::sprite([x + half_w, y + half_h], [u1, v0], tint));
+
+    vertices.push(Vertex::sprite([x - half_w, y - half_h], [u0, v1], tint));
+    vertices.push(Vertex::sprite([x + half_w, y + half_h], [u1, v0], tint));
+    vertices.push(Vertex::sprite([x - half_w, y + half_h], [u0, v0], tint));
+}
+
+/// Compute sprite quad placement: (half_w, half_h, x_offset, y_offset) for a given part.
+/// Accounts for per-category alignment rules so sprites line up with procedural renderers.
+fn sprite_placement(def: &PartDefinition) -> (f32, f32, f32, f32) {
+    let hitbox_half_w = (def.hitbox_width() / 2.0) as f32;
+    let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
+    let visual_half_w = (def.width() / 2.0) as f32;
+    let visual_half_h = (def.height() / 2.0) as f32;
+
+    // Engines: use hitbox dims (sprites are now generated at hitbox size)
+    if def.engine.is_some() {
+        return (hitbox_half_w, hitbox_half_h, 0.0, 0.0);
+    }
+
+    // Stack decouplers: hitbox width, visual height, bottom-aligned within hitbox
+    if let Some(ref dec) = def.decoupler {
+        if !dec.is_radial {
+            let y_offset = -(hitbox_half_h - visual_half_h);
+            return (hitbox_half_w, visual_half_h, 0.0, y_offset);
+        }
+    }
+
+    // Heat shields: hitbox width, visual height, top-aligned within hitbox
+    if def.is_heat_shield {
+        let y_offset = hitbox_half_h - visual_half_h;
+        return (hitbox_half_w, visual_half_h, 0.0, y_offset);
+    }
+
+    // RCS (standalone, not pods): visual dims, side-offset
+    if def.rcs.is_some() && def.category != PartCategory::Pods {
+        let is_mirrored = def.rcs.as_ref().map(|r| r.is_mirrored).unwrap_or(false);
+        let sign: f32 = if is_mirrored { -1.0 } else { 1.0 };
+        let x_offset = sign * (hitbox_half_w - visual_half_w);
+        return (visual_half_w, visual_half_h, x_offset, 0.0);
+    }
+
+    // Default (tanks, pods, radial decouplers, fairings): hitbox dims, centered
+    (hitbox_half_w, hitbox_half_h, 0.0, 0.0)
+}
 
 /// Generate vertices for the editor grid (as thin quads for triangle rendering)
 /// Note: Vertices are output in CAMERA-RELATIVE coordinates (shader expects this)
@@ -137,6 +205,7 @@ pub fn generate_grid_vertices(
 pub fn generate_part_vertices(
     editor: &EditorState,
     part_defs: &PartDefinitions,
+    sprite_atlas: Option<&SpriteAtlas>,
 ) -> Vec<Vertex> {
     let mut vertices = Vec::new();
 
@@ -169,6 +238,42 @@ pub fn generate_part_vertices(
         // Convert to camera-relative coordinates
         let x = part.position[0] as f32 - cam_x;
         let y = part.position[1] as f32 - cam_y;
+
+        // Try sprite-based rendering first (skip fairings — they have shell geometry)
+        let is_triangle = matches!(def.shape, PartShape::Triangle | PartShape::TriangleLeft | PartShape::TriangleRight);
+        if let Some(atlas) = sprite_atlas {
+            if def.fairing.is_none() {
+                if let Some(rect) = atlas.parts.get(&def.id) {
+                    let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def);
+                    let sp_x = x + sp_ox;
+                    let sp_y = y + sp_oy;
+                    generate_sprite_quad(&mut vertices, rect, sp_x, sp_y, sp_hw, sp_hh, [1.0, 1.0, 1.0, 1.0]);
+
+                    // Overlay RCS nozzle bumps on pod sprites
+                    if def.category == PartCategory::Pods && def.rcs.is_some() {
+                        generate_pod_rcs_nozzles(&mut vertices, def, sp_x, sp_y, 1.0);
+                    }
+
+                    // Draw overlay for selection, hover, or invalid drag
+                    if is_selected || is_hovered || drag_invalid {
+                        let highlight_color = if drag_invalid {
+                            [0.9, 0.2, 0.2, 0.4]
+                        } else if is_selected {
+                            [0.5, 0.7, 1.0, 0.3]
+                        } else {
+                            [0.55, 0.55, 0.6, 0.2]
+                        };
+                        vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
+                        vertices.push(Vertex::new([x + half_w, y - half_h], highlight_color));
+                        vertices.push(Vertex::new([x + half_w, y + half_h], highlight_color));
+                        vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
+                        vertices.push(Vertex::new([x + half_w, y + half_h], highlight_color));
+                        vertices.push(Vertex::new([x - half_w, y + half_h], highlight_color));
+                    }
+                    continue;
+                }
+            }
+        }
 
         // For engines, use dedicated engine rendering
         if def.category == PartCategory::Propulsion && def.engine.is_some() {
@@ -312,16 +417,18 @@ pub fn generate_part_vertices(
         }
 
         // Draw non-engine parts based on shape
+        // Use tank-matching color for nose cones when sprites unavailable
+        let shape_color = if is_triangle { [0.76, 0.78, 0.82, 1.0] } else { color };
         match def.shape {
             PartShape::Rectangle => {
                 // Two triangles for a rectangle
-                vertices.push(Vertex::new([x - half_w, y - half_h], color));
-                vertices.push(Vertex::new([x + half_w, y - half_h], color));
-                vertices.push(Vertex::new([x + half_w, y + half_h], color));
+                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color));
+                vertices.push(Vertex::new([x + half_w, y - half_h], shape_color));
+                vertices.push(Vertex::new([x + half_w, y + half_h], shape_color));
 
-                vertices.push(Vertex::new([x - half_w, y - half_h], color));
-                vertices.push(Vertex::new([x + half_w, y + half_h], color));
-                vertices.push(Vertex::new([x - half_w, y + half_h], color));
+                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color));
+                vertices.push(Vertex::new([x + half_w, y + half_h], shape_color));
+                vertices.push(Vertex::new([x - half_w, y + half_h], shape_color));
 
                 // Invalid drag overlay for rectangles
                 if drag_invalid {
@@ -336,9 +443,9 @@ pub fn generate_part_vertices(
             }
             PartShape::Triangle => {
                 // Single triangle with base at bottom, point at top
-                vertices.push(Vertex::new([x - half_w, y - half_h], color)); // bottom left
-                vertices.push(Vertex::new([x + half_w, y - half_h], color)); // bottom right
-                vertices.push(Vertex::new([x, y + half_h], color));          // top center
+                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color)); // bottom left
+                vertices.push(Vertex::new([x + half_w, y - half_h], shape_color)); // bottom right
+                vertices.push(Vertex::new([x, y + half_h], shape_color));          // top center
 
                 // Invalid drag overlay for triangles
                 if drag_invalid {
@@ -350,9 +457,9 @@ pub fn generate_part_vertices(
             }
             PartShape::TriangleRight => {
                 // Right triangle: vertical edge on right, hypotenuse on left
-                vertices.push(Vertex::new([x - half_w, y - half_h], color));
-                vertices.push(Vertex::new([x + half_w, y - half_h], color));
-                vertices.push(Vertex::new([x + half_w, y + half_h], color));
+                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color));
+                vertices.push(Vertex::new([x + half_w, y - half_h], shape_color));
+                vertices.push(Vertex::new([x + half_w, y + half_h], shape_color));
 
                 if drag_invalid {
                     let overlay = [0.9, 0.2, 0.2, 0.4];
@@ -363,9 +470,9 @@ pub fn generate_part_vertices(
             }
             PartShape::TriangleLeft => {
                 // Right triangle: vertical edge on left, hypotenuse on right
-                vertices.push(Vertex::new([x - half_w, y - half_h], color));
-                vertices.push(Vertex::new([x + half_w, y - half_h], color));
-                vertices.push(Vertex::new([x - half_w, y + half_h], color));
+                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color));
+                vertices.push(Vertex::new([x + half_w, y - half_h], shape_color));
+                vertices.push(Vertex::new([x - half_w, y + half_h], shape_color));
 
                 if drag_invalid {
                     let overlay = [0.9, 0.2, 0.2, 0.4];
@@ -380,14 +487,14 @@ pub fn generate_part_vertices(
 
                 // Two triangles for trapezoid
                 // Triangle 1: bottom left, bottom right, top right
-                vertices.push(Vertex::new([x - half_w, y - half_h], color));
-                vertices.push(Vertex::new([x + half_w, y - half_h], color));
-                vertices.push(Vertex::new([x + half_top_w, y + half_h], color));
+                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color));
+                vertices.push(Vertex::new([x + half_w, y - half_h], shape_color));
+                vertices.push(Vertex::new([x + half_top_w, y + half_h], shape_color));
 
                 // Triangle 2: bottom left, top right, top left
-                vertices.push(Vertex::new([x - half_w, y - half_h], color));
-                vertices.push(Vertex::new([x + half_top_w, y + half_h], color));
-                vertices.push(Vertex::new([x - half_top_w, y + half_h], color));
+                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color));
+                vertices.push(Vertex::new([x + half_top_w, y + half_h], shape_color));
+                vertices.push(Vertex::new([x - half_top_w, y + half_h], shape_color));
 
                 // Invalid drag overlay for trapezoids
                 if drag_invalid {
@@ -458,6 +565,7 @@ fn generate_single_ghost_vertices(
     ghost_valid: bool,
     editor: &EditorState,
     part_defs: &PartDefinitions,
+    sprite_atlas: Option<&SpriteAtlas>,
 ) {
     let ghost_alpha = 0.5;
 
@@ -467,6 +575,29 @@ fn generate_single_ghost_vertices(
     let cam_y = editor.camera_offset[1] as f32;
     let x = position[0] as f32 - cam_x;
     let y = position[1] as f32 - cam_y;
+
+    // Try sprite-based ghost rendering (skip fairings — they have shell geometry)
+    if let Some(atlas) = sprite_atlas {
+        if def.fairing.is_none() {
+            if let Some(rect) = atlas.parts.get(&def.id) {
+                let tint = if ghost_valid {
+                    [0.3, 0.9, 0.3, 0.5]
+                } else {
+                    [0.9, 0.3, 0.3, 0.5]
+                };
+                let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def);
+                let sp_x = x + sp_ox;
+                let sp_y = y + sp_oy;
+                generate_sprite_quad(vertices, rect, sp_x, sp_y, sp_hw, sp_hh, tint);
+
+                // Overlay RCS nozzle bumps on pod sprites
+                if def.category == PartCategory::Pods && def.rcs.is_some() {
+                    generate_pod_rcs_nozzles(vertices, def, sp_x, sp_y, ghost_alpha);
+                }
+                return;
+            }
+        }
+    }
 
     if def.category == PartCategory::Propulsion && def.engine.is_some() {
         generate_engine_details(vertices, def, x, y, ghost_alpha);
@@ -629,6 +760,7 @@ fn generate_single_ghost_vertices(
 pub fn generate_ghost_vertices(
     editor: &EditorState,
     part_defs: &PartDefinitions,
+    sprite_atlas: Option<&SpriteAtlas>,
 ) -> Vec<Vertex> {
     let mut vertices = Vec::new();
 
@@ -645,14 +777,14 @@ pub fn generate_ghost_vertices(
     };
 
     // Render primary ghost
-    generate_single_ghost_vertices(&mut vertices, def, position, editor.ghost_valid, editor, part_defs);
+    generate_single_ghost_vertices(&mut vertices, def, position, editor.ghost_valid, editor, part_defs, sprite_atlas);
 
     // Render mirror ghost if applicable, using mirror def if available
     if let Some(mirror_pos) = editor.mirror_ghost_position {
         let mirror_def = editor.mirror_ghost_def_id.as_ref()
             .and_then(|mid| part_defs.get(mid))
             .unwrap_or(def);
-        generate_single_ghost_vertices(&mut vertices, mirror_def, mirror_pos, editor.ghost_valid, editor, part_defs);
+        generate_single_ghost_vertices(&mut vertices, mirror_def, mirror_pos, editor.ghost_valid, editor, part_defs, sprite_atlas);
     }
 
     vertices
@@ -997,6 +1129,41 @@ pub fn generate_pod_details(
         vertices.push(Vertex::new([l_base_x, nozzle_y + nozzle_hw], nozzle_color));
         vertices.push(Vertex::new([l_base_x - nozzle_len, nozzle_y], nozzle_color));
     }
+}
+
+/// Generate just the RCS nozzle bumps for a pod (extracted from generate_pod_details).
+/// Used to overlay nozzle bumps on top of pod sprites.
+pub fn generate_pod_rcs_nozzles(
+    vertices: &mut Vec<Vertex>,
+    def: &PartDefinition,
+    x: f32,
+    y: f32,
+    alpha: f32,
+) {
+    if def.rcs.is_none() { return; }
+
+    let half_w = (def.width() / 2.0) as f32;
+    let half_h = (def.height() / 2.0) as f32;
+    let half_top_w = (def.top_width() / 2.0) as f32;
+
+    let nozzle_color = [RCS_NOZZLE_COLOR[0], RCS_NOZZLE_COLOR[1], RCS_NOZZLE_COLOR[2], RCS_NOZZLE_COLOR[3] * alpha];
+    let nozzle_y = y - half_h + half_h * 2.0 * 0.8;
+    let t = 0.8;
+    let edge_x = half_w + t * (half_top_w - half_w);
+    let nozzle_hw: f32 = 0.04;
+    let nozzle_len: f32 = 0.08;
+
+    // Right nozzle
+    let r_base_x = x + edge_x;
+    vertices.push(Vertex::new([r_base_x, nozzle_y - nozzle_hw], nozzle_color));
+    vertices.push(Vertex::new([r_base_x, nozzle_y + nozzle_hw], nozzle_color));
+    vertices.push(Vertex::new([r_base_x + nozzle_len, nozzle_y], nozzle_color));
+
+    // Left nozzle
+    let l_base_x = x - edge_x;
+    vertices.push(Vertex::new([l_base_x, nozzle_y - nozzle_hw], nozzle_color));
+    vertices.push(Vertex::new([l_base_x, nozzle_y + nozzle_hw], nozzle_color));
+    vertices.push(Vertex::new([l_base_x - nozzle_len, nozzle_y], nozzle_color));
 }
 
 /// Generate decoupler ring details (dark horizontal band on bottom half of hitbox)
@@ -1544,14 +1711,15 @@ pub fn draw_circle(
 }
 
 /// Generate exhaust plume vertices for a firing engine.
-/// Draws a red outer triangle and yellow inner triangle extending from the nozzle exit.
-/// Plume width = nozzle diameter, plume length = 2 × nozzle diameter.
+/// Uses sprite plume animation if available, otherwise falls back to procedural triangles.
 pub fn generate_engine_plume_vertices(
     vertices: &mut Vec<Vertex>,
     def: &PartDefinition,
     x: f32,
     y: f32,
     throttle: f32,
+    sprite_atlas: Option<&SpriteAtlas>,
+    plume_elapsed_secs: f64,
 ) {
     if throttle <= 0.0 {
         return;
@@ -1560,9 +1728,34 @@ pub fn generate_engine_plume_vertices(
     let half_h = (def.height() / 2.0) as f32;
     let nozzle_width = def.width() as f32;
     let half_nozzle = nozzle_width / 2.0;
-    let plume_length = nozzle_width * 2.0 * throttle;
 
-    // Nozzle exit is at the bottom of the engine (y - half_h)
+    // Try sprite plume
+    if let Some(atlas) = sprite_atlas {
+        if let Some(ref engine) = def.engine {
+            let propellant_name = match engine.propellant {
+                crate::parts::Propellant::Kerolox => "kerolox",
+                crate::parts::Propellant::Methalox => "methalox",
+                crate::parts::Propellant::Hydrolox => "hydrolox",
+            };
+            if let Some(anim) = atlas.plumes.get(propellant_name) {
+                let frame_idx = (plume_elapsed_secs * 10.0) as usize % 4;
+                let rect = &anim.frames[frame_idx];
+
+                let plume_half_w = half_nozzle;
+                let plume_height = nozzle_width * 2.5 * throttle;
+                let nozzle_y = y - half_h;
+                let plume_center_y = nozzle_y - plume_height / 2.0;
+
+                let brightness = 0.5 + 0.5 * throttle;
+                let tint = [brightness, brightness, brightness, 1.0];
+                generate_sprite_quad(vertices, rect, x, plume_center_y, plume_half_w, plume_height / 2.0, tint);
+                return;
+            }
+        }
+    }
+
+    // Procedural fallback
+    let plume_length = nozzle_width * 2.0 * throttle;
     let nozzle_y = y - half_h;
 
     // Red outer plume triangle
@@ -1589,7 +1782,27 @@ pub fn generate_part_shape_vertices(
     x: f32,
     y: f32,
     alpha: f32,
+    sprite_atlas: Option<&SpriteAtlas>,
 ) {
+    // Try sprite-based rendering first (skip fairings — they have shell geometry)
+    let is_triangle = matches!(def.shape, PartShape::Triangle | PartShape::TriangleLeft | PartShape::TriangleRight);
+    if let Some(atlas) = sprite_atlas {
+        if def.fairing.is_none() {
+            if let Some(rect) = atlas.parts.get(&def.id) {
+                let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def);
+                let sp_x = x + sp_ox;
+                let sp_y = y + sp_oy;
+                generate_sprite_quad(vertices, rect, sp_x, sp_y, sp_hw, sp_hh, [1.0, 1.0, 1.0, alpha]);
+
+                // Overlay RCS nozzle bumps on pod sprites
+                if def.category == PartCategory::Pods && def.rcs.is_some() {
+                    generate_pod_rcs_nozzles(vertices, def, sp_x, sp_y, alpha);
+                }
+                return;
+            }
+        }
+    }
+
     // For engines, use dedicated engine rendering
     if def.category == PartCategory::Propulsion && def.engine.is_some() {
         generate_engine_details(vertices, def, x, y, alpha);
@@ -1628,7 +1841,12 @@ pub fn generate_part_shape_vertices(
 
     let half_w = (def.width() / 2.0) as f32;
     let half_h = (def.height() / 2.0) as f32;
-    let color = [0.4, 0.4, 0.45, alpha];
+    // Use tank-matching color for nose cones when sprites unavailable
+    let color = if is_triangle {
+        [0.76, 0.78, 0.82, alpha]
+    } else {
+        [0.4, 0.4, 0.45, alpha]
+    };
 
     match def.shape {
         PartShape::Rectangle => {

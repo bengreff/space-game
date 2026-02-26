@@ -131,6 +131,8 @@ pub struct EngineData {
     pub gimbal_range: f64,    // Gimbal range in degrees (0 = fixed)
     #[serde(default)]
     pub propellant: Propellant,  // Propellant type
+    #[serde(default)]
+    pub alternator_power: f64,  // Watts generated when running
 }
 
 /// Fuel types for tanks
@@ -215,6 +217,26 @@ pub struct DecouplerData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PodData {
     pub crew_capacity: u32,
+    #[serde(default)]
+    pub power_draw: f64,  // Watts consumed
+}
+
+/// Battery-specific data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatteryData {
+    pub capacity_wh: f64,  // Storage capacity in Watt-hours
+}
+
+/// Solar panel data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SolarPanelData {
+    pub output_1au: f64,  // Watts generated at 1 AU from the Sun
+}
+
+/// Radioisotope thermoelectric generator data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RtgData {
+    pub output_watts: f64,  // Constant power output in Watts
 }
 
 /// Fairing-specific data
@@ -267,6 +289,12 @@ pub struct PartDefinition {
     pub rcs: Option<RcsData>,
     #[serde(default)]
     pub fairing: Option<FairingData>,
+    #[serde(default)]
+    pub battery: Option<BatteryData>,
+    #[serde(default)]
+    pub solar_panel: Option<SolarPanelData>,
+    #[serde(default)]
+    pub rtg: Option<RtgData>,
     #[serde(default)]
     pub resources: HashMap<String, f64>,
     // Thermal properties

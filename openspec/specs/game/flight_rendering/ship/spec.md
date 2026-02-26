@@ -198,6 +198,28 @@ When zoomed into the ship (`!needs_indicator`, i.e. ship_pixels >= 5.0) and velo
 - **WHEN** `needs_indicator` is true (map view) **THEN** no prograde arrow is drawn
 - **WHEN** velocity < 0.1 m/s **THEN** `velocity_direction` is `[0, 0]` and no arrow is drawn
 
+## Flight Part Info — Electrical Parts
+
+### Requirement: Battery info in flight
+
+The flight part info popup for batteries SHALL display capacity and a progress bar showing "current / max Wh". The progress bar fill color SHALL be gold/yellow.
+
+### Requirement: Solar panel info in flight
+
+The flight part info popup for solar panels SHALL display current output in Watts, adjusted for distance from the Sun using inverse-square law: `output_1au * (AU / sun_distance)^2`.
+
+### Requirement: RTG info in flight
+
+The flight part info popup for RTGs SHALL display constant output in Watts.
+
+### Requirement: Electrical render data fields
+
+`ShipPartRenderData` SHALL include:
+- `battery_current: Option<f64>` — current Wh stored
+- `battery_max: Option<f64>` — maximum Wh capacity
+- `solar_output: Option<f64>` — current watts (distance-adjusted in flight)
+- `rtg_output: Option<f64>` — constant watts
+
 ## Flight Part Selection
 
 ### Requirement: Flight part click detection

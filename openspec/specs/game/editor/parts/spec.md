@@ -185,6 +185,18 @@ Each fuel bar SHALL be a custom-drawn interactive rectangle that responds to cli
 
 `PlacedPart` SHALL use `fill_fraction: f64` (0.0–1.0) instead of `tank_filled: bool`. `BlueprintPart` SHALL include both `fill_fraction: f64` and `tank_filled: bool` (serde-defaulting) for backward compatibility with saved blueprints. When loading, `fill_fraction` takes priority; if zero, `tank_filled: true` maps to `fill_fraction: 1.0`.
 
+### Requirement: Battery info
+
+For batteries, the info panel SHALL display: capacity in Wh (e.g. "Capacity: 5,000 Wh"). In flight, it SHALL additionally show a progress bar with "current / max Wh".
+
+### Requirement: Solar panel info
+
+For solar panels, the info panel SHALL display: output at Earth distance (1 AU) in Watts (e.g. "Output @1AU: 450 W"). In flight, it SHALL display current output adjusted for distance from the Sun using inverse-square law.
+
+### Requirement: RTG info
+
+For RTGs, the info panel SHALL display: constant output in Watts (e.g. "Output: 300 W").
+
 ### Requirement: Pod info
 
 For pods, the info panel SHALL display: crew capacity.

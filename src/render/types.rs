@@ -41,6 +41,16 @@ impl Vertex {
             uv,
         }
     }
+
+    /// Create a sprite vertex. Atlas UV is offset by +2.0 on X to flag the sprite path in the shader.
+    /// Tint color multiplies the sampled texture color (use [1,1,1,1] for no tinting).
+    pub fn sprite(position: [f32; 2], atlas_uv: [f32; 2], tint: [f32; 4]) -> Self {
+        Self {
+            position,
+            color: tint,
+            uv: [atlas_uv[0] + 2.0, atlas_uv[1]],
+        }
+    }
 }
 
 /// Stored body data for hit testing (in world units)
@@ -102,6 +112,13 @@ pub struct ShipPartRenderData {
     pub crew_capacity: Option<u32>,
     pub monoprop_current: Option<f64>,  // kg (monopropellant in this pod)
     pub monoprop_max: Option<f64>,      // kg
+    // Battery info
+    pub battery_current: Option<f64>,   // Wh stored
+    pub battery_max: Option<f64>,       // Wh capacity
+    // Solar panel info
+    pub solar_output: Option<f64>,      // Current watts (distance-adjusted in flight)
+    // RTG info
+    pub rtg_output: Option<f64>,        // Constant watts
     // Decoupler info
     pub is_decoupler: bool,
     pub crossfeed_enabled: bool,
@@ -145,6 +162,11 @@ pub struct ShipRenderData {
     pub delta_v: Option<f64>,        // m/s, Tsiolkovsky
     pub soi_surface_gravity: f64,    // m/s², for TWR calculation
     pub g_force: f64,                // Felt acceleration in g's (thrust + drag, not gravity)
+    // Electricity
+    pub power_generation: Option<f64>,       // Watts
+    pub power_consumption: Option<f64>,      // Watts
+    pub electricity_fraction: Option<f64>,   // 0.0-1.0
+    pub electricity_stored: Option<f64>,     // Wh currently stored
     // Staging
     pub current_stage: Option<usize>,  // Stages activated so far
     pub total_stages: Option<usize>,   // Total number of stages

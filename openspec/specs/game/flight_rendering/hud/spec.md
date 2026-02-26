@@ -119,7 +119,23 @@ When vessel has fuel data, show fuel bar with 10px gap below throttle. The fuel 
 - `> 0.3` -> blue `rgb(80, 160, 220)`, `> 0.1` -> amber `rgb(220, 180, 80)`, `<= 0.1` -> red `rgb(220, 80, 80)`
 - Bar height 80px, width 20px
 
-### Requirement: Heat bar below fuel bar
+### Requirement: Electricity bar below fuel bar
+
+When the vessel has batteries (max electricity > 0), an electricity bar SHALL be shown below the fuel bar with 10px gap.
+
+#### Scenario: Electricity bar layout
+- "ELEC" label at font size 10, stored Wh readout at font size 11
+- Bar height 80px, width 20px, fill from bottom proportional to `electricity_fraction`
+- Stored Wh formatted as "{X.X}k Wh" for >= 1000 Wh, or "{X} Wh" otherwise
+
+#### Scenario: Electricity bar colors
+- `> 0.3` -> gold/yellow `rgb(220, 200, 80)`, `> 0.1` -> orange `rgb(220, 160, 60)`, `<= 0.1` -> red `rgb(220, 80, 80)`
+- Background `rgb(40, 40, 50)`, border gray 1px
+
+#### Scenario: Power generation/consumption text
+- Below the bar, "+{gen}W" and "-{cons}W" SHALL be displayed at font size 9
+
+### Requirement: Heat bar below electricity bar
 
 When ship temperature exceeds 350K, a vertical heat bar SHALL be shown:
 - "HEAT" label at font size 10, temperature readout in Kelvin at font size 11

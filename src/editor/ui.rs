@@ -194,6 +194,21 @@ pub fn render_editor_ui(
                 if let Some(mp) = stats.resources.get("monopropellant") {
                     ui.label(format!("MP: {}", format_mass(mp.current)));
                 }
+
+                // Power stats
+                if stats.electricity_capacity > 0.0 || stats.power_generation > 0.0 || stats.power_consumption > 0.0 {
+                    ui.separator();
+                    if stats.electricity_capacity > 0.0 {
+                        if stats.electricity_capacity >= 1000.0 {
+                            ui.label(format!("EC: {:.1}k Wh", stats.electricity_capacity / 1000.0));
+                        } else {
+                            ui.label(format!("EC: {:.0} Wh", stats.electricity_capacity));
+                        }
+                    }
+                    if stats.power_generation > 0.0 || stats.power_consumption > 0.0 {
+                        ui.label(format!("Power: +{:.0}W / -{:.0}W", stats.power_generation, stats.power_consumption));
+                    }
+                }
             });
         });
 
@@ -757,6 +772,27 @@ pub fn render_editor_ui(
                                 ui.label(format!("Thrust: {:.1} kN", rcs.thrust));
                                 ui.label(format!("Isp: {:.0} s", rcs.isp));
                                 ui.label("Fuel: Monopropellant");
+                            }
+
+                            // Battery info
+                            if let Some(ref battery) = def.battery {
+                                ui.separator();
+                                ui.heading("Battery");
+                                ui.label(format!("Capacity: {:.0} Wh", battery.capacity_wh));
+                            }
+
+                            // Solar panel info
+                            if let Some(ref solar) = def.solar_panel {
+                                ui.separator();
+                                ui.heading("Solar Panel");
+                                ui.label(format!("Output at Earth: {:.0} W", solar.output_1au));
+                            }
+
+                            // RTG info
+                            if let Some(ref rtg) = def.rtg {
+                                ui.separator();
+                                ui.heading("RTG");
+                                ui.label(format!("Output: {:.0} W", rtg.output_watts));
                             }
 
                             // Decoupler info

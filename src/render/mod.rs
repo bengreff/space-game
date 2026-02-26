@@ -1,6 +1,7 @@
 mod camera;
 mod geometry;
 mod maneuver;
+pub mod sprites;
 mod state;
 pub mod textures;
 mod types;

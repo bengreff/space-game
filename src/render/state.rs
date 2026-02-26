@@ -105,6 +105,10 @@ pub struct RenderState {
     // Vessel stats for HUD
     pub vessel_total_mass: Option<f64>,    // tonnes
     pub vessel_fuel_fraction: Option<f64>, // 0.0-1.0
+    pub vessel_power_generation: Option<f64>,  // Watts
+    pub vessel_power_consumption: Option<f64>, // Watts
+    pub vessel_electricity_fraction: Option<f64>, // 0.0-1.0
+    pub vessel_electricity_stored: Option<f64>,   // Wh
     pub vessel_thrust_kn: Option<f64>,     // kN
     pub vessel_drag_kn: f64,               // kN, aerodynamic drag
     pub vessel_delta_v: Option<f64>,       // m/s
@@ -184,6 +188,9 @@ pub struct RenderState {
     // Body textures
     pub body_texture_bind_group: wgpu::BindGroup,
     pub body_texture_map: BodyTextureMap,
+    // Sprite atlas
+    pub sprite_atlas: super::sprites::SpriteAtlas,
+    pub plume_start_time: std::time::Instant,
     // Egui state
     pub egui_ctx: egui::Context,
     pub egui_state: egui_winit::State,
@@ -325,6 +332,11 @@ impl RenderState {
             label: Some("body_texture_bind_group"),
         });
 
+        // Load sprite atlas
+        let sprite_atlas = super::sprites::load_sprite_atlas(&device, &queue);
+        let sprite_bind_group_layout = super::sprites::create_sprite_bind_group_layout(&device);
+        let plume_start_time = std::time::Instant::now();
+
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Shader"),
@@ -335,7 +347,7 @@ impl RenderState {
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[&camera_bind_group_layout, &texture_bind_group_layout],
+                bind_group_layouts: &[&camera_bind_group_layout, &texture_bind_group_layout, &sprite_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -454,6 +466,10 @@ impl RenderState {
             ship_current_true_anomaly: 0.0,
             vessel_total_mass: None,
             vessel_fuel_fraction: None,
+            vessel_power_generation: None,
+            vessel_power_consumption: None,
+            vessel_electricity_fraction: None,
+            vessel_electricity_stored: None,
             vessel_thrust_kn: None,
             vessel_drag_kn: 0.0,
             vessel_delta_v: None,
@@ -520,6 +536,8 @@ impl RenderState {
             debug_teleport_leo: false,
             body_texture_bind_group,
             body_texture_map,
+            sprite_atlas,
+            plume_start_time,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -637,6 +655,10 @@ impl RenderState {
         let ship_time_to_intercept = self.ship_time_to_intercept;
         let vessel_total_mass = self.vessel_total_mass;
         let vessel_fuel_fraction = self.vessel_fuel_fraction;
+        let vessel_electricity_fraction = self.vessel_electricity_fraction;
+        let vessel_electricity_stored = self.vessel_electricity_stored;
+        let vessel_power_generation = self.vessel_power_generation;
+        let vessel_power_consumption = self.vessel_power_consumption;
         let vessel_thrust_kn = self.vessel_thrust_kn;
         let vessel_drag_kn = self.vessel_drag_kn;
         let vessel_delta_v = self.vessel_delta_v;
@@ -1083,6 +1105,56 @@ impl RenderState {
                         };
                         fuel_painter.rect_filled(fuel_fill_rect, 2.0, fuel_color);
                         fuel_painter.rect_stroke(fuel_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+                    }
+
+                    // Electricity bar (if vessel has batteries)
+                    if let Some(elec_frac) = vessel_electricity_fraction {
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new("ELEC").size(10.0).color(egui::Color32::GRAY));
+                        ui.add_space(3.0);
+
+                        let stored = vessel_electricity_stored.unwrap_or(0.0);
+                        let elec_label = if stored >= 1000.0 {
+                            format!("{:.1}k", stored / 1000.0)
+                        } else {
+                            format!("{:.0}", stored)
+                        };
+                        ui.label(egui::RichText::new(format!("{}Wh", elec_label))
+                            .size(11.0)
+                            .color(egui::Color32::WHITE));
+                        ui.add_space(3.0);
+
+                        let elec_bar_height = 80.0;
+                        let bar_width = 20.0;
+                        let (elec_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(bar_width, elec_bar_height),
+                            egui::Sense::hover()
+                        );
+
+                        let elec_painter = ui.painter();
+                        elec_painter.rect_filled(elec_rect, 2.0, egui::Color32::from_rgb(40, 40, 50));
+
+                        let elec_fill = elec_bar_height * elec_frac as f32;
+                        let elec_fill_rect = egui::Rect::from_min_size(
+                            egui::pos2(elec_rect.min.x, elec_rect.max.y - elec_fill),
+                            egui::vec2(bar_width, elec_fill)
+                        );
+                        let elec_color = if elec_frac > 0.3 {
+                            egui::Color32::from_rgb(200, 190, 60)  // gold/yellow
+                        } else if elec_frac > 0.1 {
+                            egui::Color32::from_rgb(220, 140, 40)  // orange
+                        } else {
+                            egui::Color32::from_rgb(220, 60, 60)   // red
+                        };
+                        elec_painter.rect_filled(elec_fill_rect, 2.0, elec_color);
+                        elec_painter.rect_stroke(elec_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+
+                        // Power generation/consumption text
+                        if let (Some(gen), Some(cons)) = (vessel_power_generation, vessel_power_consumption) {
+                            ui.add_space(3.0);
+                            let net_text = format!("+{:.0}W\n-{:.0}W", gen, cons);
+                            ui.label(egui::RichText::new(net_text).size(9.0).color(egui::Color32::GRAY));
+                        }
                     }
 
                     // Heat bar (shown when temperature > 350K)
@@ -1848,6 +1920,34 @@ impl RenderState {
                                 }
                             }
 
+                            // Battery info
+                            if let (Some(current), Some(max)) = (part.battery_current, part.battery_max) {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Battery").strong());
+                                ui.label(format!("Capacity: {:.0} Wh", max));
+                                if max > 0.0 {
+                                    let frac = (current / max) as f32;
+                                    let bar = egui::ProgressBar::new(frac)
+                                        .text(format!("{:.0} / {:.0} Wh", current, max))
+                                        .fill(egui::Color32::from_rgb(200, 190, 60));
+                                    ui.add(bar);
+                                }
+                            }
+
+                            // Solar panel info
+                            if let Some(output) = part.solar_output {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Solar Panel").strong());
+                                ui.label(format!("Output: {:.0} W", output));
+                            }
+
+                            // RTG info
+                            if let Some(output) = part.rtg_output {
+                                ui.separator();
+                                ui.label(egui::RichText::new("RTG").strong());
+                                ui.label(format!("Output: {:.0} W", output));
+                            }
+
                             // Decoupler info
                             if part.is_decoupler {
                                 ui.separator();
@@ -2286,6 +2386,7 @@ impl RenderState {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.sprite_atlas.bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
@@ -2467,6 +2568,10 @@ impl RenderState {
             self.ship_current_true_anomaly = s.current_true_anomaly;
             self.vessel_total_mass = s.total_mass;
             self.vessel_fuel_fraction = s.fuel_fraction;
+            self.vessel_power_generation = s.power_generation;
+            self.vessel_power_consumption = s.power_consumption;
+            self.vessel_electricity_fraction = s.electricity_fraction;
+            self.vessel_electricity_stored = s.electricity_stored;
             self.vessel_thrust_kn = s.thrust_kn;
             self.vessel_drag_kn = s.drag_kn;
             self.vessel_delta_v = s.delta_v;
@@ -3346,13 +3451,16 @@ impl RenderState {
                             if part_data.fairing_half.is_none() {
                                 crate::editor::generate_part_shape_vertices(
                                     &mut part_verts, def, 0.0, 0.0, 1.0,
+                                    Some(&self.sprite_atlas),
                                 );
                             }
 
                             // Add engine plume if this engine is firing
+                            let plume_elapsed = self.plume_start_time.elapsed().as_secs_f64();
                             if part_data.engine_active && ship_data.throttle > 0.0 && def.engine.is_some() {
                                 crate::editor::generate_engine_plume_vertices(
                                     &mut part_verts, def, 0.0, 0.0, ship_data.throttle as f32,
+                                    Some(&self.sprite_atlas), plume_elapsed,
                                 );
                             }
 
@@ -3402,7 +3510,11 @@ impl RenderState {
                                 let ry = vx * sin_r + vy * cos_r;
                                 // Apply per-part heat tinting (blackbody glow)
                                 let color = apply_heat_tint(vert.color, part_data.temperature);
-                                all_vertices.push(Vertex::new([rel_x + (rotated_x + rx), rel_y + (rotated_y + ry)], color));
+                                all_vertices.push(Vertex {
+                                    position: [rel_x + (rotated_x + rx), rel_y + (rotated_y + ry)],
+                                    color,
+                                    uv: vert.uv,  // preserve sprite UVs
+                                });
                             }
 
                             // Part vertices are triangle lists (every 3 verts = 1 triangle)
@@ -3750,6 +3862,7 @@ impl RenderState {
                             if part_data.fairing_half.is_none() {
                                 crate::editor::generate_part_shape_vertices(
                                     &mut part_verts, def, 0.0, 0.0, 1.0,
+                                    Some(&self.sprite_atlas),
                                 );
                             }
 
@@ -3760,7 +3873,11 @@ impl RenderState {
                                 let vy = vert.position[1] * scale_factor;
                                 let rx = vx * cos_r - vy * sin_r;
                                 let ry = vx * sin_r + vy * cos_r;
-                                all_vertices.push(Vertex::new([rel_x + (rotated_x + rx), rel_y + (rotated_y + ry)], vert.color));
+                                all_vertices.push(Vertex {
+                                    position: [rel_x + (rotated_x + rx), rel_y + (rotated_y + ry)],
+                                    color: vert.color,
+                                    uv: vert.uv,
+                                });
                             }
                             let num_part_verts = part_verts.len() as u32;
                             for i in (0..num_part_verts).step_by(3) {
@@ -4171,7 +4288,7 @@ impl RenderState {
         };
 
         // Galaxy image spans 100,000 ly centered on Sgr A* (body 0 at origin)
-        let half = 50_000.0 * crate::bodies::LIGHT_YEAR * scale;
+        let half = 60_000.0 * crate::bodies::LIGHT_YEAR * scale;
         let cam_x = self.camera.body_center[0];
         let cam_y = self.camera.body_center[1];
         let off_x = self.camera.ship_offset[0];
@@ -4897,7 +5014,8 @@ impl RenderState {
             if editor_num_indices > 0 {
                 render_pass.set_pipeline(&self.render_pipeline);
                 render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
+                render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
+                render_pass.set_bind_group(2, &self.sprite_atlas.bind_group, &[]);
                 render_pass.set_vertex_buffer(0, editor_vertex_buffer.slice(..));
                 render_pass.set_index_buffer(editor_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..editor_num_indices, 0, 0..1);
@@ -5034,6 +5152,7 @@ impl RenderState {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.sprite_atlas.bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
@@ -5344,6 +5463,7 @@ impl RenderState {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.sprite_atlas.bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);

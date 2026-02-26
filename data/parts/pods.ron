@@ -19,6 +19,7 @@
             hitbox_height: Some(3),
             pod: Some((
                 crew_capacity: 2,
+                power_draw: 200.0,
             )),
             rcs: Some((
                 thrust: 0.1,
@@ -44,6 +45,7 @@
             hitbox_height: Some(4),
             pod: Some((
                 crew_capacity: 4,
+                power_draw: 500.0,
             )),
             rcs: Some((
                 thrust: 0.3,

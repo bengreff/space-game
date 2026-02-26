@@ -499,8 +499,8 @@ impl SolarSystem {
                 semi_major_axis: sun_sma,
                 eccentricity: 0.07,
                 argument_of_periapsis: 0.0,
-                // ~264.6° = atan2(-21003, -2000): 2000 ly left, 5000 ly up from old position
-                mean_anomaly_at_epoch: 4.617,
+                // ν=3π/2 → x=0, y≈-21,000 ly (Sun directly below Sgr A*)
+                mean_anomaly_at_epoch: 4.8534,
             }),
             soi_radius: calculate_soi(sun_sma, sun_mass, galactic_enclosed_mass(sun_sma)),
             atmosphere: None,

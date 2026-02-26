@@ -78,6 +78,10 @@ pub struct FlightPart {
     pub fairing_shape: Option<crate::parts::FairingShape>,
     // Which half to render (None = full shell, Some = debris half)
     pub fairing_half: Option<crate::parts::FairingHalf>,
+
+    // Electricity (stored separately from resources to avoid mass calculation interference)
+    pub electricity: f64,      // Current stored Wh
+    pub max_electricity: f64,  // Capacity Wh
 }
 
 impl FlightVessel {
@@ -145,6 +149,9 @@ impl FlightVessel {
             center_of_mass[0] += bp_part.position[0] * part_mass;
             center_of_mass[1] += bp_part.position[1] * part_mass;
 
+            // Electricity from battery data (starts fully charged)
+            let max_elec = def.battery.as_ref().map(|b| b.capacity_wh).unwrap_or(0.0);
+
             // Create flight part
             let mut flight_part = FlightPart {
                 definition_id: bp_part.definition_id.clone(),
@@ -174,6 +181,8 @@ impl FlightVessel {
                 max_heat_tolerance: def.max_heat_tolerance,
                 fairing_shape: bp_part.fairing_shape.clone(),
                 fairing_half: None,
+                electricity: max_elec,
+                max_electricity: max_elec,
             };
 
             // Set engine data if this is an engine
@@ -974,6 +983,94 @@ impl FlightVessel {
         }
 
         (current, max)
+    }
+
+    /// Total electricity stored across all non-decoupled battery parts (Wh)
+    pub fn total_electricity(&self) -> f64 {
+        self.parts.iter()
+            .filter(|p| !p.destroyed && !p.decoupled && p.max_electricity > 0.0)
+            .map(|p| p.electricity)
+            .sum()
+    }
+
+    /// Total electricity capacity across all non-decoupled battery parts (Wh)
+    pub fn max_electricity(&self) -> f64 {
+        self.parts.iter()
+            .filter(|p| !p.destroyed && !p.decoupled)
+            .map(|p| p.max_electricity)
+            .sum()
+    }
+
+    /// Electricity fraction (0.0–1.0), or None if no batteries
+    pub fn electricity_fraction(&self) -> Option<f64> {
+        let max = self.max_electricity();
+        if max > 0.0 {
+            Some(self.total_electricity() / max)
+        } else {
+            None
+        }
+    }
+
+    /// Update power: generate from solar/RTG/alternators, consume from pods.
+    /// Distributes net charge/drain proportionally across battery parts.
+    /// `sun_distance_m` is ship-to-Sun distance in meters.
+    /// Returns (generation_watts, consumption_watts).
+    pub fn update_power(&mut self, dt: f64, sun_distance_m: f64, part_defs: &PartDefinitions) -> (f64, f64) {
+        const AU_M: f64 = 1.496e11; // 1 AU in meters
+
+        let mut generation = 0.0_f64;
+        let mut consumption = 0.0_f64;
+
+        // Calculate generation and consumption from active (non-decoupled, non-destroyed) parts
+        for part in &self.parts {
+            if part.destroyed || part.decoupled {
+                continue;
+            }
+            let Some(def) = part_defs.get(&part.definition_id) else { continue };
+
+            // Solar panels: inverse-square scaling from 1 AU
+            if let Some(ref solar) = def.solar_panel {
+                let distance_ratio = AU_M / sun_distance_m.max(1.0);
+                generation += solar.output_1au * distance_ratio * distance_ratio;
+            }
+
+            // RTG: constant output
+            if let Some(ref rtg) = def.rtg {
+                generation += rtg.output_watts;
+            }
+
+            // Engine alternators: only when engine is active
+            if let Some(ref engine) = def.engine {
+                if engine.alternator_power > 0.0 && part.engine_active {
+                    generation += engine.alternator_power;
+                }
+            }
+
+            // Pod power draw
+            if let Some(ref pod) = def.pod {
+                if pod.power_draw > 0.0 {
+                    consumption += pod.power_draw;
+                }
+            }
+        }
+
+        // Net energy change in Wh for this timestep
+        let net_wh = (generation - consumption) * dt / 3600.0;
+
+        // Distribute across battery parts proportionally
+        let max_elec = self.max_electricity();
+        if max_elec > 0.0 && net_wh.abs() > 1e-12 {
+            for part in &mut self.parts {
+                if part.destroyed || part.decoupled || part.max_electricity <= 0.0 {
+                    continue;
+                }
+                let fraction = part.max_electricity / max_elec;
+                let part_delta = net_wh * fraction;
+                part.electricity = (part.electricity + part_delta).clamp(0.0, part.max_electricity);
+            }
+        }
+
+        (generation, consumption)
     }
 
     /// Get the bounding half-width of the vessel (max extent from COM in X)
@@ -2439,6 +2536,8 @@ pub fn create_default_vessel(
             max_heat_tolerance: 2000.0,
             fairing_shape: None,
             fairing_half: None,
+            electricity: 0.0,
+            max_electricity: 0.0,
         }],
         root_part_index: 0,
         total_mass: 2.0,

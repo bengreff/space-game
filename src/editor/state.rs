@@ -16,6 +16,9 @@ pub struct ShipStats {
     pub thrust_vac: f64,         // Total vacuum thrust (kN)
     pub thrust_asl: f64,         // Total sea-level thrust (kN)
     pub resources: HashMap<String, ResourceAmount>,  // Resource name -> amounts
+    pub electricity_capacity: f64,  // Total battery Wh
+    pub power_generation: f64,      // Total watts (solar + RTG)
+    pub power_consumption: f64,     // Total watts (pods)
 }
 
 /// Resource amount tracking
@@ -1180,6 +1183,26 @@ impl EditorState {
                         fuel_entry.max += fuel_kg;
                     }
                 }
+            }
+
+            // Battery capacity
+            if let Some(ref battery) = def.battery {
+                stats.electricity_capacity += battery.capacity_wh;
+            }
+
+            // Solar panel generation (at 1 AU)
+            if let Some(ref solar) = def.solar_panel {
+                stats.power_generation += solar.output_1au;
+            }
+
+            // RTG generation
+            if let Some(ref rtg) = def.rtg {
+                stats.power_generation += rtg.output_watts;
+            }
+
+            // Pod power consumption
+            if let Some(ref pod) = def.pod {
+                stats.power_consumption += pod.power_draw;
             }
         }
 

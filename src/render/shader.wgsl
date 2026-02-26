@@ -17,6 +17,11 @@ var body_texture: texture_2d_array<f32>;
 @group(1) @binding(1)
 var body_sampler: sampler;
 
+@group(2) @binding(0)
+var sprite_texture: texture_2d<f32>;
+@group(2) @binding(1)
+var sprite_sampler: sampler;
+
 // Vertex shader
 
 struct VertexInput {
@@ -59,6 +64,14 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Sprite: uv.x >= 2.0 flags sprite atlas sampling
+    if in.uv.x >= 2.0 {
+        let sprite_uv = in.uv - vec2<f32>(2.0, 0.0);
+        let tex_color = textureSample(sprite_texture, sprite_sampler, sprite_uv);
+        if tex_color.a < 0.01 { discard; }
+        return tex_color * in.color;
+    }
+
     // Textured body: uv is non-zero, layer index stored in color.a
     if in.uv.x + in.uv.y > 0.0 {
         let layer = i32(in.color.a + 0.5);

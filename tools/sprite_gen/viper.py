@@ -16,12 +16,14 @@ import math
 import os
 
 
-# --- Canvas ---
+# --- Canvas (hitbox dims: 3 wide x 4 tall) ---
 PX_PER_GRID = 90
-IMG_W = int(2.8 * PX_PER_GRID) + 12  # +padding
-IMG_H = int(3.0 * PX_PER_GRID) + 12
+HITBOX_W = 3
+HITBOX_H = 4
+IMG_W = HITBOX_W * PX_PER_GRID
+IMG_H = HITBOX_H * PX_PER_GRID
 CX = IMG_W // 2
-PAD = 6
+PAD = 0
 
 # --- Palette (all steel/gray, no orange) ---
 STEEL_DARK = (48, 50, 55)

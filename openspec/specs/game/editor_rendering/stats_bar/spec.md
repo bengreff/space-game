@@ -25,3 +25,9 @@ When total delta-v > 0, the stats bar SHALL display "dv: {formatted}" after a se
 ### Requirement: Resource totals display
 
 The stats bar SHALL display resource totals at body text size in consistent order: O2 (oxygen), RP1 (rp1), CH4 (methane), LH2 (hydrogen). Only resources that exist in the vessel SHALL be shown. Mass values SHALL be formatted as "{value} t" for >= 1000 kg, or "{value} kg" for < 1000 kg.
+
+### Requirement: Power stats display
+
+When the vessel has any electricity capacity, power generation, or power consumption > 0, the stats bar SHALL display after a separator:
+- "EC: {value}k Wh" for capacity >= 1000 Wh, or "EC: {value} Wh" otherwise
+- "Power: +{generation}W / -{consumption}W"
