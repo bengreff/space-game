@@ -405,6 +405,40 @@ Right-clicking during fairing build mode SHALL remove the last vertex. If no ver
 
 Pressing Escape exits fairing build mode. The current vertices (if any) are saved to the part's `fairing_shape` with `closed: false`. Deselecting also exits build mode. Deleting the fairing base part exits build mode and discards the shape.
 
+## Part Rotation
+
+### Requirement: Ghost rotation via R key
+
+Pressing R with a palette part selected (ghost mode) SHALL rotate the ghost preview by 90° clockwise. The ghost rotation is stored in `EditorState.ghost_rotation` as radians (0, π/2, π, 3π/2 cycle). The rotation resets to 0 when deselecting or clearing the editor.
+
+### Requirement: Placed part rotation via R key
+
+Pressing R with a placed part selected (no palette selection) SHALL rotate the part by 90° clockwise in place, provided the rotated hitbox does not overlap any other part. If the part has a `mirror_partner`, the partner SHALL rotate in the opposite direction (negated rotation). If the rotated hitbox would overlap, the rotation is rejected (no change).
+
+### Requirement: Rotated hitbox dimensions
+
+At 0° and 180° rotation, parts use their normal hitbox width and height. At 90° and 270° rotation, hitbox width and height SHALL be swapped. This applies to: editor placement hitbox, welding hitbox, flight hitbox, and click detection hitbox. `PartDefinition` provides `rotated_hitbox_width(rotation)` / `rotated_hitbox_height(rotation)` and similar rotated accessor methods.
+
+### Requirement: Rotated grid snapping
+
+Ghost snapping SHALL use the rotated hitbox dimensions for odd/even alignment: parts with odd rotated hitbox width snap to grid square centers, parts with even rotated hitbox width snap to grid lines. The same applies to the height axis.
+
+### Requirement: Rotation stored on PlacedPart
+
+`PlacedPart.rotation` SHALL be set to `ghost_rotation` when placing a part. For mirror placements, the mirrored part's rotation SHALL be the negation of the primary part's rotation.
+
+### Requirement: Rotation rendering in editor
+
+Part vertices SHALL be rotated around the part center by `part.rotation` radians after generation. This applies to all rendering paths (sprites, procedural engines/pods/decouplers, shape fallbacks). Ghost vertices SHALL be rotated by `ghost_rotation` (primary ghost) or `-ghost_rotation` (mirror ghost).
+
+### Requirement: Rotation rendering in flight
+
+Flight rendering SHALL apply per-part rotation after scaling and before vessel rotation. The `ShipPartRenderData` struct includes a `rotation: f64` field set from `FlightPart.rotation`.
+
+### Requirement: R key replaces symmetry toggle
+
+The R key SHALL rotate parts instead of toggling symmetry mode. Symmetry mode remains accessible via the UI button in the editor toolbar.
+
 ## Deselection
 
 ### Requirement: Escape deselection

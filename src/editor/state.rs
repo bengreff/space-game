@@ -89,6 +89,7 @@ pub struct EditorState {
     pub selected_placed_part: Option<PlacedPartId>,
     pub ghost_position: Option<[f64; 2]>,
     pub ghost_valid: bool,
+    pub ghost_rotation: f64,  // Rotation for ghost preview (radians, 90° increments)
     pub mirror_ghost_position: Option<[f64; 2]>,
     pub mirror_ghost_def_id: Option<String>,
 
@@ -147,6 +148,7 @@ impl EditorState {
             selected_placed_part: None,
             ghost_position: None,
             ghost_valid: false,
+            ghost_rotation: 0.0,
             mirror_ghost_position: None,
             mirror_ghost_def_id: None,
             camera_offset: [GRID_SIZE / 2.0, GRID_SIZE / 2.0],  // Center on middle of a square
@@ -199,6 +201,7 @@ impl EditorState {
         self.selected_placed_part = None;
         self.ghost_position = None;
         self.ghost_valid = false;
+        self.ghost_rotation = 0.0;
         self.mirror_ghost_position = None;
         self.mirror_ghost_def_id = None;
         self.stages.clear();
@@ -255,7 +258,7 @@ impl EditorState {
                     continue;
                 }
                 if let Some(other_def) = part_defs.get(&other.definition_id) {
-                    if Self::weld_bounds_overlap(current.position, current_def, other.position, other_def) {
+                    if Self::weld_bounds_overlap(current.position, current_def, current.rotation, other.position, other_def, other.rotation) {
                         visited.insert(other_id);
                         queue.push_back(other_id);
                     }
@@ -318,8 +321,12 @@ impl EditorState {
         };
 
         // Snap based on HITBOX dimensions (for proper alignment with other parts)
+        // Use rotated dimensions for snapping
+        let rot = self.ghost_rotation;
+        let snap_grid_w = def.rotated_hitbox_grid_width(rot);
+        let snap_grid_h = def.rotated_hitbox_grid_height(rot);
         // Odd dimensions snap to square center, even dimensions snap to grid line
-        let snapped_x = if def.hitbox_grid_width() % 2 == 1 {
+        let snapped_x = if snap_grid_w % 2 == 1 {
             // Odd width: center on middle of square
             (world_x / GRID_SIZE).floor() * GRID_SIZE + GRID_SIZE / 2.0
         } else {
@@ -327,7 +334,7 @@ impl EditorState {
             (world_x / GRID_SIZE + 0.5).floor() * GRID_SIZE
         };
 
-        let snapped_y = if def.hitbox_grid_height() % 2 == 1 {
+        let snapped_y = if snap_grid_h % 2 == 1 {
             // Odd height: center on middle of square
             (world_y / GRID_SIZE).floor() * GRID_SIZE + GRID_SIZE / 2.0
         } else {
@@ -338,12 +345,14 @@ impl EditorState {
         self.ghost_position = Some([snapped_x, snapped_y]);
 
         // Check if placement would overlap any existing part using HITBOX dimensions
-        let new_bounds = Self::calc_bounds([snapped_x, snapped_y], def.hitbox_width(), def.hitbox_height());
+        let rot_hitbox_w = def.rotated_hitbox_width(rot);
+        let rot_hitbox_h = def.rotated_hitbox_height(rot);
+        let new_bounds = Self::calc_bounds([snapped_x, snapped_y], rot_hitbox_w, rot_hitbox_h);
 
         let mut overlaps = false;
         for (_, part) in &self.parts {
             if let Some(existing_def) = part_defs.get(&part.definition_id) {
-                let existing_bounds = Self::calc_bounds(part.position, existing_def.hitbox_width(), existing_def.hitbox_height());
+                let existing_bounds = Self::calc_bounds(part.position, existing_def.rotated_hitbox_width(part.rotation), existing_def.rotated_hitbox_height(part.rotation));
                 if Self::bounds_overlap(&new_bounds, &existing_bounds) {
                     overlaps = true;
                     break;
@@ -368,10 +377,10 @@ impl EditorState {
 
                     // Check mirror ghost overlap too
                     if !overlaps {
-                        let mirror_bounds = Self::calc_bounds([mirror_x, snapped_y], def.hitbox_width(), def.hitbox_height());
+                        let mirror_bounds = Self::calc_bounds([mirror_x, snapped_y], rot_hitbox_w, rot_hitbox_h);
                         for (_, part) in &self.parts {
                             if let Some(existing_def) = part_defs.get(&part.definition_id) {
-                                let existing_bounds = Self::calc_bounds(part.position, existing_def.hitbox_width(), existing_def.hitbox_height());
+                                let existing_bounds = Self::calc_bounds(part.position, existing_def.rotated_hitbox_width(part.rotation), existing_def.rotated_hitbox_height(part.rotation));
                                 if Self::bounds_overlap(&mirror_bounds, &existing_bounds) {
                                     overlaps = true;
                                     break;
@@ -394,8 +403,8 @@ impl EditorState {
             for (_, part) in &self.parts {
                 if let Some(existing_def) = part_defs.get(&part.definition_id) {
                     if Self::weld_bounds_overlap_reach(
-                        [snapped_x, snapped_y], def, extra_upward_reach,
-                        part.position, existing_def,
+                        [snapped_x, snapped_y], def, rot, extra_upward_reach,
+                        part.position, existing_def, part.rotation,
                     ) {
                         weld_connected = true;
                         break;
@@ -407,13 +416,14 @@ impl EditorState {
         // Mirror ghost must also touch at least one existing part or the primary ghost
         if weld_connected && self.mirror_ghost_position.is_some() {
             let mirror_pos = self.mirror_ghost_position.unwrap();
+            let mirror_rot = -rot;  // Mirror rotation
             let mut mirror_connected = false;
             // Check against existing parts
             for (_, part) in &self.parts {
                 if let Some(existing_def) = part_defs.get(&part.definition_id) {
                     if Self::weld_bounds_overlap_reach(
-                        mirror_pos, def, extra_upward_reach,
-                        part.position, existing_def,
+                        mirror_pos, def, mirror_rot, extra_upward_reach,
+                        part.position, existing_def, part.rotation,
                     ) {
                         mirror_connected = true;
                         break;
@@ -422,7 +432,7 @@ impl EditorState {
             }
             // Check against primary ghost
             if !mirror_connected {
-                mirror_connected = Self::weld_bounds_overlap(mirror_pos, def, [snapped_x, snapped_y], def);
+                mirror_connected = Self::weld_bounds_overlap(mirror_pos, def, mirror_rot, [snapped_x, snapped_y], def, rot);
             }
             if !mirror_connected {
                 weld_connected = false;
@@ -446,6 +456,16 @@ impl EditorState {
         self.ghost_valid = !overlaps && weld_connected && !crosses_fairing;
     }
 
+    /// Public bounds calculation (for use from main.rs rotation check)
+    pub fn calc_bounds_pub(pos: [f64; 2], width: f64, height: f64) -> [f64; 4] {
+        Self::calc_bounds(pos, width, height)
+    }
+
+    /// Public bounds overlap check (for use from main.rs rotation check)
+    pub fn bounds_overlap_pub(a: &[f64; 4], b: &[f64; 4]) -> bool {
+        Self::bounds_overlap(a, b)
+    }
+
     /// Calculate exact bounds for a part (no padding)
     fn calc_bounds(pos: [f64; 2], width: f64, height: f64) -> [f64; 4] {
         let half_w = width / 2.0;
@@ -460,24 +480,24 @@ impl EditorState {
         a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
     }
 
-    /// Check if two parts' welding hitboxes overlap
+    /// Check if two parts' welding hitboxes overlap (rotation-aware)
     fn weld_bounds_overlap(
-        pos_a: [f64; 2], def_a: &crate::parts::PartDefinition,
-        pos_b: [f64; 2], def_b: &crate::parts::PartDefinition,
+        pos_a: [f64; 2], def_a: &crate::parts::PartDefinition, rot_a: f64,
+        pos_b: [f64; 2], def_b: &crate::parts::PartDefinition, rot_b: f64,
     ) -> bool {
-        let a = Self::calc_bounds(pos_a, def_a.weld_hitbox_width(), def_a.weld_hitbox_height());
-        let b = Self::calc_bounds(pos_b, def_b.weld_hitbox_width(), def_b.weld_hitbox_height());
+        let a = Self::calc_bounds(pos_a, def_a.rotated_weld_hitbox_width(rot_a), def_a.rotated_weld_hitbox_height(rot_a));
+        let b = Self::calc_bounds(pos_b, def_b.rotated_weld_hitbox_width(rot_b), def_b.rotated_weld_hitbox_height(rot_b));
         Self::bounds_overlap(&a, &b)
     }
 
     /// Check weld overlap with extra upward reach on part A (for decoupler placement)
     fn weld_bounds_overlap_reach(
-        pos_a: [f64; 2], def_a: &crate::parts::PartDefinition, extra_up: f64,
-        pos_b: [f64; 2], def_b: &crate::parts::PartDefinition,
+        pos_a: [f64; 2], def_a: &crate::parts::PartDefinition, rot_a: f64, extra_up: f64,
+        pos_b: [f64; 2], def_b: &crate::parts::PartDefinition, rot_b: f64,
     ) -> bool {
-        let mut a = Self::calc_bounds(pos_a, def_a.weld_hitbox_width(), def_a.weld_hitbox_height());
+        let mut a = Self::calc_bounds(pos_a, def_a.rotated_weld_hitbox_width(rot_a), def_a.rotated_weld_hitbox_height(rot_a));
         a[3] += extra_up; // extend top edge upward
-        let b = Self::calc_bounds(pos_b, def_b.weld_hitbox_width(), def_b.weld_hitbox_height());
+        let b = Self::calc_bounds(pos_b, def_b.rotated_weld_hitbox_width(rot_b), def_b.rotated_weld_hitbox_height(rot_b));
         Self::bounds_overlap(&a, &b)
     }
 
@@ -635,6 +655,7 @@ impl EditorState {
         let needs_staging = is_engine || is_decoupler || is_fairing;
 
         let mut part = PlacedPart::new(id, def_id.clone(), position);
+        part.rotation = self.ghost_rotation;
 
         // First part becomes root
         if self.root_part.is_none() {
@@ -652,6 +673,7 @@ impl EditorState {
             // Link the two parts
             part.mirror_partner = Some(mirror_id);
             let mut mirror_part = PlacedPart::new(mirror_id, mirror_def_id, mirror_pos);
+            mirror_part.rotation = -self.ghost_rotation;  // Mirror rotation
             mirror_part.mirror_partner = Some(id);
 
             self.parts.insert(id, part);
@@ -785,6 +807,7 @@ impl EditorState {
         self.selected_placed_part = None;
         self.ghost_position = None;
         self.ghost_valid = false;
+        self.ghost_rotation = 0.0;
         self.mirror_ghost_position = None;
         self.mirror_ghost_def_id = None;
     }
@@ -831,26 +854,27 @@ impl EditorState {
         };
 
         let mirror_id = part.mirror_partner;
+        let part_rot = part.rotation;
 
         // Apply offset so the part doesn't jump to the cursor on first drag
         let target_x = world_x + self.drag_offset[0];
         let target_y = world_y + self.drag_offset[1];
 
-        // Snap based on HITBOX dimensions
-        let snapped_x = if def.hitbox_grid_width() % 2 == 1 {
+        // Snap based on HITBOX dimensions (rotated)
+        let snapped_x = if def.rotated_hitbox_grid_width(part_rot) % 2 == 1 {
             (target_x / GRID_SIZE).floor() * GRID_SIZE + GRID_SIZE / 2.0
         } else {
             (target_x / GRID_SIZE + 0.5).floor() * GRID_SIZE
         };
 
-        let snapped_y = if def.hitbox_grid_height() % 2 == 1 {
+        let snapped_y = if def.rotated_hitbox_grid_height(part_rot) % 2 == 1 {
             (target_y / GRID_SIZE).floor() * GRID_SIZE + GRID_SIZE / 2.0
         } else {
             (target_y / GRID_SIZE + 0.5).floor() * GRID_SIZE
         };
 
         // Check if new position would overlap any other part
-        let new_bounds = Self::calc_bounds([snapped_x, snapped_y], def.hitbox_width(), def.hitbox_height());
+        let new_bounds = Self::calc_bounds([snapped_x, snapped_y], def.rotated_hitbox_width(part_rot), def.rotated_hitbox_height(part_rot));
 
         let mut overlaps = false;
         for (&other_id, other_part) in &self.parts {
@@ -858,7 +882,7 @@ impl EditorState {
                 continue; // Skip the part being dragged and its mirror partner
             }
             if let Some(other_def) = part_defs.get(&other_part.definition_id) {
-                let other_bounds = Self::calc_bounds(other_part.position, other_def.hitbox_width(), other_def.hitbox_height());
+                let other_bounds = Self::calc_bounds(other_part.position, other_def.rotated_hitbox_width(other_part.rotation), other_def.rotated_hitbox_height(other_part.rotation));
                 if Self::bounds_overlap(&new_bounds, &other_bounds) {
                     overlaps = true;
                     break;
@@ -871,7 +895,7 @@ impl EditorState {
             if !overlaps {
                 if let Some(center_x) = self.center_line_x() {
                     let mirror_x = center_x * 2.0 - snapped_x;
-                    let mirror_bounds = Self::calc_bounds([mirror_x, snapped_y], def.hitbox_width(), def.hitbox_height());
+                    let mirror_bounds = Self::calc_bounds([mirror_x, snapped_y], def.rotated_hitbox_width(part_rot), def.rotated_hitbox_height(part_rot));
 
                     // Also check primary vs mirror overlap
                     if Self::bounds_overlap(&new_bounds, &mirror_bounds) {
@@ -884,7 +908,7 @@ impl EditorState {
                                 continue;
                             }
                             if let Some(other_def) = part_defs.get(&other_part.definition_id) {
-                                let other_bounds = Self::calc_bounds(other_part.position, other_def.hitbox_width(), other_def.hitbox_height());
+                                let other_bounds = Self::calc_bounds(other_part.position, other_def.rotated_hitbox_width(other_part.rotation), other_def.rotated_hitbox_height(other_part.rotation));
                                 if Self::bounds_overlap(&mirror_bounds, &other_bounds) {
                                     overlaps = true;
                                     break;
@@ -940,7 +964,8 @@ impl EditorState {
 
         let mirror_id = part.mirror_partner;
         let current_pos = part.position;
-        let bounds = Self::calc_bounds(current_pos, def.hitbox_width(), def.hitbox_height());
+        let part_rot = part.rotation;
+        let bounds = Self::calc_bounds(current_pos, def.rotated_hitbox_width(part_rot), def.rotated_hitbox_height(part_rot));
 
         let mut overlaps = false;
         for (&other_id, other_part) in &self.parts {
@@ -948,7 +973,7 @@ impl EditorState {
                 continue;
             }
             if let Some(other_def) = part_defs.get(&other_part.definition_id) {
-                let other_bounds = Self::calc_bounds(other_part.position, other_def.hitbox_width(), other_def.hitbox_height());
+                let other_bounds = Self::calc_bounds(other_part.position, other_def.rotated_hitbox_width(other_part.rotation), other_def.rotated_hitbox_height(other_part.rotation));
                 if Self::bounds_overlap(&bounds, &other_bounds) {
                     overlaps = true;
                     break;
@@ -960,7 +985,7 @@ impl EditorState {
         if !overlaps {
             if let Some(mid) = mirror_id {
                 if let Some(mirror_part) = self.parts.get(&mid) {
-                    let mirror_bounds = Self::calc_bounds(mirror_part.position, def.hitbox_width(), def.hitbox_height());
+                    let mirror_bounds = Self::calc_bounds(mirror_part.position, def.rotated_hitbox_width(part_rot), def.rotated_hitbox_height(part_rot));
 
                     // Check primary vs mirror
                     if Self::bounds_overlap(&bounds, &mirror_bounds) {
@@ -973,7 +998,7 @@ impl EditorState {
                                 continue;
                             }
                             if let Some(other_def) = part_defs.get(&other_part.definition_id) {
-                                let other_bounds = Self::calc_bounds(other_part.position, other_def.hitbox_width(), other_def.hitbox_height());
+                                let other_bounds = Self::calc_bounds(other_part.position, other_def.rotated_hitbox_width(other_part.rotation), other_def.rotated_hitbox_height(other_part.rotation));
                                 if Self::bounds_overlap(&mirror_bounds, &other_bounds) {
                                     overlaps = true;
                                     break;
@@ -1251,7 +1276,7 @@ impl EditorState {
                     if zone_of.contains_key(&other_id) { continue; }
                     let other = &self.parts[&other_id];
                     let Some(other_def) = part_defs.get(&other.definition_id) else { continue };
-                    if Self::weld_bounds_overlap(current.position, current_def, other.position, other_def) {
+                    if Self::weld_bounds_overlap(current.position, current_def, current.rotation, other.position, other_def, other.rotation) {
                         zone_of.insert(other_id, current_zone);
                         queue.push_back(other_id);
                     }

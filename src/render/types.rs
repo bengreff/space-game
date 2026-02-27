@@ -88,6 +88,7 @@ pub struct ShipPartRenderData {
     pub definition_id: String,
     pub local_x: f64,  // meters, relative to vessel COM
     pub local_y: f64,
+    pub rotation: f64,  // part rotation in radians (0 = default orientation)
     pub engine_active: bool,  // true if this engine has fuel and can fire
     // Extended info for part popup
     pub part_index: usize,        // index in FlightVessel.parts

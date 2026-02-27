@@ -3480,7 +3480,7 @@ impl RenderState {
                                 }
                             }
 
-                            // Apply gimbal rotation for engine parts, then scale
+                            // Apply part rotation and gimbal rotation for engine parts, then scale
                             // and rotate each vertex by vessel rotation.
                             // PRECISION: compute vertex as rel + (local + vert) not (rel + local) + vert.
                             // The inner sum (local + vert) stays near zero with full f32 precision.
@@ -3491,11 +3491,21 @@ impl RenderState {
                             } else {
                                 0.0
                             };
+                            let part_rot = part_data.rotation as f32;
                             let base_index = all_vertices.len() as u32;
                             let scale_factor = render_scale;
                             for vert in &part_verts {
                                 let mut vx = vert.position[0] * scale_factor;
                                 let mut vy = vert.position[1] * scale_factor;
+                                // Apply part rotation in part-local space
+                                if part_rot.abs() > 1e-6 {
+                                    let pc = part_rot.cos();
+                                    let ps = part_rot.sin();
+                                    let px = vx * pc - vy * ps;
+                                    let py = vx * ps + vy * pc;
+                                    vx = px;
+                                    vy = py;
+                                }
                                 // Apply gimbal rotation in part-local space
                                 if gimbal.abs() > 1e-6 {
                                     let gc = gimbal.cos();
@@ -3868,9 +3878,19 @@ impl RenderState {
 
                             let base_index = all_vertices.len() as u32;
                             let scale_factor = render_scale;
+                            let bg_part_rot = part_data.rotation as f32;
                             for vert in &part_verts {
-                                let vx = vert.position[0] * scale_factor;
-                                let vy = vert.position[1] * scale_factor;
+                                let mut vx = vert.position[0] * scale_factor;
+                                let mut vy = vert.position[1] * scale_factor;
+                                // Apply part rotation
+                                if bg_part_rot.abs() > 1e-6 {
+                                    let pc = bg_part_rot.cos();
+                                    let ps = bg_part_rot.sin();
+                                    let px = vx * pc - vy * ps;
+                                    let py = vx * ps + vy * pc;
+                                    vx = px;
+                                    vy = py;
+                                }
                                 let rx = vx * cos_r - vy * sin_r;
                                 let ry = vx * sin_r + vy * cos_r;
                                 all_vertices.push(Vertex {

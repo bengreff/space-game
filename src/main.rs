@@ -1078,14 +1078,15 @@ fn render_flight_frame(
                         definition_id: p.definition_id.clone(),
                         local_x: p.local_position[0],
                         local_y: p.local_position[1],
+                        rotation: p.rotation,
                         engine_active: p.engine_active,
                         part_index: i,
                         name,
                         dry_mass,
-                        hitbox_half_w: p.hitbox_half_extents[0],
-                        hitbox_half_h: p.hitbox_half_extents[1],
+                        hitbox_half_w: if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[1] } else { p.hitbox_half_extents[0] },
+                        hitbox_half_h: if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[0] } else { p.hitbox_half_extents[1] },
                         click_local_y: p.local_position[1],
-                        click_hitbox_half_h: p.hitbox_half_extents[1],
+                        click_hitbox_half_h: if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[0] } else { p.hitbox_half_extents[1] },
                         engine_thrust_vac,
                         engine_thrust_asl,
                         engine_isp_vac,
@@ -2266,14 +2267,15 @@ fn build_vessel_part_render_data(
                 definition_id: p.definition_id.clone(),
                 local_x: p.local_position[0],
                 local_y: p.local_position[1],
+                rotation: p.rotation,
                 engine_active: false, // Inactive vessels don't fire engines
                 part_index: i,
                 name,
                 dry_mass,
-                hitbox_half_w: p.hitbox_half_extents[0],
-                hitbox_half_h: p.hitbox_half_extents[1],
+                hitbox_half_w: if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[1] } else { p.hitbox_half_extents[0] },
+                hitbox_half_h: if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[0] } else { p.hitbox_half_extents[1] },
                 click_local_y: p.local_position[1],
-                click_hitbox_half_h: p.hitbox_half_extents[1],
+                click_hitbox_half_h: if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[0] } else { p.hitbox_half_extents[1] },
                 engine_thrust_vac: if is_engine { Some(p.engine_thrust_vac) } else { None },
                 engine_thrust_asl: if is_engine { Some(p.engine_thrust_asl) } else { None },
                 engine_isp_vac: if is_engine { Some(p.engine_isp_vac) } else { None },
@@ -2995,6 +2997,13 @@ fn switch_to_next_vessel_by_id(game: &mut Game, render_state: &mut RenderState, 
     }
 }
 
+/// Returns true if rotation is approximately 90° or 270° (dimensions should be swapped)
+fn is_part_rotation_swapped(rotation: f64) -> bool {
+    let norm = rotation.rem_euclid(std::f64::consts::TAU);
+    let quarter = std::f64::consts::FRAC_PI_2;
+    (norm - quarter).abs() < 0.01 || (norm - 3.0 * quarter).abs() < 0.01
+}
+
 /// Handle editor mode keyboard input
 fn handle_editor_keyboard(
     game: &mut Game,
@@ -3032,7 +3041,57 @@ fn handle_editor_keyboard(
         if let Key::Character(c) = logical_key {
             match c.as_str() {
                 "r" | "R" => {
-                    game.editor.symmetry_mode = game.editor.symmetry_mode.cycle_next();
+                    // Rotate ghost or placed part by 90° clockwise
+                    if game.editor.selected_part_def.is_some() {
+                        // Ghost mode: rotate ghost preview
+                        game.editor.ghost_rotation = (game.editor.ghost_rotation - std::f64::consts::FRAC_PI_2)
+                            .rem_euclid(std::f64::consts::TAU);
+                    } else if let Some(part_id) = game.editor.selected_placed_part {
+                        // Placed part selected: rotate it in place (with overlap check)
+                        if let Some(part) = game.editor.parts.get(&part_id) {
+                            let new_rot = (part.rotation - std::f64::consts::FRAC_PI_2)
+                                .rem_euclid(std::f64::consts::TAU);
+                            let def_id = part.definition_id.clone();
+                            let pos = part.position;
+                            let mirror_id = part.mirror_partner;
+                            if let Some(def) = game.part_definitions.get(&def_id) {
+                                // Check if rotated hitbox would overlap
+                                let new_bounds = sunscatter::editor::EditorState::calc_bounds_pub(
+                                    pos,
+                                    def.rotated_hitbox_width(new_rot),
+                                    def.rotated_hitbox_height(new_rot),
+                                );
+                                let mut overlaps = false;
+                                for (&other_id, other_part) in &game.editor.parts {
+                                    if other_id == part_id || Some(other_id) == mirror_id {
+                                        continue;
+                                    }
+                                    if let Some(other_def) = game.part_definitions.get(&other_part.definition_id) {
+                                        let other_bounds = sunscatter::editor::EditorState::calc_bounds_pub(
+                                            other_part.position,
+                                            other_def.rotated_hitbox_width(other_part.rotation),
+                                            other_def.rotated_hitbox_height(other_part.rotation),
+                                        );
+                                        if sunscatter::editor::EditorState::bounds_overlap_pub(&new_bounds, &other_bounds) {
+                                            overlaps = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if !overlaps {
+                                    if let Some(part) = game.editor.parts.get_mut(&part_id) {
+                                        part.rotation = new_rot;
+                                    }
+                                    // Also rotate mirror partner (opposite direction)
+                                    if let Some(mid) = mirror_id {
+                                        if let Some(mirror_part) = game.editor.parts.get_mut(&mid) {
+                                            mirror_part.rotation = (-new_rot).rem_euclid(std::f64::consts::TAU);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 _ => {}
             }

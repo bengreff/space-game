@@ -42,6 +42,21 @@ const FAIRING_BASE_COLOR: [f32; 4] = [0.30, 0.30, 0.33, 1.0];      // Lighter me
 const FAIRING_SHELL_COLOR: [f32; 4] = [0.35, 0.35, 0.38, 1.0];     // Light grey shell panels
 const FAIRING_SHELL_LINE_COLOR: [f32; 4] = [0.20, 0.20, 0.22, 1.0]; // Panel seam lines
 
+/// Rotate a slice of vertices around a center point by the given angle (radians).
+fn rotate_vertices_around(vertices: &mut [Vertex], cx: f32, cy: f32, angle: f64) {
+    if angle.abs() < 1e-6 {
+        return;
+    }
+    let cos_a = angle.cos() as f32;
+    let sin_a = angle.sin() as f32;
+    for v in vertices.iter_mut() {
+        let dx = v.position[0] - cx;
+        let dy = v.position[1] - cy;
+        v.position[0] = cx + dx * cos_a - dy * sin_a;
+        v.position[1] = cy + dx * sin_a + dy * cos_a;
+    }
+}
+
 /// Emit 6 sprite vertices (2 triangles) for a textured quad at the given position and size.
 /// Uses the part's visual dimensions (width/height in meters).
 fn generate_sprite_quad(
@@ -103,7 +118,7 @@ fn sprite_placement(def: &PartDefinition) -> (f32, f32, f32, f32) {
     if def.rcs.is_some() && def.category != PartCategory::Pods {
         let is_mirrored = def.rcs.as_ref().map(|r| r.is_mirrored).unwrap_or(false);
         let sign: f32 = if is_mirrored { -1.0 } else { 1.0 };
-        let x_offset = sign * (hitbox_half_w - visual_half_w);
+        let x_offset = sign * (hitbox_half_w - visual_half_w + 0.1);
         return (visual_half_w, visual_half_h, x_offset, 0.0);
     }
 
@@ -219,6 +234,8 @@ pub fn generate_part_vertices(
             continue;
         };
 
+        let vert_start = vertices.len();
+
         let is_selected = editor.selected_placed_part == Some(*id)
             || editor.selected_placed_part.and_then(|sel| editor.parts.get(&sel)?.mirror_partner) == Some(*id);
         let is_hovered = editor.hovered_part == Some(*id)
@@ -272,6 +289,7 @@ pub fn generate_part_vertices(
                         vertices.push(Vertex::new([x + half_w, y + half_h], highlight_color));
                         vertices.push(Vertex::new([x - half_w, y + half_h], highlight_color));
                     }
+                    rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
                     continue;
                 }
             }
@@ -298,6 +316,7 @@ pub fn generate_part_vertices(
                 vertices.push(Vertex::new([x + half_top_w, y + half_h], highlight_color));
                 vertices.push(Vertex::new([x - half_top_w, y + half_h], highlight_color));
             }
+            rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
             continue;
         }
 
@@ -322,6 +341,7 @@ pub fn generate_part_vertices(
                 vertices.push(Vertex::new([x + half_top_w, y + half_h], highlight_color));
                 vertices.push(Vertex::new([x - half_top_w, y + half_h], highlight_color));
             }
+            rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
             continue;
         }
 
@@ -345,6 +365,7 @@ pub fn generate_part_vertices(
                 vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
                 vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], highlight_color));
             }
+            rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
             continue;
         }
 
@@ -369,6 +390,7 @@ pub fn generate_part_vertices(
                 vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
                 vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], highlight_color));
             }
+            rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
             continue;
         }
 
@@ -393,6 +415,7 @@ pub fn generate_part_vertices(
                 vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
                 vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], highlight_color));
             }
+            rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
             continue;
         }
 
@@ -415,6 +438,7 @@ pub fn generate_part_vertices(
                 vertices.push(Vertex::new([x + half_w, y + half_h], highlight_color));
                 vertices.push(Vertex::new([x - half_w, y + half_h], highlight_color));
             }
+            rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
             continue;
         }
 
@@ -510,6 +534,7 @@ pub fn generate_part_vertices(
                 }
             }
         }
+        rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
     }
 
     // Second pass: draw adapter trapezoids for decouplers
@@ -565,10 +590,12 @@ fn generate_single_ghost_vertices(
     def: &PartDefinition,
     position: [f64; 2],
     ghost_valid: bool,
+    rotation: f64,
     editor: &EditorState,
     part_defs: &PartDefinitions,
     sprite_atlas: Option<&SpriteAtlas>,
 ) {
+    let vert_start = vertices.len();
     let ghost_alpha = 0.5;
 
     let half_w = (def.width() / 2.0) as f32;
@@ -596,6 +623,7 @@ fn generate_single_ghost_vertices(
                 if def.category == PartCategory::Pods && def.rcs.is_some() {
                     generate_pod_rcs_nozzles(vertices, def, sp_x, sp_y, ghost_alpha);
                 }
+                rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
                 return;
             }
         }
@@ -616,6 +644,7 @@ fn generate_single_ghost_vertices(
         vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
         vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay_color));
         vertices.push(Vertex::new([x - half_top_w, y + half_h], overlay_color));
+        rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
         return;
     }
 
@@ -634,6 +663,7 @@ fn generate_single_ghost_vertices(
         vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
         vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay_color));
         vertices.push(Vertex::new([x - half_top_w, y + half_h], overlay_color));
+        rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
         return;
     }
 
@@ -652,6 +682,7 @@ fn generate_single_ghost_vertices(
         vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
         vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
         vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], overlay_color));
+        rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
         return;
     }
 
@@ -674,6 +705,7 @@ fn generate_single_ghost_vertices(
         vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
         vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
         vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], overlay_color));
+        rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
         return;
     }
 
@@ -692,6 +724,7 @@ fn generate_single_ghost_vertices(
         vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
         vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
         vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], overlay_color));
+        rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
         return;
     }
 
@@ -709,6 +742,7 @@ fn generate_single_ghost_vertices(
         vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
         vertices.push(Vertex::new([x + half_w, y + half_h], overlay_color));
         vertices.push(Vertex::new([x - half_w, y + half_h], overlay_color));
+        rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
         return;
     }
 
@@ -755,6 +789,7 @@ fn generate_single_ghost_vertices(
             vertices.push(Vertex::new([x - half_top_w, y + half_h], color));
         }
     }
+    rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
 }
 
 /// Generate vertices for the ghost preview (primary + mirror if applicable)
@@ -779,14 +814,14 @@ pub fn generate_ghost_vertices(
     };
 
     // Render primary ghost
-    generate_single_ghost_vertices(&mut vertices, def, position, editor.ghost_valid, editor, part_defs, sprite_atlas);
+    generate_single_ghost_vertices(&mut vertices, def, position, editor.ghost_valid, editor.ghost_rotation, editor, part_defs, sprite_atlas);
 
     // Render mirror ghost if applicable, using mirror def if available
     if let Some(mirror_pos) = editor.mirror_ghost_position {
         let mirror_def = editor.mirror_ghost_def_id.as_ref()
             .and_then(|mid| part_defs.get(mid))
             .unwrap_or(def);
-        generate_single_ghost_vertices(&mut vertices, mirror_def, mirror_pos, editor.ghost_valid, editor, part_defs, sprite_atlas);
+        generate_single_ghost_vertices(&mut vertices, mirror_def, mirror_pos, editor.ghost_valid, -editor.ghost_rotation, editor, part_defs, sprite_atlas);
     }
 
     vertices
@@ -1745,8 +1780,8 @@ pub fn generate_engine_plume_vertices(
                 let frame_idx = (plume_elapsed_secs * 10.0) as usize % 4;
                 let rect = &anim.frames[frame_idx];
 
-                let plume_half_w = half_nozzle;
-                let plume_height = nozzle_width * 2.5 * throttle;
+                let plume_half_w = half_nozzle * 1.2;
+                let plume_height = nozzle_width * 5.0 * throttle;
                 let nozzle_y = y - half_h;
                 let plume_center_y = nozzle_y - plume_height / 2.0;
 
@@ -1759,18 +1794,19 @@ pub fn generate_engine_plume_vertices(
     }
 
     // Procedural fallback
-    let plume_length = nozzle_width * 2.0 * throttle;
+    let plume_length = nozzle_width * 4.0 * throttle;
+    let plume_half_w = half_nozzle * 1.2;
     let nozzle_y = y - half_h;
 
     // Red outer plume triangle
     let red = [1.0, 0.2, 0.0, 0.9];
-    vertices.push(Vertex::new([x - half_nozzle, nozzle_y], red));
-    vertices.push(Vertex::new([x + half_nozzle, nozzle_y], red));
+    vertices.push(Vertex::new([x - plume_half_w, nozzle_y], red));
+    vertices.push(Vertex::new([x + plume_half_w, nozzle_y], red));
     vertices.push(Vertex::new([x, nozzle_y - plume_length], red));
 
     // Yellow inner plume triangle (60% width, 40% length)
     let yellow = [1.0, 0.9, 0.1, 1.0];
-    let inner_half_w = half_nozzle * 0.6;
+    let inner_half_w = plume_half_w * 0.6;
     let inner_length = plume_length * 0.4;
     vertices.push(Vertex::new([x - inner_half_w, nozzle_y], yellow));
     vertices.push(Vertex::new([x + inner_half_w, nozzle_y], yellow));
@@ -2275,9 +2311,9 @@ pub fn part_at_screen_pos(
             continue;
         };
 
-        // Use hitbox dimensions for click detection
-        let half_w = def.hitbox_width() / 2.0;
-        let half_h = def.hitbox_height() / 2.0;
+        // Use rotated hitbox dimensions for click detection
+        let half_w = def.rotated_hitbox_width(part.rotation) / 2.0;
+        let half_h = def.rotated_hitbox_height(part.rotation) / 2.0;
 
         if world_x >= part.position[0] - half_w
             && world_x <= part.position[0] + half_w

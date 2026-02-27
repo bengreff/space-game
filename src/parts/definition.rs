@@ -414,6 +414,45 @@ impl PartDefinition {
         self.flight_hitbox_grid_height() as f64 * GRID_SQUARE_SIZE
     }
 
+    // --- Rotated dimensions (for parts at 90°/270° rotation) ---
+
+    /// Returns true if rotation is approximately 90° or 270° (i.e., dims should be swapped)
+    fn is_rotation_swapped(rotation: f64) -> bool {
+        let norm = rotation.rem_euclid(std::f64::consts::TAU);
+        let quarter = std::f64::consts::FRAC_PI_2;
+        (norm - quarter).abs() < 0.01 || (norm - 3.0 * quarter).abs() < 0.01
+    }
+
+    /// Hitbox grid width accounting for rotation (swaps at 90°/270°)
+    pub fn rotated_hitbox_grid_width(&self, rotation: f64) -> u32 {
+        if Self::is_rotation_swapped(rotation) { self.hitbox_grid_height() } else { self.hitbox_grid_width() }
+    }
+
+    /// Hitbox grid height accounting for rotation (swaps at 90°/270°)
+    pub fn rotated_hitbox_grid_height(&self, rotation: f64) -> u32 {
+        if Self::is_rotation_swapped(rotation) { self.hitbox_grid_width() } else { self.hitbox_grid_height() }
+    }
+
+    /// Hitbox width in meters accounting for rotation
+    pub fn rotated_hitbox_width(&self, rotation: f64) -> f64 {
+        self.rotated_hitbox_grid_width(rotation) as f64 * GRID_SQUARE_SIZE
+    }
+
+    /// Hitbox height in meters accounting for rotation
+    pub fn rotated_hitbox_height(&self, rotation: f64) -> f64 {
+        self.rotated_hitbox_grid_height(rotation) as f64 * GRID_SQUARE_SIZE
+    }
+
+    /// Weld hitbox width in meters accounting for rotation
+    pub fn rotated_weld_hitbox_width(&self, rotation: f64) -> f64 {
+        self.rotated_hitbox_width(rotation) * (1.0 + WELD_HITBOX_PADDING)
+    }
+
+    /// Weld hitbox height in meters accounting for rotation
+    pub fn rotated_weld_hitbox_height(&self, rotation: f64) -> f64 {
+        self.rotated_hitbox_height(rotation) * (1.0 + WELD_HITBOX_PADDING)
+    }
+
     /// Whether this part can be a root part (command pod)
     pub fn can_be_root(&self) -> bool {
         self.category == PartCategory::Pods
