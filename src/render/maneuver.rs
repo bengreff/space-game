@@ -585,9 +585,9 @@ impl RenderState {
 
         for (i, part) in self.flight_parts_cache.iter().enumerate() {
             let dx = (local_x_m - part.local_x).abs();
-            let dy = (local_y_m - part.local_y).abs();
+            let dy = (local_y_m - part.click_local_y).abs();
 
-            if dx <= part.hitbox_half_w && dy <= part.hitbox_half_h {
+            if dx <= part.hitbox_half_w && dy <= part.click_hitbox_half_h {
                 let dist = dx * dx + dy * dy;
                 match closest {
                     None => closest = Some((i, dist)),

@@ -1,0 +1,78 @@
+// Greenhouses — produce food to sustain crew on long missions
+// Require electrical power to operate
+
+(
+    parts: [
+        // Small Greenhouse
+        (
+            id: "greenhouse_small",
+            name: "Small Greenhouse",
+            description: "A compact hydroponic greenhouse producing 1 kg of food per day. Feeds two crew indefinitely.",
+            category: Utility,
+            mass: 1.0,
+            cost: 800,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 4.0,
+            pod: Some((
+                crew_capacity: 0,
+                power_draw: 500.0,
+            )),
+            battery: Some((
+                capacity_wh: 200.0,
+            )),
+            greenhouse: Some((
+                food_production_rate: 1.0,
+            )),
+        ),
+
+        // Medium Greenhouse
+        (
+            id: "greenhouse_medium",
+            name: "Medium Greenhouse",
+            description: "A mid-size greenhouse with multiple grow beds producing 3 kg of food per day. Sustains six crew.",
+            category: Utility,
+            mass: 3.0,
+            cost: 2000,
+            size: Medium,
+            shape: Rectangle,
+            grid_width: 5.0,
+            grid_height: 5.0,
+            pod: Some((
+                crew_capacity: 0,
+                power_draw: 1200.0,
+            )),
+            battery: Some((
+                capacity_wh: 500.0,
+            )),
+            greenhouse: Some((
+                food_production_rate: 3.0,
+            )),
+        ),
+
+        // Large Greenhouse
+        (
+            id: "greenhouse_large",
+            name: "Large Greenhouse",
+            description: "A full agricultural module producing 8 kg of food per day. Can feed sixteen crew indefinitely.",
+            category: Utility,
+            mass: 8.0,
+            cost: 5000,
+            size: Large,
+            shape: Rectangle,
+            grid_width: 9.0,
+            grid_height: 6.0,
+            pod: Some((
+                crew_capacity: 0,
+                power_draw: 3000.0,
+            )),
+            battery: Some((
+                capacity_wh: 1000.0,
+            )),
+            greenhouse: Some((
+                food_production_rate: 8.0,
+            )),
+        ),
+    ],
+)

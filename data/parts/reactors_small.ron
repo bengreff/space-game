@@ -1,0 +1,74 @@
+// Small Fission Reactor Definitions
+// Bridge the gap between RTGs (300W) and interstellar fission reactors (500 MW).
+// Provide constant power regardless of distance from Sun.
+// Required for outer-solar-system electric propulsion.
+
+(
+    parts: [
+        // ============================================
+        // TINY REACTOR — Ember (10 kW)
+        // Based on Kilopower heritage
+        // ============================================
+
+        (
+            id: "reactor_ember",
+            name: "Ember",
+            description: "Compact fission reactor based on Kilopower heritage. Uranium-235 core with passive heat pipe cooling provides 10 kilowatts of constant electrical power. Enough to run a pair of ion engines at any distance from the Sun. No moving parts — designed for decade-long missions.",
+            category: Utility,
+            mass: 0.400,
+            cost: 25000,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 3.0,
+            reactor: Some((
+                output_watts: 10000.0,
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // SMALL REACTOR — Hearth (100 kW)
+        // Based on SNAP-10A heritage
+        // ============================================
+
+        (
+            id: "reactor_hearth",
+            name: "Hearth",
+            description: "Medium fission reactor based on SNAP-10A heritage. Thermionic conversion system produces 100 kilowatts from a NaK-cooled reactor core. Powers Hall thrusters for interplanetary cargo missions. Shadow shield protects crew and electronics from neutron flux.",
+            category: Utility,
+            mass: 1.5,
+            cost: 60000,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 4.0,
+            reactor: Some((
+                output_watts: 100000.0,
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // MEDIUM REACTOR — Crucible (500 kW)
+        // Based on SP-100 heritage
+        // ============================================
+
+        (
+            id: "reactor_crucible",
+            name: "Crucible",
+            description: "Heavy fission reactor based on SP-100 heritage. Lithium-cooled fast reactor with Stirling engine conversion produces 500 kilowatts. Required for MPD thrusters. Two Crucibles provide a full megawatt for the heaviest electric propulsion spacecraft.",
+            category: Utility,
+            mass: 4.0,
+            cost: 150000,
+            size: Medium,
+            shape: Rectangle,
+            grid_width: 5.0,
+            grid_height: 5.0,
+            reactor: Some((
+                output_watts: 500000.0,
+            )),
+            resources: {},
+        ),
+    ],
+)

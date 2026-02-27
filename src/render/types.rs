@@ -95,6 +95,8 @@ pub struct ShipPartRenderData {
     pub dry_mass: f64,            // tonnes
     pub hitbox_half_w: f64,       // meters, for click detection
     pub hitbox_half_h: f64,       // meters, for click detection
+    pub click_local_y: f64,       // meters, click center (differs from local_y for retracted panels)
+    pub click_hitbox_half_h: f64, // meters, click half-height (differs for retracted panels)
     // Engine info
     pub engine_thrust_vac: Option<f64>,  // kN
     pub engine_thrust_asl: Option<f64>,  // kN

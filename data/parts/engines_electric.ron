@@ -1,0 +1,186 @@
+// Electric Propulsion Engine Definitions
+// EP engines accelerate propellant electromagnetically. Extreme Isp but very low thrust.
+// Hard-require continuous electrical power — will not fire if insufficient power available.
+// Three families: Ion (gridded electrostatic), Hall-effect, MPD (magnetoplasmadynamic)
+// All use Xenon propellant from dedicated xenon tanks.
+
+(
+    parts: [
+        // ============================================
+        // ION ENGINES — Gridded Electrostatic
+        // Highest Isp, lowest thrust. Deep space probes.
+        // ============================================
+
+        (
+            id: "engine_ion_moth",
+            name: "Moth",
+            description: "Miniature gridded ion engine for deep space probes and asteroid rendezvous missions. Accelerates xenon ions through charged grids to achieve extraordinary exhaust velocity. Runs on solar power alone near Earth. Thrust measured in millinewtons.",
+            category: Propulsion,
+            mass: 0.012,
+            cost: 4000,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 2.0,
+            hitbox_width: Some(1),
+            hitbox_height: Some(2),
+            engine: Some((
+                thrust_vac: 0.000090,
+                thrust_asl: 0.0,
+                isp_vac: 3100.0,
+                isp_asl: 0.0,
+                throttleable: true,
+                gimbal_range: 0.0,
+                propellant: Xenon,
+                alternator_power: 0.0,
+                power_required: 1500.0,
+            )),
+            resources: {},
+        ),
+
+        (
+            id: "engine_ion_cicada",
+            name: "Cicada",
+            description: "High-performance gridded ion engine with carbon-carbon grids for extended life. Higher thrust and efficiency than the Moth at the cost of increased power demand. Ideal for inner planet orbiters and sample return missions.",
+            category: Propulsion,
+            mass: 0.025,
+            cost: 8000,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 3.0,
+            hitbox_width: Some(1),
+            hitbox_height: Some(3),
+            engine: Some((
+                thrust_vac: 0.000240,
+                thrust_asl: 0.0,
+                isp_vac: 3200.0,
+                isp_asl: 0.0,
+                throttleable: true,
+                gimbal_range: 0.0,
+                propellant: Xenon,
+                alternator_power: 0.0,
+                power_required: 4000.0,
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // HALL-EFFECT THRUSTERS
+        // Good balance of thrust and efficiency.
+        // ============================================
+
+        (
+            id: "engine_hall_tern",
+            name: "Tern",
+            description: "Compact Hall-effect thruster for station-keeping and small probe orbit changes. Annular discharge channel accelerates xenon plasma using crossed electric and magnetic fields. Minimal power requirements make it suitable for solar-powered spacecraft.",
+            category: Propulsion,
+            mass: 0.008,
+            cost: 2500,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 2.0,
+            hitbox_width: Some(1),
+            hitbox_height: Some(2),
+            engine: Some((
+                thrust_vac: 0.000060,
+                thrust_asl: 0.0,
+                isp_vac: 1600.0,
+                isp_asl: 0.0,
+                throttleable: true,
+                gimbal_range: 0.0,
+                propellant: Xenon,
+                alternator_power: 0.0,
+                power_required: 1000.0,
+            )),
+            resources: {},
+        ),
+
+        (
+            id: "engine_hall_albatross",
+            name: "Albatross",
+            description: "High-power Hall-effect thruster for interplanetary cargo transfers and orbit raising. Requires a Hearth-class reactor at full power. Excellent thrust-to-power ratio makes it the workhorse of nuclear-electric spacecraft.",
+            category: Propulsion,
+            mass: 0.120,
+            cost: 20000,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 3.0,
+            hitbox_width: Some(3),
+            hitbox_height: Some(3),
+            engine: Some((
+                thrust_vac: 0.0054,
+                thrust_asl: 0.0,
+                isp_vac: 2000.0,
+                isp_asl: 0.0,
+                throttleable: true,
+                gimbal_range: 0.0,
+                propellant: Xenon,
+                alternator_power: 0.0,
+                power_required: 50000.0,
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // MPD THRUSTERS — Magnetoplasmadynamic
+        // Highest thrust among EP. Need serious power.
+        // ============================================
+
+        (
+            id: "engine_mpd_mako",
+            name: "Mako",
+            description: "Medium magnetoplasmadynamic thruster for heavy interplanetary transfers. Self-generated magnetic field accelerates plasma to extreme velocities. Requires a Crucible reactor — draws 200 kW at full power. High thrust by electric propulsion standards.",
+            category: Propulsion,
+            mass: 0.300,
+            cost: 35000,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 4.0,
+            hitbox_width: Some(3),
+            hitbox_height: Some(4),
+            engine: Some((
+                thrust_vac: 0.025,
+                thrust_asl: 0.0,
+                isp_vac: 3500.0,
+                isp_asl: 0.0,
+                throttleable: true,
+                gimbal_range: 0.0,
+                propellant: Xenon,
+                alternator_power: 0.0,
+                power_required: 200000.0,
+            )),
+            resources: {},
+        ),
+
+        (
+            id: "engine_mpd_orca",
+            name: "Orca",
+            description: "Heavy magnetoplasmadynamic thruster for crewed ships and large cargo. The highest-performance electric engine available — combines extreme exhaust velocity with meaningful thrust. Requires dual Crucible reactors providing a full megawatt of power.",
+            category: Propulsion,
+            mass: 1.2,
+            cost: 80000,
+            size: Medium,
+            shape: Rectangle,
+            grid_width: 5.0,
+            grid_height: 5.0,
+            hitbox_width: Some(5),
+            hitbox_height: Some(5),
+            engine: Some((
+                thrust_vac: 0.100,
+                thrust_asl: 0.0,
+                isp_vac: 4500.0,
+                isp_asl: 0.0,
+                throttleable: true,
+                gimbal_range: 0.0,
+                propellant: Xenon,
+                alternator_power: 0.0,
+                power_required: 1000000.0,
+            )),
+            resources: {},
+        ),
+    ],
+)

@@ -1,0 +1,65 @@
+// Cargo Containers — store food and supplies for long-duration missions
+
+(
+    parts: [
+        // Tiny Cargo Container
+        (
+            id: "cargo_tiny",
+            name: "Tiny Cargo Container",
+            description: "A minimal cargo pod for 50 kg of supplies. Good for small probes needing extra food reserves.",
+            category: Utility,
+            mass: 0.02,
+            cost: 50,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 2.0,
+            resources: {"food": 50.0},
+        ),
+
+        // Small Cargo Container
+        (
+            id: "cargo_small",
+            name: "Small Cargo Container",
+            description: "A small cargo module holding 500 kg of food. Enough to extend a small crew's mission by months.",
+            category: Utility,
+            mass: 0.15,
+            cost: 200,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 3.0,
+            resources: {"food": 500.0},
+        ),
+
+        // Medium Cargo Container
+        (
+            id: "cargo_medium",
+            name: "Medium Cargo Container",
+            description: "A medium cargo module with 2000 kg of food storage. Suitable for interplanetary transfers.",
+            category: Utility,
+            mass: 0.5,
+            cost: 600,
+            size: Medium,
+            shape: Rectangle,
+            grid_width: 5.0,
+            grid_height: 4.0,
+            resources: {"food": 2000.0},
+        ),
+
+        // Large Cargo Container
+        (
+            id: "cargo_large",
+            name: "Large Cargo Container",
+            description: "A massive cargo hold storing 8000 kg of food. Designed for colony ships and long expeditions.",
+            category: Utility,
+            mass: 1.5,
+            cost: 1500,
+            size: Large,
+            shape: Rectangle,
+            grid_width: 9.0,
+            grid_height: 5.0,
+            resources: {"food": 8000.0},
+        ),
+    ],
+)

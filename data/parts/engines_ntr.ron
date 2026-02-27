@@ -1,0 +1,101 @@
+// Nuclear Thermal Rocket Engine Definitions
+// NTR engines heat hydrogen propellant through a solid-core fission reactor.
+// ~2x the Isp of chemical Hydrolox, moderate thrust. No external power needed.
+// New propellant type: Hydrogen (pure LH2, no oxidizer)
+
+(
+    parts: [
+        // ============================================
+        // SMALL NTR (3 grid wide)
+        // ============================================
+
+        (
+            id: "engine_ntr_salamander",
+            name: "Salamander",
+            description: "Compact solid-core nuclear thermal engine for upper stages and probes. Heats hydrogen propellant through a miniaturized fission reactor to achieve nearly double the efficiency of chemical engines. Poor sea-level performance due to hydrogen expansion characteristics.",
+            category: Propulsion,
+            mass: 2.5,
+            cost: 15000,
+            size: Small,
+            shape: Trapezoid,
+            grid_width: 2.6,
+            grid_height: 4.5,
+            top_width: Some(2.2),
+            hitbox_width: Some(3),
+            hitbox_height: Some(5),
+            engine: Some((
+                thrust_vac: 67.0,
+                thrust_asl: 30.0,
+                isp_vac: 900.0,
+                isp_asl: 500.0,
+                throttleable: true,
+                gimbal_range: 3.0,
+                propellant: Hydrogen,
+                alternator_power: 500.0,
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // MEDIUM NTR (5 grid wide)
+        // ============================================
+
+        (
+            id: "engine_ntr_basilisk",
+            name: "Basilisk",
+            description: "Medium solid-core nuclear thermal engine for interplanetary transfers. Twin turbopump assembly feeds hydrogen through a graphite-moderated reactor core. The workhorse engine for Mars cargo missions and crewed deep space vehicles.",
+            category: Propulsion,
+            mass: 7.0,
+            cost: 40000,
+            size: Medium,
+            shape: Trapezoid,
+            grid_width: 4.6,
+            grid_height: 6.5,
+            top_width: Some(3.8),
+            hitbox_width: Some(5),
+            hitbox_height: Some(7),
+            engine: Some((
+                thrust_vac: 334.0,
+                thrust_asl: 165.0,
+                isp_vac: 925.0,
+                isp_asl: 550.0,
+                throttleable: true,
+                gimbal_range: 5.0,
+                propellant: Hydrogen,
+                alternator_power: 2000.0,
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // LARGE NTR (9 grid wide)
+        // ============================================
+
+        (
+            id: "engine_ntr_wyvern",
+            name: "Wyvern",
+            description: "Heavy solid-core nuclear thermal engine for crewed Mars ships and large interplanetary vessels. Massive reactor core with redundant control drum assemblies and shadow shielding. The highest-thrust NTR available — designed for round-trip crewed missions.",
+            category: Propulsion,
+            mass: 15.0,
+            cost: 95000,
+            size: Large,
+            shape: Trapezoid,
+            grid_width: 8.2,
+            grid_height: 8.5,
+            top_width: Some(6.5),
+            hitbox_width: Some(9),
+            hitbox_height: Some(9),
+            engine: Some((
+                thrust_vac: 890.0,
+                thrust_asl: 445.0,
+                isp_vac: 950.0,
+                isp_asl: 580.0,
+                throttleable: true,
+                gimbal_range: 4.0,
+                propellant: Hydrogen,
+                alternator_power: 5000.0,
+            )),
+            resources: {},
+        ),
+    ],
+)

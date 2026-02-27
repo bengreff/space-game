@@ -1,0 +1,72 @@
+// Crew Quarters — habitation modules that provide crew capacity and food storage
+// No RCS or command authority; must pair with a control module
+
+(
+    parts: [
+        // Small Crew Quarters
+        (
+            id: "quarters_small",
+            name: "Small Crew Quarters",
+            description: "Compact living quarters for four crew. Bunks and basic life support for extended missions.",
+            category: Pods,
+            mass: 1.5,
+            cost: 600,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 4.0,
+            pod: Some((
+                crew_capacity: 4,
+                power_draw: 300.0,
+            )),
+            battery: Some((
+                capacity_wh: 500.0,
+            )),
+            resources: {"food": 40.0},
+        ),
+
+        // Medium Crew Quarters
+        (
+            id: "quarters_medium",
+            name: "Medium Crew Quarters",
+            description: "Spacious quarters for eight crew with recreation facilities. Designed for long-duration missions.",
+            category: Pods,
+            mass: 4.0,
+            cost: 1500,
+            size: Medium,
+            shape: Rectangle,
+            grid_width: 5.0,
+            grid_height: 5.0,
+            pod: Some((
+                crew_capacity: 8,
+                power_draw: 600.0,
+            )),
+            battery: Some((
+                capacity_wh: 1000.0,
+            )),
+            resources: {"food": 200.0},
+        ),
+
+        // Large Crew Quarters
+        (
+            id: "quarters_large",
+            name: "Large Crew Quarters",
+            description: "A full habitation module for sixteen crew. Private bunks, galley, and exercise equipment.",
+            category: Pods,
+            mass: 10.0,
+            cost: 4000,
+            size: Large,
+            shape: Rectangle,
+            grid_width: 9.0,
+            grid_height: 6.0,
+            pod: Some((
+                crew_capacity: 16,
+                power_draw: 1200.0,
+            )),
+            battery: Some((
+                capacity_wh: 2000.0,
+            )),
+            resources: {"food": 800.0},
+        ),
+    ],
+)

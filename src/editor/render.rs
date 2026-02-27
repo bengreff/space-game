@@ -78,9 +78,11 @@ fn sprite_placement(def: &PartDefinition) -> (f32, f32, f32, f32) {
     let visual_half_w = (def.width() / 2.0) as f32;
     let visual_half_h = (def.height() / 2.0) as f32;
 
-    // Engines: use hitbox dims (sprites are now generated at hitbox size)
+    // Engines: use flight hitbox for sprite size, centered in editor hitbox
     if def.engine.is_some() {
-        return (hitbox_half_w, hitbox_half_h, 0.0, 0.0);
+        let sprite_half_w = (def.flight_hitbox_width_m() / 2.0) as f32;
+        let sprite_half_h = (def.flight_hitbox_height_m() / 2.0) as f32;
+        return (sprite_half_w, sprite_half_h, 0.0, 0.0);
     }
 
     // Stack decouplers: hitbox width, visual height, bottom-aligned within hitbox
@@ -1736,6 +1738,8 @@ pub fn generate_engine_plume_vertices(
                 crate::parts::Propellant::Kerolox => "kerolox",
                 crate::parts::Propellant::Methalox => "methalox",
                 crate::parts::Propellant::Hydrolox => "hydrolox",
+                crate::parts::Propellant::Hydrogen => "hydrolox",  // NTR uses similar plume
+                crate::parts::Propellant::Xenon => "xenon",
             };
             if let Some(anim) = atlas.plumes.get(propellant_name) {
                 let frame_idx = (plume_elapsed_secs * 10.0) as usize % 4;

@@ -1,0 +1,92 @@
+// Dedicated Xenon Tank Definitions
+// Supercritical xenon storage for electric propulsion engines.
+// Very dense (~1600 kg/m³) — tanks are compact but heavy.
+// High-pressure vessels with distinctive dark finish.
+
+(
+    parts: [
+        // ============================================
+        // TINY XENON TANK (1×1 grid)
+        // ============================================
+
+        (
+            id: "tank_xe_tiny",
+            name: "Xe-1",
+            description: "Miniature xenon storage sphere for single ion engine missions. Supercritical xenon at 100+ bar provides high storage density in a compact form factor. Standard choice for lightweight probes.",
+            category: FuelTanks,
+            mass: 0.015,
+            cost: 1500,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 1.0,
+            tank: Some((
+                grid_area: 1,
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // SMALL XENON TANK (3×1 grid)
+        // ============================================
+
+        (
+            id: "tank_xe_small",
+            name: "Xe-3",
+            description: "Standard xenon tank for multi-engine electric propulsion systems. Three-sphere composite pressure vessel with shared manifold. Enough xenon for extended interplanetary transfers.",
+            category: FuelTanks,
+            mass: 0.040,
+            cost: 4000,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 1.0,
+            tank: Some((
+                grid_area: 3,
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // MEDIUM XENON TANK (5×1 grid)
+        // ============================================
+
+        (
+            id: "tank_xe_medium",
+            name: "Xe-5",
+            description: "Medium xenon tank for Hall thruster and MPD missions. High-pressure titanium alloy vessel with integrated feed system. Supports sustained electric propulsion burns lasting weeks.",
+            category: FuelTanks,
+            mass: 0.070,
+            cost: 7000,
+            size: Medium,
+            shape: Rectangle,
+            grid_width: 5.0,
+            grid_height: 1.0,
+            tank: Some((
+                grid_area: 5,
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // LARGE XENON TANK (9×1 grid)
+        // ============================================
+
+        (
+            id: "tank_xe_large",
+            name: "Xe-9",
+            description: "Large xenon tank for heavy electric propulsion spacecraft. Bank of high-pressure vessels with redundant isolation valves and pressure regulation. Required for MPD thruster missions to the outer solar system.",
+            category: FuelTanks,
+            mass: 0.120,
+            cost: 12000,
+            size: Large,
+            shape: Rectangle,
+            grid_width: 9.0,
+            grid_height: 1.0,
+            tank: Some((
+                grid_area: 9,
+            )),
+            resources: {},
+        ),
+    ],
+)

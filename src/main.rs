@@ -975,7 +975,7 @@ fn render_flight_frame(
                     // Tank info: separate oxidizer and fuel
                     let has_tank = def.map(|d| d.tank.is_some()).unwrap_or(false);
                     let (fuel_type_name, fuel_current, fuel_max, ox_current, ox_max) = if has_tank {
-                        let fuel_names = ["rp1", "methane", "hydrogen", "monopropellant"];
+                        let fuel_names = ["rp1", "methane", "hydrogen", "monopropellant", "xenon"];
                         let f_current: f64 = fuel_names.iter()
                             .filter_map(|n| p.resources.get(*n))
                             .sum();
@@ -990,9 +990,11 @@ fn render_flight_frame(
                         } else if p.max_resources.contains_key("methane") {
                             Some("LOX/CH4".to_string())
                         } else if p.max_resources.contains_key("hydrogen") {
-                            Some("LOX/LH2".to_string())
+                            if o_max > 0.0 { Some("LOX/LH2".to_string()) } else { Some("LH2".to_string()) }
                         } else if p.max_resources.contains_key("monopropellant") {
                             Some("Monopropellant".to_string())
+                        } else if p.max_resources.contains_key("xenon") {
+                            Some("Xenon".to_string())
                         } else if o_max > 0.0 {
                             Some("LOX".to_string())
                         } else {
@@ -1082,6 +1084,8 @@ fn render_flight_frame(
                         dry_mass,
                         hitbox_half_w: p.hitbox_half_extents[0],
                         hitbox_half_h: p.hitbox_half_extents[1],
+                        click_local_y: p.local_position[1],
+                        click_hitbox_half_h: p.hitbox_half_extents[1],
                         engine_thrust_vac,
                         engine_thrust_asl,
                         engine_isp_vac,
@@ -2268,6 +2272,8 @@ fn build_vessel_part_render_data(
                 dry_mass,
                 hitbox_half_w: p.hitbox_half_extents[0],
                 hitbox_half_h: p.hitbox_half_extents[1],
+                click_local_y: p.local_position[1],
+                click_hitbox_half_h: p.hitbox_half_extents[1],
                 engine_thrust_vac: if is_engine { Some(p.engine_thrust_vac) } else { None },
                 engine_thrust_asl: if is_engine { Some(p.engine_thrust_asl) } else { None },
                 engine_isp_vac: if is_engine { Some(p.engine_isp_vac) } else { None },

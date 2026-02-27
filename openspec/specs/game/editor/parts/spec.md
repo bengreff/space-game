@@ -24,7 +24,7 @@ When a palette part is selected, a ghost preview SHALL appear at the cursor posi
 
 ### Requirement: Ghost grid snapping
 
-The ghost SHALL snap to the grid using hitbox dimensions: parts with odd hitbox width snap to grid square centers (`floor(x / grid) * grid + grid/2`), parts with even hitbox width snap to grid lines (`floor(x / grid + 0.5) * grid`). X and Y axes snap independently.
+The ghost SHALL snap to the grid using editor hitbox dimensions: parts with odd hitbox width snap to grid square centers (`floor(x / grid) * grid + grid/2`), parts with even hitbox width snap to grid lines (`floor(x / grid + 0.5) * grid`). X and Y axes snap independently. All engine hitbox widths SHALL be odd to ensure grid-center alignment for vertical stacking.
 
 ### Requirement: Ghost validity coloring
 
@@ -337,6 +337,24 @@ If the deleted part was the root, the root SHALL be reassigned to any remaining 
 
 - **WHEN** part A (ID=5) and part B (ID=6) are mirror-placed
 - **THEN** part A's `mirror_partner` SHALL be `Some(6)` and part B's `mirror_partner` SHALL be `Some(5)`
+
+## Hitbox System
+
+### Requirement: Odd editor hitbox widths
+
+All part editor hitbox widths SHALL be odd numbers. Odd widths snap parts to grid square centers, ensuring consistent vertical alignment when stacking parts. Even widths snap to grid lines, causing misalignment.
+
+### Requirement: Flight hitbox fields
+
+`PartDefinition` SHALL support optional `flight_hitbox_width: Option<u32>` and `flight_hitbox_height: Option<u32>` fields (serde-defaulting to `None`). When set, these define the flight collision box and sprite rendering size. When not set, they default to the editor hitbox dimensions. This allows the editor hitbox to be wider (odd) for grid alignment while sprites render at their natural size.
+
+Accessor methods:
+- `flight_hitbox_grid_width()` / `flight_hitbox_grid_height()` → `u32` (grid squares)
+- `flight_hitbox_width_m()` / `flight_hitbox_height_m()` → `f64` (meters)
+
+### Requirement: Flight hitbox in collision
+
+`FlightPart.hitbox_half_extents` SHALL be set from `flight_hitbox_width_m()` and `flight_hitbox_height_m()`, not the editor hitbox. This ensures collision detection uses the tighter flight hitbox matching the visible sprite, not the wider editor placement hitbox.
 
 ## Fairing Build Mode
 

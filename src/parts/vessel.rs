@@ -157,7 +157,7 @@ impl FlightVessel {
                 definition_id: bp_part.definition_id.clone(),
                 local_position: bp_part.position,
                 rotation: bp_part.rotation,
-                hitbox_half_extents: [def.width() / 2.0, def.height() / 2.0],
+                hitbox_half_extents: [def.flight_hitbox_width_m() / 2.0, def.flight_hitbox_height_m() / 2.0],
                 resources,
                 max_resources,
                 engine_active: false,

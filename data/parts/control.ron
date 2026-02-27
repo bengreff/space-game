@@ -1,0 +1,110 @@
+// Inline Control Centers — crewed command modules without nose cones
+// Rectangular profile for inline stacking
+
+(
+    parts: [
+        // Small Inline Control
+        (
+            id: "control_small",
+            name: "Small Inline Control",
+            description: "A compact inline control center for one crew member. Low profile for tight stacking.",
+            category: Pods,
+            mass: 1.0,
+            cost: 400,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 2.0,
+            pod: Some((
+                crew_capacity: 1,
+                power_draw: 150.0,
+            )),
+            battery: Some((
+                capacity_wh: 500.0,
+            )),
+            rcs: Some((
+                thrust: 0.08,
+                isp: 240.0,
+            )),
+            resources: {"monopropellant": 5.0, "food": 10.0},
+        ),
+
+        // Medium Inline Control
+        (
+            id: "control_medium",
+            name: "Medium Inline Control",
+            description: "A mid-size inline control center with seating for two crew. Good for station modules.",
+            category: Pods,
+            mass: 2.5,
+            cost: 900,
+            size: Medium,
+            shape: Rectangle,
+            grid_width: 5.0,
+            grid_height: 2.0,
+            pod: Some((
+                crew_capacity: 2,
+                power_draw: 350.0,
+            )),
+            battery: Some((
+                capacity_wh: 1500.0,
+            )),
+            rcs: Some((
+                thrust: 0.15,
+                isp: 240.0,
+            )),
+            resources: {"monopropellant": 15.0, "food": 40.0},
+        ),
+
+        // Large Inline Control
+        (
+            id: "control_large",
+            name: "Large Inline Control",
+            description: "A spacious inline control center for three crew members. Ideal for interplanetary vessels.",
+            category: Pods,
+            mass: 5.0,
+            cost: 2000,
+            size: Large,
+            shape: Rectangle,
+            grid_width: 9.0,
+            grid_height: 3.0,
+            pod: Some((
+                crew_capacity: 3,
+                power_draw: 600.0,
+            )),
+            battery: Some((
+                capacity_wh: 3000.0,
+            )),
+            rcs: Some((
+                thrust: 0.25,
+                isp: 240.0,
+            )),
+            resources: {"monopropellant": 25.0, "food": 100.0},
+        ),
+
+        // XL Inline Control
+        (
+            id: "control_xl",
+            name: "XL Inline Control",
+            description: "A massive inline command center with room for six crew. The nerve center of large vessels.",
+            category: Pods,
+            mass: 12.0,
+            cost: 5000,
+            size: XL,
+            shape: Rectangle,
+            grid_width: 13.0,
+            grid_height: 4.0,
+            pod: Some((
+                crew_capacity: 6,
+                power_draw: 1200.0,
+            )),
+            battery: Some((
+                capacity_wh: 6000.0,
+            )),
+            rcs: Some((
+                thrust: 0.4,
+                isp: 240.0,
+            )),
+            resources: {"monopropellant": 40.0, "food": 300.0},
+        ),
+    ],
+)

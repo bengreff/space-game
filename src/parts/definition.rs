@@ -98,6 +98,8 @@ pub enum Propellant {
     Kerolox,    // LOX + RP-1 (kerosene)
     Methalox,   // LOX + Methane
     Hydrolox,   // LOX + Hydrogen
+    Hydrogen,   // Pure hydrogen (NTR engines, no oxidizer)
+    Xenon,      // Xenon (electric propulsion, no oxidizer)
 }
 
 impl Propellant {
@@ -106,6 +108,8 @@ impl Propellant {
             Propellant::Kerolox => "LOX/RP-1",
             Propellant::Methalox => "LOX/CH4",
             Propellant::Hydrolox => "LOX/LH2",
+            Propellant::Hydrogen => "LH2",
+            Propellant::Xenon => "Xenon",
         }
     }
 
@@ -115,6 +119,8 @@ impl Propellant {
             Propellant::Kerolox => FuelType::Rp1,
             Propellant::Methalox => FuelType::Methane,
             Propellant::Hydrolox => FuelType::Hydrogen,
+            Propellant::Hydrogen => FuelType::PureHydrogen,
+            Propellant::Xenon => FuelType::Xenon,
         }
     }
 }
@@ -133,6 +139,8 @@ pub struct EngineData {
     pub propellant: Propellant,  // Propellant type
     #[serde(default)]
     pub alternator_power: f64,  // Watts generated when running
+    #[serde(default)]
+    pub power_required: f64,    // Watts required to fire (electric propulsion)
 }
 
 /// Fuel types for tanks
@@ -144,6 +152,8 @@ pub enum FuelType {
     Methane,        // LOX + Methane
     Hydrogen,       // LOX + Hydrogen
     Monopropellant, // Monopropellant (no oxidizer)
+    PureHydrogen,   // Pure LH2 (NTR engines, no oxidizer)
+    Xenon,          // Xenon (electric propulsion, no oxidizer)
 }
 
 impl FuelType {
@@ -154,11 +164,13 @@ impl FuelType {
             FuelType::Methane => "LOX/CH4",
             FuelType::Hydrogen => "LOX/LH2",
             FuelType::Monopropellant => "Monopropellant",
+            FuelType::PureHydrogen => "LH2",
+            FuelType::Xenon => "Xenon",
         }
     }
 
     pub fn all() -> &'static [FuelType] {
-        &[FuelType::Empty, FuelType::Rp1, FuelType::Methane, FuelType::Hydrogen, FuelType::Monopropellant]
+        &[FuelType::Empty, FuelType::Rp1, FuelType::Methane, FuelType::Hydrogen, FuelType::Monopropellant, FuelType::PureHydrogen, FuelType::Xenon]
     }
 
     /// Get propellant masses per grid square (in kg)
@@ -170,6 +182,8 @@ impl FuelType {
             FuelType::Methane => (270.0, 75.0),
             FuelType::Hydrogen => (155.0, 25.0),
             FuelType::Monopropellant => (0.0, 200.0),
+            FuelType::PureHydrogen => (0.0, 25.0),  // ~70 kg/m³, no oxidizer
+            FuelType::Xenon => (0.0, 400.0),  // ~1600 kg/m³, no oxidizer
         }
     }
 
@@ -181,6 +195,8 @@ impl FuelType {
             FuelType::Methane => Some("methane"),
             FuelType::Hydrogen => Some("hydrogen"),
             FuelType::Monopropellant => Some("monopropellant"),
+            FuelType::PureHydrogen => Some("hydrogen"),
+            FuelType::Xenon => Some("xenon"),
         }
     }
 }
@@ -272,9 +288,16 @@ pub struct PartDefinition {
     pub top_width: Option<f64>, // For trapezoids: visual width at top in grid squares
     // Hitbox dimensions (for placement/collision) - defaults to ceiling of visual if not specified
     #[serde(default)]
-    pub hitbox_width: Option<u32>,  // Hitbox width in grid squares
+    pub hitbox_width: Option<u32>,  // Hitbox width in grid squares (editor placement)
     #[serde(default)]
-    pub hitbox_height: Option<u32>, // Hitbox height in grid squares
+    pub hitbox_height: Option<u32>, // Hitbox height in grid squares (editor placement)
+    // Flight hitbox: used for flight collision and sprite rendering size.
+    // Defaults to editor hitbox when not set. Allows editor hitbox to be wider (odd)
+    // for grid alignment while sprites render at their natural size.
+    #[serde(default)]
+    pub flight_hitbox_width: Option<u32>,
+    #[serde(default)]
+    pub flight_hitbox_height: Option<u32>,
     #[serde(default)]
     pub tech_required: String,
     #[serde(default)]
@@ -367,6 +390,28 @@ impl PartDefinition {
     /// Welding hitbox height in meters
     pub fn weld_hitbox_height(&self) -> f64 {
         self.hitbox_height() * (1.0 + WELD_HITBOX_PADDING)
+    }
+
+    // --- Flight hitbox (for collision in flight and sprite rendering) ---
+
+    /// Flight hitbox width in grid squares (defaults to editor hitbox)
+    pub fn flight_hitbox_grid_width(&self) -> u32 {
+        self.flight_hitbox_width.unwrap_or_else(|| self.hitbox_grid_width())
+    }
+
+    /// Flight hitbox height in grid squares (defaults to editor hitbox)
+    pub fn flight_hitbox_grid_height(&self) -> u32 {
+        self.flight_hitbox_height.unwrap_or_else(|| self.hitbox_grid_height())
+    }
+
+    /// Flight hitbox width in meters
+    pub fn flight_hitbox_width_m(&self) -> f64 {
+        self.flight_hitbox_grid_width() as f64 * GRID_SQUARE_SIZE
+    }
+
+    /// Flight hitbox height in meters
+    pub fn flight_hitbox_height_m(&self) -> f64 {
+        self.flight_hitbox_grid_height() as f64 * GRID_SQUARE_SIZE
     }
 
     /// Whether this part can be a root part (command pod)

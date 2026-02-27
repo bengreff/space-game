@@ -24,7 +24,7 @@ The shader SHALL multiply the sampled sprite color by the vertex tint color. Def
 
 Sprite quads SHALL be placed according to per-category alignment rules via `sprite_placement()`:
 
-- **Engines**: width = hitbox width, height = hitbox height, centered on hitbox center. Engine sprites are generated at hitbox dimensions with the engine drawing centered horizontally and top-aligned within the canvas.
+- **Engines**: width = flight hitbox width, height = flight hitbox height, centered on the editor hitbox center. The flight hitbox may be narrower than the editor hitbox (which is always odd for grid alignment). Sprites render at their natural size within the wider editor placement zone.
 - **Stack decouplers** (non-radial): width = hitbox width, height = visual height, bottom-aligned within the hitbox (y offset = `-(hitbox_half_h - visual_half_h)`).
 - **Heat shields**: width = hitbox width, height = visual height, top-aligned within the hitbox (y offset = `+(hitbox_half_h - visual_half_h)`).
 - **RCS thrusters** (standalone, not pods): visual dimensions, side-offset to the appropriate edge of the hitbox based on `is_mirrored`.
