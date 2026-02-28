@@ -294,10 +294,11 @@ pub struct PartDefinition {
     // Flight hitbox: used for flight collision and sprite rendering size.
     // Defaults to editor hitbox when not set. Allows editor hitbox to be wider (odd)
     // for grid alignment while sprites render at their natural size.
+    // Values are in grid squares and can be fractional (f64).
     #[serde(default)]
-    pub flight_hitbox_width: Option<u32>,
+    pub flight_hitbox_width: Option<f64>,
     #[serde(default)]
-    pub flight_hitbox_height: Option<u32>,
+    pub flight_hitbox_height: Option<f64>,
     #[serde(default)]
     pub tech_required: String,
     #[serde(default)]
@@ -394,24 +395,24 @@ impl PartDefinition {
 
     // --- Flight hitbox (for collision in flight and sprite rendering) ---
 
-    /// Flight hitbox width in grid squares (defaults to editor hitbox)
-    pub fn flight_hitbox_grid_width(&self) -> u32 {
-        self.flight_hitbox_width.unwrap_or_else(|| self.hitbox_grid_width())
+    /// Flight hitbox width in grid squares (defaults to editor hitbox, can be fractional)
+    pub fn flight_hitbox_grid_width(&self) -> f64 {
+        self.flight_hitbox_width.unwrap_or_else(|| self.hitbox_grid_width() as f64)
     }
 
-    /// Flight hitbox height in grid squares (defaults to editor hitbox)
-    pub fn flight_hitbox_grid_height(&self) -> u32 {
-        self.flight_hitbox_height.unwrap_or_else(|| self.hitbox_grid_height())
+    /// Flight hitbox height in grid squares (defaults to editor hitbox, can be fractional)
+    pub fn flight_hitbox_grid_height(&self) -> f64 {
+        self.flight_hitbox_height.unwrap_or_else(|| self.hitbox_grid_height() as f64)
     }
 
     /// Flight hitbox width in meters
     pub fn flight_hitbox_width_m(&self) -> f64 {
-        self.flight_hitbox_grid_width() as f64 * GRID_SQUARE_SIZE
+        self.flight_hitbox_grid_width() * GRID_SQUARE_SIZE
     }
 
     /// Flight hitbox height in meters
     pub fn flight_hitbox_height_m(&self) -> f64 {
-        self.flight_hitbox_grid_height() as f64 * GRID_SQUARE_SIZE
+        self.flight_hitbox_grid_height() * GRID_SQUARE_SIZE
     }
 
     // --- Rotated dimensions (for parts at 90°/270° rotation) ---

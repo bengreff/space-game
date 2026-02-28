@@ -31,16 +31,16 @@ const POD_COLOR: [f32; 4] = [0.15, 0.15, 0.18, 1.0];               // Dark grey 
 const POD_WINDOW_COLOR: [f32; 4] = [0.9, 0.9, 0.95, 1.0];          // White/light grey window
 
 // Decoupler colors
-const DECOUPLER_RING_COLOR: [f32; 4] = [0.25, 0.25, 0.28, 1.0];    // Dark metallic grey ring
+const DECOUPLER_RING_COLOR: [f32; 4] = [0.4, 0.4, 0.45, 1.0];      // Matches fuel tank color
 
 // Heat shield colors
 const HEAT_SHIELD_FACE_COLOR: [f32; 4] = [0.05, 0.05, 0.05, 1.0];  // Near-black ablative face
 const HEAT_SHIELD_BACK_COLOR: [f32; 4] = [0.12, 0.12, 0.12, 1.0];  // Dark backing structure
 
 // Fairing colors
-const FAIRING_BASE_COLOR: [f32; 4] = [0.30, 0.30, 0.33, 1.0];      // Lighter metallic disc
-const FAIRING_SHELL_COLOR: [f32; 4] = [0.35, 0.35, 0.38, 1.0];     // Light grey shell panels
-const FAIRING_SHELL_LINE_COLOR: [f32; 4] = [0.20, 0.20, 0.22, 1.0]; // Panel seam lines
+const FAIRING_BASE_COLOR: [f32; 4] = [0.4, 0.4, 0.45, 1.0];        // Matches fuel tank color
+const FAIRING_SHELL_COLOR: [f32; 4] = [0.4, 0.4, 0.45, 1.0];       // Matches fuel tank color
+const FAIRING_SHELL_LINE_COLOR: [f32; 4] = [0.33, 0.35, 0.40, 1.0]; // Panel seam lines
 
 /// Rotate a slice of vertices around a center point by the given angle (radians).
 fn rotate_vertices_around(vertices: &mut [Vertex], cx: f32, cy: f32, angle: f64) {
@@ -93,11 +93,12 @@ fn sprite_placement(def: &PartDefinition) -> (f32, f32, f32, f32) {
     let visual_half_w = (def.width() / 2.0) as f32;
     let visual_half_h = (def.height() / 2.0) as f32;
 
-    // Engines: use flight hitbox for sprite size, centered in editor hitbox
+    // Engines: use flight hitbox for sprite size, centered in width, snapped to top of editor hitbox
     if def.engine.is_some() {
         let sprite_half_w = (def.flight_hitbox_width_m() / 2.0) as f32;
         let sprite_half_h = (def.flight_hitbox_height_m() / 2.0) as f32;
-        return (sprite_half_w, sprite_half_h, 0.0, 0.0);
+        let y_offset = hitbox_half_h - sprite_half_h;
+        return (sprite_half_w, sprite_half_h, 0.0, y_offset);
     }
 
     // Stack decouplers: hitbox width, visual height, bottom-aligned within hitbox
@@ -1762,8 +1763,10 @@ pub fn generate_engine_plume_vertices(
         return;
     }
 
-    let half_h = (def.height() / 2.0) as f32;
-    let nozzle_width = def.width() as f32;
+    // Nozzle position = bottom of the sprite (flight hitbox, top-aligned in editor hitbox)
+    let (_, sp_hh, _, sp_oy) = sprite_placement(def);
+    let nozzle_y = (y + sp_oy) - sp_hh;
+    let nozzle_width = def.flight_hitbox_width_m() as f32;
     let half_nozzle = nozzle_width / 2.0;
 
     // Try sprite plume
@@ -1782,7 +1785,6 @@ pub fn generate_engine_plume_vertices(
 
                 let plume_half_w = half_nozzle * 1.2;
                 let plume_height = nozzle_width * 5.0 * throttle;
-                let nozzle_y = y - half_h;
                 let plume_center_y = nozzle_y - plume_height / 2.0;
 
                 let brightness = 0.5 + 0.5 * throttle;
@@ -1796,7 +1798,6 @@ pub fn generate_engine_plume_vertices(
     // Procedural fallback
     let plume_length = nozzle_width * 4.0 * throttle;
     let plume_half_w = half_nozzle * 1.2;
-    let nozzle_y = y - half_h;
 
     // Red outer plume triangle
     let red = [1.0, 0.2, 0.0, 0.9];

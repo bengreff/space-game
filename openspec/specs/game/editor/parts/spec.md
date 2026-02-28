@@ -346,11 +346,15 @@ All part editor hitbox widths SHALL be odd numbers. Odd widths snap parts to gri
 
 ### Requirement: Flight hitbox fields
 
-`PartDefinition` SHALL support optional `flight_hitbox_width: Option<u32>` and `flight_hitbox_height: Option<u32>` fields (serde-defaulting to `None`). When set, these define the flight collision box and sprite rendering size. When not set, they default to the editor hitbox dimensions. This allows the editor hitbox to be wider (odd) for grid alignment while sprites render at their natural size.
+`PartDefinition` SHALL support optional `flight_hitbox_width: Option<f64>` and `flight_hitbox_height: Option<f64>` fields (serde-defaulting to `None`). When set, these define the flight collision box and sprite rendering size. When not set, they default to the editor hitbox dimensions. Values are in grid squares and can be fractional to allow precise collision boundaries matching the actual engine art.
 
 Accessor methods:
-- `flight_hitbox_grid_width()` / `flight_hitbox_grid_height()` → `u32` (grid squares)
+- `flight_hitbox_grid_width()` / `flight_hitbox_grid_height()` → `f64` (grid squares, can be fractional)
 - `flight_hitbox_width_m()` / `flight_hitbox_height_m()` → `f64` (meters)
+
+### Requirement: Engine sprite alignment in editor
+
+Engine sprites SHALL be centered horizontally within the editor hitbox and snapped to the top of the editor hitbox height. The y_offset for sprite rendering is `(editor_half_h - sprite_half_h)`, which is zero when heights match and positive (shifting upward) when the sprite is shorter than the editor hitbox.
 
 ### Requirement: Flight hitbox in collision
 

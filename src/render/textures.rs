@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use rayon::prelude::*;
 
 const TEXTURE_SIZE: u32 = 1024;
 
@@ -57,15 +58,28 @@ pub fn load_body_textures(
     body_names: &[String],
 ) -> (wgpu::TextureView, wgpu::Sampler, BodyTextureMap) {
     let texture_dir = Path::new("data/textures/bodies");
-    let mut images: Vec<(usize, image::RgbaImage)> = Vec::new();
 
+    // Collect paths for body textures (sequential, fast)
+    let mut body_paths: Vec<(usize, std::path::PathBuf)> = Vec::new();
     for (i, name) in body_names.iter().enumerate() {
         let lower = name.to_lowercase();
         let path = ["png", "jpg", "jpeg"].iter()
             .map(|ext| texture_dir.join(format!("{}.{}", lower, ext)))
             .find(|p| p.exists());
-
         if let Some(path) = path {
+            body_paths.push((i, path));
+        }
+    }
+
+    // Add galaxy texture path
+    let galaxy_path = Path::new("data/textures/milky_way.png");
+    if galaxy_path.exists() {
+        body_paths.push((usize::MAX, galaxy_path.to_path_buf()));
+    }
+
+    // Decode, resize, and bleed all textures in parallel
+    let decoded: Vec<(usize, image::RgbaImage)> = body_paths.into_par_iter()
+        .filter_map(|(body_idx, path)| {
             match image::open(&path) {
                 Ok(img) => {
                     let rgba = img.to_rgba8();
@@ -75,39 +89,33 @@ pub fn load_body_textures(
                     } else {
                         rgba
                     };
-                    bleed_disc_edges(&mut final_img);
-                    log::info!("Loaded body texture: {} (layer {})", path.display(), images.len());
-                    images.push((i, final_img));
+                    if body_idx != usize::MAX {
+                        bleed_disc_edges(&mut final_img);
+                    }
+                    log::info!("Loaded texture: {}", path.display());
+                    Some((body_idx, final_img))
                 }
                 Err(e) => {
-                    log::warn!("Failed to load body texture {}: {}", path.display(), e);
+                    log::warn!("Failed to load texture {}: {}", path.display(), e);
+                    None
                 }
             }
+        })
+        .collect();
+
+    // Sort to get deterministic layer ordering (bodies first by index, galaxy last)
+    let mut images: Vec<(usize, image::RgbaImage)> = decoded;
+    images.sort_by_key(|(idx, _)| *idx);
+
+    // Find galaxy layer index
+    let mut galaxy_layer_idx: Option<u32> = None;
+    for (layer_idx, (body_idx, _)) in images.iter().enumerate() {
+        if *body_idx == usize::MAX {
+            galaxy_layer_idx = Some(layer_idx as u32);
         }
     }
-
-    // Load galaxy background image as an extra layer
-    let galaxy_path = Path::new("data/textures/milky_way.png");
-    let mut galaxy_layer_idx: Option<u32> = None;
-    if galaxy_path.exists() {
-        match image::open(galaxy_path) {
-            Ok(img) => {
-                let rgba = img.to_rgba8();
-                let final_img = if rgba.width() != TEXTURE_SIZE || rgba.height() != TEXTURE_SIZE {
-                    image::imageops::resize(&rgba, TEXTURE_SIZE, TEXTURE_SIZE, image::imageops::FilterType::Triangle)
-                } else {
-                    rgba
-                };
-                let idx = images.len();
-                log::info!("Loaded galaxy texture: {} (layer {})", galaxy_path.display(), idx);
-                galaxy_layer_idx = Some(idx as u32);
-                // Use usize::MAX as a sentinel body index (won't collide with real bodies)
-                images.push((usize::MAX, final_img));
-            }
-            Err(e) => {
-                log::warn!("Failed to load galaxy texture {}: {}", galaxy_path.display(), e);
-            }
-        }
+    if galaxy_layer_idx.is_some() {
+        log::info!("Galaxy texture at layer {}", galaxy_layer_idx.unwrap());
     }
 
     let layer_count = images.len().max(1) as u32;
