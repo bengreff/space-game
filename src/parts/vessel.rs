@@ -82,6 +82,11 @@ pub struct FlightPart {
     // Electricity (stored separately from resources to avoid mass calculation interference)
     pub electricity: f64,      // Current stored Wh
     pub max_electricity: f64,  // Capacity Wh
+
+    // Solar panel deployment
+    pub deploy_fraction: f64,     // 0.0 = retracted, 1.0 = fully deployed
+    pub deploy_target: bool,      // desired state (false = retract, true = deploy)
+    pub mirror_partner: Option<usize>, // index of mirror partner in parts vec
 }
 
 impl FlightVessel {
@@ -183,6 +188,9 @@ impl FlightVessel {
                 fairing_half: None,
                 electricity: max_elec,
                 max_electricity: max_elec,
+                deploy_fraction: 0.0,
+                deploy_target: false,
+                mirror_partner: None,
             };
 
             // Set engine data if this is an engine
@@ -217,6 +225,15 @@ impl FlightVessel {
             }
 
             parts.push(flight_part);
+        }
+
+        // Map mirror partners from blueprint indices to FlightPart indices (1:1 mapping)
+        for (i, bp_part) in blueprint.parts.iter().enumerate() {
+            if let Some(mirror_idx) = bp_part.mirror_partner_index {
+                if mirror_idx < parts.len() {
+                    parts[i].mirror_partner = Some(mirror_idx);
+                }
+            }
         }
 
         // Normalize center of mass
@@ -1028,15 +1045,20 @@ impl FlightVessel {
             }
             let Some(def) = part_defs.get(&part.definition_id) else { continue };
 
-            // Solar panels: inverse-square scaling from 1 AU
+            // Solar panels: inverse-square scaling from 1 AU, gated by deployment
             if let Some(ref solar) = def.solar_panel {
                 let distance_ratio = AU_M / sun_distance_m.max(1.0);
-                generation += solar.output_1au * distance_ratio * distance_ratio;
+                generation += solar.output_1au * distance_ratio * distance_ratio * part.deploy_fraction;
             }
 
             // RTG: constant output
             if let Some(ref rtg) = def.rtg {
                 generation += rtg.output_watts;
+            }
+
+            // Reactor: constant output (fission/fusion/antimatter)
+            if let Some(ref reactor) = def.reactor {
+                generation += reactor.output_watts;
             }
 
             // Engine alternators: only when engine is active
@@ -1071,6 +1093,22 @@ impl FlightVessel {
         }
 
         (generation, consumption)
+    }
+
+    /// Animate solar panel deployment/retraction
+    pub fn update_solar_deploy(&mut self, dt: f64) {
+        const DEPLOY_SPEED: f64 = 0.5; // fraction per second (2s full deploy)
+        for part in &mut self.parts {
+            if part.destroyed || part.decoupled { continue; }
+            let target = if part.deploy_target { 1.0 } else { 0.0 };
+            if (part.deploy_fraction - target).abs() > 1e-6 {
+                if part.deploy_fraction < target {
+                    part.deploy_fraction = (part.deploy_fraction + DEPLOY_SPEED * dt).min(1.0);
+                } else {
+                    part.deploy_fraction = (part.deploy_fraction - DEPLOY_SPEED * dt).max(0.0);
+                }
+            }
+        }
     }
 
     /// Get the bounding half-width of the vessel (max extent from COM in X)
@@ -2538,6 +2576,9 @@ pub fn create_default_vessel(
             fairing_half: None,
             electricity: 0.0,
             max_electricity: 0.0,
+            deploy_fraction: 0.0,
+            deploy_target: false,
+            mirror_partner: None,
         }],
         root_part_index: 0,
         total_mass: 2.0,

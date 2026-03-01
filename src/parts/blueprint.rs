@@ -97,7 +97,11 @@ pub struct BlueprintPart {
     pub mirror_partner_index: Option<usize>,
     #[serde(default)]
     pub fairing_shape: Option<FairingShape>,
+    #[serde(default = "default_true")]
+    pub deployed: bool,
 }
+
+fn default_true() -> bool { true }
 
 /// How a part is attached to its parent
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +131,8 @@ pub struct PlacedPart {
     pub mirror_partner: Option<PlacedPartId>,
     // Fairing shell shape (if this is a fairing base)
     pub fairing_shape: Option<FairingShape>,
+    // Solar panel deploy state (true = extended, false = retracted)
+    pub deployed: bool,
 }
 
 impl PlacedPart {
@@ -149,6 +155,7 @@ impl PlacedPart {
             crossfeed_enabled: false,
             mirror_partner: None,
             fairing_shape: None,
+            deployed: true,
         }
     }
 
@@ -229,6 +236,7 @@ pub fn parts_to_blueprint(
             crossfeed_enabled: part.crossfeed_enabled,
             mirror_partner_index,
             fairing_shape: part.fairing_shape.clone(),
+            deployed: part.deployed,
         });
     }
 
@@ -277,6 +285,7 @@ pub fn blueprint_to_parts(
         };
         part.crossfeed_enabled = bp_part.crossfeed_enabled;
         part.fairing_shape = bp_part.fairing_shape.clone();
+        part.deployed = bp_part.deployed;
         parts.insert(id, part);
     }
 

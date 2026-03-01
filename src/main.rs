@@ -16,7 +16,7 @@ use sunscatter::bodies::G;
 use sunscatter::game::{Game, GameMode};
 use sunscatter::render::{RenderState, MainMenuAction, PauseAction, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, SelectedTarget, StagedPartInfo, TargetPopup, Vertex, BodyInfoData};
 use sunscatter::ship::{AutopilotTarget, ShipState, VesselPhysicsData, SHIP_SIZE, MAX_THRUST_ACCELERATION, AMBIENT_TEMPERATURE, RAILS_WARP_THRESHOLD};
-use sunscatter::parts::default_heat_tolerance;
+use sunscatter::parts::{default_heat_tolerance, GRID_SQUARE_SIZE};
 
 // 1:1 Real-Scale Solar System Simulation
 // All physics use real-world values: masses, radii, distances, orbital velocities
@@ -459,6 +459,9 @@ fn render_flight_frame(
                 power_generation = gen;
                 power_consumption = cons;
             }
+
+            // Animate solar panel deployment
+            vessel.update_solar_deploy(effective_dt);
 
             // Sync vessel state from ship
             vessel.rel_position = game.flight.ship.rel_position;
@@ -1085,8 +1088,29 @@ fn render_flight_frame(
                         dry_mass,
                         hitbox_half_w: if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[1] } else { p.hitbox_half_extents[0] },
                         hitbox_half_h: if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[0] } else { p.hitbox_half_extents[1] },
-                        click_local_y: p.local_position[1],
-                        click_hitbox_half_h: if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[0] } else { p.hitbox_half_extents[1] },
+                        click_local_y: {
+                            let is_solar = def.map(|d| d.solar_panel.is_some()).unwrap_or(false);
+                            if is_solar && p.deploy_fraction < 1.0 {
+                                // Retracted hitbox: 1 square for small panels, 2 for wide (>=2 grid)
+                                let base_squares = if def.map(|d| d.grid_width >= 2.0).unwrap_or(false) { 2.0 } else { 1.0 };
+                                let base_half_h = base_squares * GRID_SQUARE_SIZE * 0.5;
+                                let half_h = if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[0] } else { p.hitbox_half_extents[1] };
+                                p.local_position[1] - half_h + base_half_h
+                            } else {
+                                p.local_position[1]
+                            }
+                        },
+                        click_hitbox_half_h: {
+                            let is_solar = def.map(|d| d.solar_panel.is_some()).unwrap_or(false);
+                            if is_solar && p.deploy_fraction < 1.0 {
+                                let base_squares = if def.map(|d| d.grid_width >= 2.0).unwrap_or(false) { 2.0 } else { 1.0 };
+                                base_squares * GRID_SQUARE_SIZE * 0.5
+                            } else if is_part_rotation_swapped(p.rotation) {
+                                p.hitbox_half_extents[0]
+                            } else {
+                                p.hitbox_half_extents[1]
+                            }
+                        },
                         engine_thrust_vac,
                         engine_thrust_asl,
                         engine_isp_vac,
@@ -1106,9 +1130,13 @@ fn render_flight_frame(
                         solar_output: def.and_then(|d| d.solar_panel.as_ref().map(|sp| {
                             let au_m = 1.496e11_f64;
                             let ratio = au_m / sun_distance_m.max(1.0);
-                            sp.output_1au * ratio * ratio
+                            sp.output_1au * ratio * ratio * p.deploy_fraction
                         })),
                         rtg_output: def.and_then(|d| d.rtg.as_ref().map(|r| r.output_watts)),
+                        reactor_output: def.and_then(|d| d.reactor.as_ref().map(|r| r.output_watts)),
+                        shield_type: def.and_then(|d| d.shield.as_ref().map(|s| format!("{:?}", s.shield_type))),
+                        shield_max_c: def.and_then(|d| d.shield.as_ref().map(|s| s.max_velocity_c)),
+                        shield_power: def.and_then(|d| d.shield.as_ref().map(|s| s.power_base_watts)),
                         is_decoupler: def.map(|d| d.decoupler.is_some()).unwrap_or(false),
                         crossfeed_enabled: p.crossfeed_enabled,
                         gimbal_angle: p.gimbal_angle,
@@ -1119,6 +1147,8 @@ fn render_flight_frame(
                         is_fairing: def.map(|d| d.fairing.is_some()).unwrap_or(false),
                         fairing_shape: p.fairing_shape.clone(),
                         fairing_half: p.fairing_half,
+                        deploy_fraction: p.deploy_fraction,
+                        is_solar_panel: def.map(|d| d.solar_panel.is_some()).unwrap_or(false),
                     }
                 })
                 .collect();
@@ -1831,6 +1861,21 @@ fn render_flight_frame(
         }
     }
 
+    // Process solar deploy request from part info popup
+    if let Some((part_idx, deploy)) = render_state.solar_deploy_request.take() {
+        if let Some(ref mut vessel) = game.flight.vessel {
+            if part_idx < vessel.parts.len() {
+                vessel.parts[part_idx].deploy_target = deploy;
+                // Sync mirror partner
+                if let Some(mirror_idx) = vessel.parts[part_idx].mirror_partner {
+                    if mirror_idx < vessel.parts.len() {
+                        vessel.parts[mirror_idx].deploy_target = deploy;
+                    }
+                }
+            }
+        }
+    }
+
     // Process crossfeed toggle request from part info popup
     if let Some((part_idx, enabled)) = render_state.crossfeed_toggle_request.take() {
         if let Some(ref mut vessel) = game.flight.vessel {
@@ -2294,6 +2339,10 @@ fn build_vessel_part_render_data(
                 battery_max: if p.max_electricity > 0.0 { Some(p.max_electricity) } else { None },
                 solar_output: None, // Inactive vessels don't compute solar output
                 rtg_output: def.and_then(|d| d.rtg.as_ref().map(|r| r.output_watts)),
+                reactor_output: def.and_then(|d| d.reactor.as_ref().map(|r| r.output_watts)),
+                shield_type: def.and_then(|d| d.shield.as_ref().map(|s| format!("{:?}", s.shield_type))),
+                shield_max_c: def.and_then(|d| d.shield.as_ref().map(|s| s.max_velocity_c)),
+                shield_power: def.and_then(|d| d.shield.as_ref().map(|s| s.power_base_watts)),
                 is_decoupler: def.map(|d| d.decoupler.is_some()).unwrap_or(false),
                 crossfeed_enabled: p.crossfeed_enabled,
                 gimbal_angle: 0.0,
@@ -2304,6 +2353,8 @@ fn build_vessel_part_render_data(
                 is_fairing: def.map(|d| d.fairing.is_some()).unwrap_or(false),
                 fairing_shape: p.fairing_shape.clone(),
                 fairing_half: p.fairing_half,
+                deploy_fraction: p.deploy_fraction,
+                is_solar_panel: def.map(|d| d.solar_panel.is_some()).unwrap_or(false),
             }
         })
         .collect()

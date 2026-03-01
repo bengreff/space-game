@@ -56,3 +56,35 @@
 - [ ] Visual test: mirror placement works with rotated parts
 - [ ] Visual test: rotated parts render correctly in flight
 - [ ] Visual test: R no longer toggles symmetry mode
+
+---
+
+# Solar Panel Deploy/Retract System
+
+## Implementation
+- [x] Step 1: Data model — `deployed` on PlacedPart/BlueprintPart, `deploy_fraction`/`deploy_target`/`mirror_partner` on FlightPart
+- [x] Step 2: Deploy animation — `update_solar_deploy()` at 0.5/s speed (2s full deploy)
+- [x] Step 3: Power gating — multiply solar output by `deploy_fraction`
+- [x] Step 4: Render data — `deploy_fraction`/`is_solar_panel` on ShipPartRenderData, click hitbox adjustment
+- [x] Step 5: Sprite rendering — `generate_solar_panel_partial()` helper, integration in `generate_part_shape_vertices` and `generate_part_vertices`
+- [x] Step 6: Editor UI — Extend/Retract button in solar panel info section
+- [x] Step 7: Flight UI — `solar_deploy_request` field, Extend/Retract button in flight popup
+- [x] Step 8: Solar output display — multiply by `deploy_fraction`
+- [x] Step 9: Spec update — power spec and editor parts spec
+
+## Files Changed
+- `src/parts/blueprint.rs` — `deployed` on PlacedPart and BlueprintPart, serialize/deserialize
+- `src/parts/vessel.rs` — `deploy_fraction`/`deploy_target`/`mirror_partner` on FlightPart, `update_solar_deploy()`, power gating
+- `src/render/types.rs` — `deploy_fraction`/`is_solar_panel` on ShipPartRenderData
+- `src/editor/render.rs` — `generate_solar_panel_partial()`, deploy_fraction param on `generate_part_shape_vertices`
+- `src/editor/ui.rs` — Extend/Retract button
+- `src/render/state.rs` — `solar_deploy_request` field, Extend/Retract button in flight popup
+- `src/main.rs` — process `solar_deploy_request`, call `update_solar_deploy()`, populate render data, click hitbox
+
+## Verification
+- [x] `cargo build` — compiles clean
+- [ ] Visual test: editor Extend/Retract button toggles panel appearance
+- [ ] Visual test: flight panels start retracted, animate on Extend
+- [ ] Visual test: power shows 0W when retracted, ramps with deploy
+- [ ] Visual test: mirror panels sync deploy state
+- [ ] Visual test: click hitbox matches retracted panel size

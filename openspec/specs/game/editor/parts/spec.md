@@ -10,7 +10,11 @@ The parts palette SHALL display selectable tabs for each `PartCategory`. The def
 
 ### Requirement: Size grouping
 
-Within a selected category, parts SHALL be grouped by `PartSize` under collapsible headers (default open). Sizes with no parts in the current category SHALL be hidden. Size categories: Tiny (1 grid square, 0.5m), Small (3, 1.5m), Medium (5, 2.5m), Large (9, 4.5m), XL (13, 6.5m).
+Within a selected category, parts SHALL be grouped by `PartSize` under collapsible headers (default open). Sizes with no parts in the current category SHALL be hidden. Size categories: Tiny (1 grid square, 0.5m), Small (3, 1.5m), Medium (5, 2.5m), Large (9, 4.5m), XL (13, 6.5m). Categories: Command, Engines, Fuel Tanks, Structural, Aerodynamic, Utility, Electricity, Interstellar.
+
+### Requirement: Flat Interstellar palette
+
+The Interstellar category SHALL display parts in a flat list sorted by width then height, without size sub-grouping or collapsible headers. All other categories use the standard size-grouped display.
 
 ### Requirement: Palette selection toggle
 
@@ -191,11 +195,23 @@ For batteries, the info panel SHALL display: capacity in Wh (e.g. "Capacity: 5,0
 
 ### Requirement: Solar panel info
 
-For solar panels, the info panel SHALL display: output at Earth distance (1 AU) in Watts (e.g. "Output @1AU: 450 W"). In flight, it SHALL display current output adjusted for distance from the Sun using inverse-square law.
+For solar panels, the info panel SHALL display: output at Earth distance (1 AU) in Watts (e.g. "Output @1AU: 450 W") and an "Extend"/"Retract" button toggling `PlacedPart.deployed`. When the panel has a `mirror_partner`, the toggle SHALL apply to both parts. In flight, the info popup SHALL display current output adjusted for distance from the Sun using inverse-square law, multiplied by `deploy_fraction`, and an "Extend"/"Retract" button.
 
 ### Requirement: RTG info
 
 For RTGs, the info panel SHALL display: constant output in Watts (e.g. "Output: 300 W").
+
+### Requirement: Reactor info
+
+For reactors, the info panel SHALL display: constant output in Watts (e.g. "Output: 500 MW"). Reactors generate power using the same constant-output pattern as RTGs but at much higher levels.
+
+### Requirement: Shield info
+
+For shields, the info panel SHALL display: shield type (Whipple, FRES, or Geodesic), maximum rated velocity as a fraction of c, and base power consumption in Watts (0 for passive Whipple shields).
+
+### Requirement: Radiator info
+
+For radiators, the info panel SHALL display: heat rejection capacity in Watts (e.g. "Heat Rejection: 2.0 GW").
 
 ### Requirement: Pod info
 

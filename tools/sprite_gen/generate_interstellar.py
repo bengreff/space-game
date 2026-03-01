@@ -30,7 +30,7 @@ import random
 # Constants
 # ================================================================
 PX = 90   # pixels per grid square (matches chemical engines)
-PAD = 6
+PAD = 0  # No padding — atlas packer adds spacing
 
 # ================================================================
 # Palette — steel base + interstellar accents

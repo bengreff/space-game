@@ -85,6 +85,59 @@ fn generate_sprite_quad(
     vertices.push(Vertex::sprite([x - half_w, y + half_h], [u0, v0], tint));
 }
 
+/// Render a partially deployed solar panel.
+/// When deploy_fraction < 1.0, draws a grey base rectangle at the bottom and a partial
+/// sprite quad showing only the deployed portion. When deploy_fraction == 0.0, only the base.
+fn generate_solar_panel_partial(
+    vertices: &mut Vec<Vertex>,
+    rect: &crate::render::sprites::SpriteRect,
+    def: &PartDefinition,
+    x: f32,
+    y: f32,
+    deploy_fraction: f64,
+    alpha: f32,
+) {
+    let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def);
+    let sp_x = x + sp_ox;
+    let sp_y = y + sp_oy;
+    let panel_bottom = sp_y - sp_hh;
+
+    // Base height: 1 grid square for narrow panels, 2 for wide (>=2 grid wide)
+    let base_squares: f32 = if def.grid_width >= 2.0 { 2.0 } else { 1.0 };
+    let base_height: f32 = base_squares * GRID_SQUARE_SIZE as f32;
+
+    // Grey base rectangle (always drawn)
+    let base_color = [0.45, 0.45, 0.48, alpha];
+    let base_top = panel_bottom + base_height;
+    vertices.push(Vertex::new([sp_x - sp_hw, panel_bottom], base_color));
+    vertices.push(Vertex::new([sp_x + sp_hw, panel_bottom], base_color));
+    vertices.push(Vertex::new([sp_x + sp_hw, base_top], base_color));
+    vertices.push(Vertex::new([sp_x - sp_hw, panel_bottom], base_color));
+    vertices.push(Vertex::new([sp_x + sp_hw, base_top], base_color));
+    vertices.push(Vertex::new([sp_x - sp_hw, base_top], base_color));
+
+    // Partial sprite (if deploying)
+    let f = deploy_fraction as f32;
+    if f > 0.0 {
+        let full_height = 2.0 * sp_hh;
+        let visible_height = base_height + f * (full_height - base_height);
+        let quad_top = panel_bottom + visible_height;
+
+        // UV mapping: v_max is the bottom of the sprite in atlas, v_min is top.
+        // We show from panel_bottom to quad_top, which maps to v_max down to some v.
+        let v_top = rect.v_max - (visible_height / full_height) * (rect.v_max - rect.v_min);
+        let v_bottom = rect.v_max;
+
+        let tint = [1.0, 1.0, 1.0, alpha];
+        vertices.push(Vertex::sprite([sp_x - sp_hw, panel_bottom], [rect.u_min, v_bottom], tint));
+        vertices.push(Vertex::sprite([sp_x + sp_hw, panel_bottom], [rect.u_max, v_bottom], tint));
+        vertices.push(Vertex::sprite([sp_x + sp_hw, quad_top], [rect.u_max, v_top], tint));
+        vertices.push(Vertex::sprite([sp_x - sp_hw, panel_bottom], [rect.u_min, v_bottom], tint));
+        vertices.push(Vertex::sprite([sp_x + sp_hw, quad_top], [rect.u_max, v_top], tint));
+        vertices.push(Vertex::sprite([sp_x - sp_hw, quad_top], [rect.u_min, v_top], tint));
+    }
+}
+
 /// Compute sprite quad placement: (half_w, half_h, x_offset, y_offset) for a given part.
 /// Accounts for per-category alignment rules so sprites line up with procedural renderers.
 fn sprite_placement(def: &PartDefinition) -> (f32, f32, f32, f32) {
@@ -264,14 +317,19 @@ pub fn generate_part_vertices(
         if let Some(atlas) = sprite_atlas {
             if def.fairing.is_none() {
                 if let Some(rect) = atlas.parts.get(&def.id) {
-                    let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def);
-                    let sp_x = x + sp_ox;
-                    let sp_y = y + sp_oy;
-                    generate_sprite_quad(&mut vertices, rect, sp_x, sp_y, sp_hw, sp_hh, [1.0, 1.0, 1.0, 1.0]);
+                    // Solar panel partial deployment in editor
+                    if def.solar_panel.is_some() && !part.deployed {
+                        generate_solar_panel_partial(&mut vertices, rect, def, x, y, 0.0, 1.0);
+                    } else {
+                        let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def);
+                        let sp_x = x + sp_ox;
+                        let sp_y = y + sp_oy;
+                        generate_sprite_quad(&mut vertices, rect, sp_x, sp_y, sp_hw, sp_hh, [1.0, 1.0, 1.0, 1.0]);
 
-                    // Overlay RCS nozzle bumps on pod sprites
-                    if def.category == PartCategory::Pods && def.rcs.is_some() {
-                        generate_pod_rcs_nozzles(&mut vertices, def, sp_x, sp_y, 1.0);
+                        // Overlay RCS nozzle bumps on pod sprites
+                        if def.category == PartCategory::Pods && def.rcs.is_some() {
+                            generate_pod_rcs_nozzles(&mut vertices, def, sp_x, sp_y, 1.0);
+                        }
                     }
 
                     // Draw overlay for selection, hover, or invalid drag
@@ -297,7 +355,7 @@ pub fn generate_part_vertices(
         }
 
         // For engines, use dedicated engine rendering
-        if def.category == PartCategory::Propulsion && def.engine.is_some() {
+        if (def.category == PartCategory::Propulsion || def.category == PartCategory::Interstellar) && def.engine.is_some() {
             generate_engine_details(&mut vertices, def, x, y, 1.0);
 
             // Draw overlay for selection, hover, or invalid drag
@@ -630,7 +688,7 @@ fn generate_single_ghost_vertices(
         }
     }
 
-    if def.category == PartCategory::Propulsion && def.engine.is_some() {
+    if (def.category == PartCategory::Propulsion || def.category == PartCategory::Interstellar) && def.engine.is_some() {
         generate_engine_details(vertices, def, x, y, ghost_alpha);
 
         let overlay_color = if ghost_valid {
@@ -1769,17 +1827,28 @@ pub fn generate_engine_plume_vertices(
     let nozzle_width = def.flight_hitbox_width_m() as f32;
     let half_nozzle = nozzle_width / 2.0;
 
-    // Try sprite plume
+    // Try sprite plume: engine-specific plume first, then propellant-based fallback
     if let Some(atlas) = sprite_atlas {
         if let Some(ref engine) = def.engine {
+            // Try engine-specific plume (e.g., "engine_orion_pulse" → "orion_pulse")
+            let engine_plume = def.id.strip_prefix("engine_").and_then(|name| {
+                // Some engines share plumes: daedalus_s1/s2 → daedalus, zpinch_probe/advanced → zpinch
+                let plume_name = if name.starts_with("daedalus_") { "daedalus" }
+                    else if name.starts_with("zpinch_") { "zpinch" }
+                    else { name };
+                atlas.plumes.get(plume_name)
+            });
             let propellant_name = match engine.propellant {
                 crate::parts::Propellant::Kerolox => "kerolox",
                 crate::parts::Propellant::Methalox => "methalox",
                 crate::parts::Propellant::Hydrolox => "hydrolox",
-                crate::parts::Propellant::Hydrogen => "hydrolox",  // NTR uses similar plume
+                crate::parts::Propellant::Hydrogen => "hydrolox",
                 crate::parts::Propellant::Xenon => "xenon",
+                crate::parts::Propellant::FusionFuel => "daedalus",
+                crate::parts::Propellant::Antimatter => "amcat",
+                crate::parts::Propellant::NuclearPulse => "orion_pulse",
             };
-            if let Some(anim) = atlas.plumes.get(propellant_name) {
+            if let Some(anim) = engine_plume.or_else(|| atlas.plumes.get(propellant_name)) {
                 let frame_idx = (plume_elapsed_secs * 10.0) as usize % 4;
                 let rect = &anim.frames[frame_idx];
 
@@ -1824,12 +1893,21 @@ pub fn generate_part_shape_vertices(
     y: f32,
     alpha: f32,
     sprite_atlas: Option<&SpriteAtlas>,
+    deploy_fraction: Option<f64>,
 ) {
     // Try sprite-based rendering first (skip fairings — they have shell geometry)
     let is_triangle = matches!(def.shape, PartShape::Triangle | PartShape::TriangleLeft | PartShape::TriangleRight);
     if let Some(atlas) = sprite_atlas {
         if def.fairing.is_none() {
             if let Some(rect) = atlas.parts.get(&def.id) {
+                // Solar panel partial deployment
+                if let Some(frac) = deploy_fraction {
+                    if def.solar_panel.is_some() && frac < 1.0 {
+                        generate_solar_panel_partial(vertices, rect, def, x, y, frac, alpha);
+                        return;
+                    }
+                }
+
                 let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def);
                 let sp_x = x + sp_ox;
                 let sp_y = y + sp_oy;
@@ -1845,7 +1923,7 @@ pub fn generate_part_shape_vertices(
     }
 
     // For engines, use dedicated engine rendering
-    if def.category == PartCategory::Propulsion && def.engine.is_some() {
+    if (def.category == PartCategory::Propulsion || def.category == PartCategory::Interstellar) && def.engine.is_some() {
         generate_engine_details(vertices, def, x, y, alpha);
         return;
     }

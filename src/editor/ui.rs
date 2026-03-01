@@ -17,6 +17,21 @@ fn format_mass(kg: f64) -> String {
     }
 }
 
+/// Format power with appropriate SI prefix (W, kW, MW, GW, TW)
+fn format_power(watts: f64) -> String {
+    if watts >= 1e12 {
+        format!("{:.1} TW", watts / 1e12)
+    } else if watts >= 1e9 {
+        format!("{:.1} GW", watts / 1e9)
+    } else if watts >= 1e6 {
+        format!("{:.1} MW", watts / 1e6)
+    } else if watts >= 1e3 {
+        format!("{:.1} kW", watts / 1e3)
+    } else {
+        format!("{:.0} W", watts)
+    }
+}
+
 /// Editor UI action that should be handled by the game
 #[derive(Debug, Clone)]
 pub enum EditorAction {
@@ -231,38 +246,58 @@ pub fn render_editor_ui(
 
             ui.separator();
 
-            // Parts list for selected category, grouped by size
+            // Parts list for selected category
             egui::ScrollArea::vertical().show(ui, |ui| {
-                let mut any_parts = false;
+                let category = editor.selected_category;
 
-                for size in PartSize::all() {
-                    if !part_defs.has_parts_for_size(editor.selected_category, *size) {
-                        continue;
-                    }
-                    any_parts = true;
-
-                    let parts = part_defs.by_category_and_size(editor.selected_category, *size);
-
-                    // Collapsible header for each size
-                    egui::CollapsingHeader::new(size.display_name())
-                        .default_open(true)
-                        .show(ui, |ui| {
-                            for part in parts {
-                                let is_selected = editor.selected_part_def.as_ref() == Some(&part.id);
-
-                                if ui.selectable_label(is_selected, &part.name).clicked() {
-                                    if is_selected {
-                                        editor.deselect();
-                                    } else {
-                                        editor.select_part_def(&part.id);
-                                    }
+                if category == PartCategory::Interstellar {
+                    // Flat list for Interstellar (no size sub-grouping)
+                    let parts = part_defs.by_category(category);
+                    if parts.is_empty() {
+                        ui.label("No parts in this category");
+                    } else {
+                        for part in parts {
+                            let is_selected = editor.selected_part_def.as_ref() == Some(&part.id);
+                            if ui.selectable_label(is_selected, &part.name).clicked() {
+                                if is_selected {
+                                    editor.deselect();
+                                } else {
+                                    editor.select_part_def(&part.id);
                                 }
                             }
-                        });
-                }
+                        }
+                    }
+                } else {
+                    // Grouped by size for all other categories
+                    let mut any_parts = false;
 
-                if !any_parts {
-                    ui.label("No parts in this category");
+                    for size in PartSize::all() {
+                        if !part_defs.has_parts_for_size(category, *size) {
+                            continue;
+                        }
+                        any_parts = true;
+
+                        let parts = part_defs.by_category_and_size(category, *size);
+
+                        egui::CollapsingHeader::new(size.display_name())
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                for part in parts {
+                                    let is_selected = editor.selected_part_def.as_ref() == Some(&part.id);
+                                    if ui.selectable_label(is_selected, &part.name).clicked() {
+                                        if is_selected {
+                                            editor.deselect();
+                                        } else {
+                                            editor.select_part_def(&part.id);
+                                        }
+                                    }
+                                }
+                            });
+                    }
+
+                    if !any_parts {
+                        ui.label("No parts in this category");
+                    }
                 }
             });
         });
@@ -547,6 +582,27 @@ pub fn render_editor_ui(
                             ui.label(format!("Isp: {:.0} s", rcs.isp));
                             ui.label("Fuel: Monopropellant");
                         }
+
+                        // Reactor info
+                        if let Some(ref reactor) = def.reactor {
+                            ui.separator();
+                            ui.heading("Reactor Stats");
+                            ui.label(format!("Output: {}", format_power(reactor.output_watts)));
+                        }
+
+                        // Shield info
+                        if let Some(ref shield) = def.shield {
+                            ui.separator();
+                            ui.heading("Shield Stats");
+                            ui.label(format!("Type: {:?}", shield.shield_type));
+                            ui.label(format!("Max Velocity: {:.0}% c", shield.max_velocity_c * 100.0));
+                            if shield.power_base_watts > 0.0 {
+                                ui.label(format!("Power Draw: {}", format_power(shield.power_base_watts)));
+                            } else {
+                                ui.label("Power Draw: None (passive)");
+                            }
+                        }
+
                     }
                 }
                 // Show placed part info when selected
@@ -786,6 +842,18 @@ pub fn render_editor_ui(
                                 ui.separator();
                                 ui.heading("Solar Panel");
                                 ui.label(format!("Output at Earth: {:.0} W", solar.output_1au));
+                                let label = if part.deployed { "Retract" } else { "Extend" };
+                                if ui.button(label).clicked() {
+                                    let new_state = !part.deployed;
+                                    if let Some(p) = editor.parts.get_mut(&part_id) {
+                                        p.deployed = new_state;
+                                    }
+                                    if let Some(mid) = part.mirror_partner {
+                                        if let Some(mp) = editor.parts.get_mut(&mid) {
+                                            mp.deployed = new_state;
+                                        }
+                                    }
+                                }
                             }
 
                             // RTG info

@@ -7,18 +7,6 @@ use std::time::SystemTime;
 use rayon::prelude::*;
 use serde::{Serialize, Deserialize};
 
-/// Interstellar engine IDs — excluded from atlas (use procedural fallback)
-const INTERSTELLAR_ENGINES: &[&str] = &[
-    "engine_orion_pulse",
-    "engine_daedalus_s1",
-    "engine_daedalus_s2",
-    "engine_zpinch_advanced",
-    "engine_zpinch_probe",
-    "engine_amcat_fusion",
-    "engine_am_torch",
-    "engine_gamma_conversion",
-];
-
 /// UV rectangle in the atlas (normalized 0–1 coordinates)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SpriteRect {
@@ -243,9 +231,7 @@ fn build_sprite_atlas(
     device: &wgpu::Device,
 ) -> (Vec<u8>, u32, u32, HashMap<String, SpriteRect>, HashMap<String, PlumeAnimation>) {
     // Collect all file paths first (fast, sequential filesystem reads)
-    let engine_paths = collect_sprite_paths(&sprite_dir.join("engines"), |stem| {
-        !INTERSTELLAR_ENGINES.contains(&stem)
-    });
+    let engine_paths = collect_sprite_paths(&sprite_dir.join("engines"), |_| true);
     let part_paths = collect_sprite_paths(&sprite_dir.join("parts"), |_| true);
     let plume_paths = collect_plume_paths(&sprite_dir.join("plumes"));
 

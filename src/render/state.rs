@@ -63,6 +63,20 @@ fn format_mass(kg: f64) -> String {
 }
 
 /// Format pressure in Pascals to a human-readable string
+fn format_power_si(watts: f64) -> String {
+    if watts >= 1e12 {
+        format!("{:.1} TW", watts / 1e12)
+    } else if watts >= 1e9 {
+        format!("{:.1} GW", watts / 1e9)
+    } else if watts >= 1e6 {
+        format!("{:.1} MW", watts / 1e6)
+    } else if watts >= 1e3 {
+        format!("{:.1} kW", watts / 1e3)
+    } else {
+        format!("{:.0} W", watts)
+    }
+}
+
 fn format_pressure(pa: f64) -> String {
     if pa >= 101_325.0 * 0.5 {
         format!("{:.2} atm", pa / 101_325.0)
@@ -138,6 +152,7 @@ pub struct RenderState {
     pub crossfeed_toggle_request: Option<(usize, bool)>,  // (part_index, crossfeed_enabled)
     pub decouple_request: Option<usize>,  // part_index to manually decouple
     pub fairing_deploy_request: Option<usize>,  // part_index to deploy fairing
+    pub solar_deploy_request: Option<(usize, bool)>,  // (part_index, deploy)
     pub ap_markers: Vec<([f64; 2], f64)>, // Apoapsis markers: (world pos relative to camera, altitude)
     pub pe_markers: Vec<([f64; 2], f64)>, // Periapsis markers: (world pos relative to camera, altitude)
     pub closest_approach_world_pos: Option<([f64; 2], f64)>, // (render world pos, distance meters) - set by main.rs
@@ -497,6 +512,7 @@ impl RenderState {
             crossfeed_toggle_request: None,
             decouple_request: None,
             fairing_deploy_request: None,
+            solar_deploy_request: None,
             ap_markers: Vec::new(),
             pe_markers: Vec::new(),
             closest_approach_world_pos: None,
@@ -698,6 +714,7 @@ impl RenderState {
         let mut crossfeed_toggle_req: Option<(usize, bool)> = None;
         let mut decouple_req: Option<usize> = None;
         let mut fairing_deploy_req: Option<usize> = None;
+        let mut solar_deploy_req: Option<(usize, bool)> = None;
         let mut staging_reorder_req: Option<Vec<Vec<usize>>> = None;
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
@@ -1939,6 +1956,10 @@ impl RenderState {
                                 ui.separator();
                                 ui.label(egui::RichText::new("Solar Panel").strong());
                                 ui.label(format!("Output: {:.0} W", output));
+                                let label = if part.deploy_fraction >= 0.5 { "Retract" } else { "Extend" };
+                                if ui.button(label).clicked() {
+                                    solar_deploy_req = Some((part.part_index, part.deploy_fraction < 0.5));
+                                }
                             }
 
                             // RTG info
@@ -1946,6 +1967,30 @@ impl RenderState {
                                 ui.separator();
                                 ui.label(egui::RichText::new("RTG").strong());
                                 ui.label(format!("Output: {:.0} W", output));
+                            }
+
+                            // Reactor info
+                            if let Some(output) = part.reactor_output {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Reactor").strong());
+                                ui.label(format!("Output: {}", format_power_si(output)));
+                            }
+
+                            // Shield info
+                            if let Some(ref shield_type) = part.shield_type {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Shield").strong());
+                                ui.label(format!("Type: {}", shield_type));
+                                if let Some(max_c) = part.shield_max_c {
+                                    ui.label(format!("Max Velocity: {:.0}% c", max_c * 100.0));
+                                }
+                                if let Some(power) = part.shield_power {
+                                    if power > 0.0 {
+                                        ui.label(format!("Power Draw: {}", format_power_si(power)));
+                                    } else {
+                                        ui.label("Power Draw: None (passive)");
+                                    }
+                                }
                             }
 
                             // Decoupler info
@@ -2294,6 +2339,9 @@ impl RenderState {
         }
         if fairing_deploy_req.is_some() {
             self.fairing_deploy_request = fairing_deploy_req;
+        }
+        if solar_deploy_req.is_some() {
+            self.solar_deploy_request = solar_deploy_req;
         }
         // Store staging reorder request for main.rs to process
         if staging_reorder_req.is_some() {
@@ -3452,6 +3500,7 @@ impl RenderState {
                                 crate::editor::generate_part_shape_vertices(
                                     &mut part_verts, def, 0.0, 0.0, 1.0,
                                     Some(&self.sprite_atlas),
+                                    if part_data.is_solar_panel { Some(part_data.deploy_fraction) } else { None },
                                 );
                             }
 
@@ -3873,6 +3922,7 @@ impl RenderState {
                                 crate::editor::generate_part_shape_vertices(
                                     &mut part_verts, def, 0.0, 0.0, 1.0,
                                     Some(&self.sprite_atlas),
+                                    if part_data.is_solar_panel { Some(part_data.deploy_fraction) } else { None },
                                 );
                             }
 

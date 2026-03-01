@@ -122,6 +122,12 @@ pub struct ShipPartRenderData {
     pub solar_output: Option<f64>,      // Current watts (distance-adjusted in flight)
     // RTG info
     pub rtg_output: Option<f64>,        // Constant watts
+    // Reactor info
+    pub reactor_output: Option<f64>,    // Constant watts
+    // Shield info
+    pub shield_type: Option<String>,    // "Whipple", "FRES", "Geodesic"
+    pub shield_max_c: Option<f64>,      // Max velocity as fraction of c
+    pub shield_power: Option<f64>,      // Base power draw in watts
     // Decoupler info
     pub is_decoupler: bool,
     pub crossfeed_enabled: bool,
@@ -137,6 +143,9 @@ pub struct ShipPartRenderData {
     pub is_fairing: bool,
     pub fairing_shape: Option<crate::parts::FairingShape>,
     pub fairing_half: Option<crate::parts::FairingHalf>,
+    // Solar panel deployment
+    pub deploy_fraction: f64,
+    pub is_solar_panel: bool,
 }
 
 /// Ship render data

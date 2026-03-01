@@ -62,6 +62,8 @@ pub enum PartCategory {
     Structural,
     Aerodynamic,
     Utility,
+    Electricity,
+    Interstellar,
 }
 
 impl PartCategory {
@@ -73,6 +75,8 @@ impl PartCategory {
             PartCategory::Structural => "Structural",
             PartCategory::Aerodynamic => "Aerodynamic",
             PartCategory::Utility => "Utility",
+            PartCategory::Electricity => "Electricity",
+            PartCategory::Interstellar => "Interstellar",
         }
     }
 
@@ -84,6 +88,8 @@ impl PartCategory {
             PartCategory::Structural,
             PartCategory::Aerodynamic,
             PartCategory::Utility,
+            PartCategory::Electricity,
+            PartCategory::Interstellar,
         ]
     }
 }
@@ -95,11 +101,14 @@ pub const GRID_SQUARE_SIZE: f64 = 0.5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Propellant {
     #[default]
-    Kerolox,    // LOX + RP-1 (kerosene)
-    Methalox,   // LOX + Methane
-    Hydrolox,   // LOX + Hydrogen
-    Hydrogen,   // Pure hydrogen (NTR engines, no oxidizer)
-    Xenon,      // Xenon (electric propulsion, no oxidizer)
+    Kerolox,      // LOX + RP-1 (kerosene)
+    Methalox,     // LOX + Methane
+    Hydrolox,     // LOX + Hydrogen
+    Hydrogen,     // Pure hydrogen (NTR engines, no oxidizer)
+    Xenon,        // Xenon (electric propulsion, no oxidizer)
+    FusionFuel,   // D+He3 (fusion engines)
+    Antimatter,   // Antimatter (AM engines)
+    NuclearPulse, // Nuclear pulse units (Orion-style)
 }
 
 impl Propellant {
@@ -110,6 +119,9 @@ impl Propellant {
             Propellant::Hydrolox => "LOX/LH2",
             Propellant::Hydrogen => "LH2",
             Propellant::Xenon => "Xenon",
+            Propellant::FusionFuel => "D+He3",
+            Propellant::Antimatter => "Antimatter",
+            Propellant::NuclearPulse => "Pulse Units",
         }
     }
 
@@ -121,6 +133,9 @@ impl Propellant {
             Propellant::Hydrolox => FuelType::Hydrogen,
             Propellant::Hydrogen => FuelType::PureHydrogen,
             Propellant::Xenon => FuelType::Xenon,
+            Propellant::FusionFuel => FuelType::FusionFuel,
+            Propellant::Antimatter => FuelType::Antimatter,
+            Propellant::NuclearPulse => FuelType::NuclearPulse,
         }
     }
 }
@@ -154,6 +169,9 @@ pub enum FuelType {
     Monopropellant, // Monopropellant (no oxidizer)
     PureHydrogen,   // Pure LH2 (NTR engines, no oxidizer)
     Xenon,          // Xenon (electric propulsion, no oxidizer)
+    FusionFuel,     // D+He3 cryogenic (fusion engines)
+    Antimatter,     // Antimatter containment (AM engines)
+    NuclearPulse,   // Nuclear pulse units (Orion-style)
 }
 
 impl FuelType {
@@ -166,6 +184,9 @@ impl FuelType {
             FuelType::Monopropellant => "Monopropellant",
             FuelType::PureHydrogen => "LH2",
             FuelType::Xenon => "Xenon",
+            FuelType::FusionFuel => "D+He3",
+            FuelType::Antimatter => "Antimatter",
+            FuelType::NuclearPulse => "Pulse Units",
         }
     }
 
@@ -184,6 +205,9 @@ impl FuelType {
             FuelType::Monopropellant => (0.0, 200.0),
             FuelType::PureHydrogen => (0.0, 25.0),  // ~70 kg/m³, no oxidizer
             FuelType::Xenon => (0.0, 400.0),  // ~1600 kg/m³, no oxidizer
+            FuelType::FusionFuel => (0.0, 30.0),  // ~120 kg/m³ cryogenic D+He3
+            FuelType::Antimatter => (0.0, 5.0),   // mostly containment mass
+            FuelType::NuclearPulse => (0.0, 500.0), // heavy fissile pulse units
         }
     }
 
@@ -197,6 +221,9 @@ impl FuelType {
             FuelType::Monopropellant => Some("monopropellant"),
             FuelType::PureHydrogen => Some("hydrogen"),
             FuelType::Xenon => Some("xenon"),
+            FuelType::FusionFuel => Some("fusion_fuel"),
+            FuelType::Antimatter => Some("antimatter"),
+            FuelType::NuclearPulse => Some("nuclear_pulse"),
         }
     }
 }
@@ -253,6 +280,28 @@ pub struct SolarPanelData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RtgData {
     pub output_watts: f64,  // Constant power output in Watts
+}
+
+/// Reactor data (fission/fusion/antimatter power sources)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReactorData {
+    pub output_watts: f64,  // Power output in Watts
+}
+
+/// Shield type for interstellar shielding
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShieldType {
+    Whipple,   // Passive debris shield, effective up to ~0.1c
+    FRES,      // Fluid Recirculating Electromagnetic Shield
+    Geodesic,  // Geodesic force field (highest tier)
+}
+
+/// Shield data for interstellar debris/radiation protection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShieldData {
+    pub shield_type: ShieldType,
+    pub max_velocity_c: f64,    // Max speed rating as fraction of c
+    pub power_base_watts: f64,  // Base power consumption (0 for Whipple)
 }
 
 /// Fairing-specific data
@@ -319,6 +368,10 @@ pub struct PartDefinition {
     pub solar_panel: Option<SolarPanelData>,
     #[serde(default)]
     pub rtg: Option<RtgData>,
+    #[serde(default)]
+    pub reactor: Option<ReactorData>,
+    #[serde(default)]
+    pub shield: Option<ShieldData>,
     #[serde(default)]
     pub resources: HashMap<String, f64>,
     // Thermal properties

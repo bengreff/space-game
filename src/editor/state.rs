@@ -1225,6 +1225,11 @@ impl EditorState {
                 stats.power_generation += rtg.output_watts;
             }
 
+            // Reactor generation
+            if let Some(ref reactor) = def.reactor {
+                stats.power_generation += reactor.output_watts;
+            }
+
             // Pod power consumption
             if let Some(ref pod) = def.pod {
                 stats.power_consumption += pod.power_draw;

@@ -823,7 +823,7 @@ def generate_small_reactor(size="tiny"):
     """
     sizes = {
         "tiny":   (1, 3),  # Ember
-        "small":  (3, 4),  # Hearth
+        "small":  (3, 5),  # Hearth
         "medium": (5, 5),  # Crucible
     }
     GW, GH = sizes[size]
@@ -879,7 +879,10 @@ def generate_small_reactor(size="tiny"):
     y += rod_h
 
     # --- MAIN PRESSURE VESSEL ---
-    vessel_h = int(body_h * 0.52)
+    # Compute bottom sections first so vessel fills remaining space
+    hex_h = max(8, int(body_h * 0.10))
+    bot_mount_h = max(6, int(body_h * 0.025))
+    vessel_h = body_h - (y - PAD) - hex_h - bot_mount_h
     vessel_w = body_w * 0.82
     rect(d, cx, y, vessel_w, vessel_h, FISSION_BODY, outline=FISSION_DARK)
 
@@ -926,7 +929,6 @@ def generate_small_reactor(size="tiny"):
     y += vessel_h
 
     # --- HEAT EXCHANGER ---
-    hex_h = max(8, int(body_h * 0.10))
     hex_w = vessel_w + 6
     rect(d, cx, y, hex_w, hex_h, STEEL_MID, outline=STEEL_DARK)
     hhw = int(hex_w / 2)
@@ -939,7 +941,6 @@ def generate_small_reactor(size="tiny"):
     y += hex_h
 
     # --- BOTTOM MOUNT ---
-    bot_mount_h = max(6, int(body_h * 0.025))
     bot_ring_w = body_w * 0.65
     draw_mount_ring(d, cx, y, bot_ring_w, bot_mount_h, scale=scale)
 
@@ -1191,7 +1192,7 @@ PARTS = {
     "reactor_ember":         ("Reactor Ember (Tiny 1x3)",
                               lambda: generate_small_reactor("tiny"),
                               "parts"),
-    "reactor_hearth":        ("Reactor Hearth (Small 3x4)",
+    "reactor_hearth":        ("Reactor Hearth (Small 3x5)",
                               lambda: generate_small_reactor("small"),
                               "parts"),
     "reactor_crucible":      ("Reactor Crucible (Medium 5x5)",
