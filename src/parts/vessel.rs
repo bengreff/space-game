@@ -85,6 +85,7 @@ pub struct FlightPart {
     pub max_electricity: f64,  // Capacity Wh
 
     // Solar panel deployment
+    pub is_solar_panel: bool,         // true if this part has solar panel data
     pub deploy_fraction: f64,     // 0.0 = retracted, 1.0 = fully deployed
     pub deploy_target: bool,      // desired state (false = retract, true = deploy)
     pub mirror_partner: Option<usize>, // index of mirror partner in parts vec
@@ -189,6 +190,7 @@ impl FlightVessel {
                 fairing_half: None,
                 electricity: max_elec,
                 max_electricity: max_elec,
+                is_solar_panel: def.solar_panel.is_some(),
                 deploy_fraction: 0.0,
                 deploy_target: false,
                 mirror_partner: None,
@@ -1119,8 +1121,13 @@ impl FlightVessel {
             if part.destroyed || part.decoupled {
                 continue;
             }
-            let right = part.local_position[0] + part.hitbox_half_extents[0];
-            let left = part.local_position[0] - part.hitbox_half_extents[0];
+            let half_w = if part.is_solar_panel {
+                part.hitbox_half_extents[0] * part.deploy_fraction
+            } else {
+                part.hitbox_half_extents[0]
+            };
+            let right = part.local_position[0] + half_w;
+            let left = part.local_position[0] - half_w;
             max_extent = max_extent.max(right.abs()).max(left.abs());
         }
         max_extent.max(0.5)
@@ -1133,8 +1140,13 @@ impl FlightVessel {
             if part.destroyed || part.decoupled {
                 continue;
             }
-            let top = part.local_position[1] + part.hitbox_half_extents[1];
-            let bottom = part.local_position[1] - part.hitbox_half_extents[1];
+            let half_h = if part.is_solar_panel {
+                part.hitbox_half_extents[1] * part.deploy_fraction
+            } else {
+                part.hitbox_half_extents[1]
+            };
+            let top = part.local_position[1] + half_h;
+            let bottom = part.local_position[1] - half_h;
             max_extent = max_extent.max(top.abs()).max(bottom.abs());
         }
         max_extent.max(1.0)
@@ -2577,6 +2589,7 @@ pub fn create_default_vessel(
             fairing_half: None,
             electricity: 0.0,
             max_electricity: 0.0,
+            is_solar_panel: false,
             deploy_fraction: 0.0,
             deploy_target: false,
             mirror_partner: None,

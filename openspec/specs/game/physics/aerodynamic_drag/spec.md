@@ -57,6 +57,11 @@ Drag acceleration SHALL be included in both half-steps of the Velocity Verlet in
 
 `FlightVessel` SHALL provide a `bounding_half_width()` method that returns the maximum X-axis extent from center of mass across all non-decoupled, non-destroyed parts. Minimum return value SHALL be 0.5 meters.
 
+#### Scenario: Solar panels scale bounding box by deploy fraction
+- **WHEN** a solar panel part has `deploy_fraction` between 0.0 (retracted) and 1.0 (deployed)
+- **THEN** its hitbox half-extents SHALL be multiplied by `deploy_fraction` before computing the bounding box contribution
+- **SO THAT** retracted panels do not inflate the drag cross-section
+
 ### Requirement: Vessel half-width in physics data
 
 `VesselPhysicsData` SHALL include a `vessel_half_width: f64` field, populated from `FlightVessel::bounding_half_width()`.
