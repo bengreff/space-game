@@ -121,6 +121,14 @@ def bell_w(frac, throat, exit_w, exp=1.8):
     return throat + (exit_w - throat) * (1 - (1 - frac) ** exp)
 
 
+def nearest_odd(x):
+    """Round a float to the nearest odd integer."""
+    n = round(x)
+    if n % 2 == 0:
+        return n + 1 if x >= n else n - 1
+    return n
+
+
 def draw_bolts(d, cx, y, w, h, n, r=3):
     """Draw a row of bolts across a horizontal span."""
     hw = int(w / 2)
@@ -182,7 +190,8 @@ def generate_ntr_engine(size="small"):
     # --- MOUNT RING ---
     mount_h = max(8, int(body_h * 0.025))
     ring_w = body_w * 0.6
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- REACTOR SECTION (top ~40%) ---
     reactor_h = int(body_h * 0.38)
@@ -401,7 +410,8 @@ def generate_ion_engine(size="tiny_short"):
     # --- MOUNT RING ---
     mount_h = max(6, int(body_h * 0.04))
     ring_w = body_w * 0.65
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- POWER CONNECTOR ---
     conn_h = max(4, int(body_h * 0.04))
@@ -531,7 +541,8 @@ def generate_hall_engine(size="tiny"):
     # --- MOUNT RING ---
     mount_h = max(6, int(body_h * 0.04))
     ring_w = body_w * 0.55
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- POWER/PROPELLANT HEADER ---
     header_h = max(4, int(body_h * 0.06))
@@ -678,7 +689,8 @@ def generate_mpd_engine(size="small"):
     # --- MOUNT RING ---
     mount_h = max(8, int(body_h * 0.03))
     ring_w = body_w * 0.55
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- POWER CONDITIONING ---
     pcu_h = max(6, int(body_h * 0.06))
@@ -841,7 +853,8 @@ def generate_small_reactor(size="tiny"):
     # --- MOUNT RING ---
     mount_h = max(6, int(body_h * 0.03))
     ring_w = body_w * 0.60
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- SHADOW SHIELD (top radiation cap) ---
     shield_h = max(8, int(body_h * 0.08))
@@ -941,8 +954,7 @@ def generate_small_reactor(size="tiny"):
     y += hex_h
 
     # --- BOTTOM MOUNT ---
-    bot_ring_w = body_w * 0.65
-    draw_mount_ring(d, cx, y, bot_ring_w, bot_mount_h, scale=scale)
+    draw_mount_ring(d, cx, y, mount_w, bot_mount_h, scale=scale)
 
     return img
 

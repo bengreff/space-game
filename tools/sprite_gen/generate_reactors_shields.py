@@ -98,6 +98,14 @@ def lerp_color(c1, c2, t):
 def clamp_color(c):
     return tuple(max(0, min(255, v)) for v in c)
 
+def nearest_odd(x):
+    """Round a float to the nearest odd integer."""
+    n = round(x)
+    if n % 2 == 0:
+        return n + 1 if x >= n else n - 1
+    return n
+
+
 def draw_bolts(d, cx, y, w, h, n, r=3):
     hw = int(w / 2)
     for i in range(n):
@@ -155,7 +163,8 @@ def generate_fission_reactor(size="small"):
     # --- MOUNT RING ---
     mount_h = max(10, int(body_h * 0.03))
     ring_w = body_w * 0.6
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- SHADOW SHIELD (radiation shielding cap) ---
     shield_h = int(body_h * 0.10)
@@ -268,8 +277,7 @@ def generate_fission_reactor(size="small"):
 
     # --- BOTTOM MOUNT ---
     bot_mount_h = max(10, int(body_h * 0.03))
-    bot_ring_w = body_w * 0.7
-    draw_mount_ring(d, cx, y, bot_ring_w, bot_mount_h, scale=scale)
+    draw_mount_ring(d, cx, y, mount_w, bot_mount_h, scale=scale)
 
     return img
 
@@ -299,7 +307,8 @@ def generate_fusion_reactor(size="small"):
     # --- MOUNT RING ---
     mount_h = max(10, int(body_h * 0.03))
     ring_w = body_w * 0.5
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- FUEL INJECTOR HEADER ---
     header_h = int(body_h * 0.06)
@@ -435,8 +444,7 @@ def generate_fusion_reactor(size="small"):
 
     # --- BOTTOM MOUNT ---
     bot_mount_h = max(10, int(body_h * 0.03))
-    bot_ring_w = body_w * 0.55
-    draw_mount_ring(d, cx, y, bot_ring_w, bot_mount_h, scale=scale)
+    draw_mount_ring(d, cx, y, mount_w, bot_mount_h, scale=scale)
 
     return img
 
@@ -466,7 +474,8 @@ def generate_am_reactor(size="small"):
     # --- MOUNT RING ---
     mount_h = max(10, int(body_h * 0.025))
     ring_w = body_w * 0.45
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- PENNING TRAP MODULE (antimatter storage) ---
     trap_h = int(body_h * 0.18)
@@ -624,8 +633,7 @@ def generate_am_reactor(size="small"):
 
     # --- BOTTOM MOUNT ---
     bot_mount_h = max(10, int(body_h * 0.025))
-    bot_ring_w = body_w * 0.5
-    draw_mount_ring(d, cx, y, bot_ring_w, bot_mount_h, scale=scale)
+    draw_mount_ring(d, cx, y, mount_w, bot_mount_h, scale=scale)
 
     return img
 
@@ -661,7 +669,7 @@ def generate_whipple_shield(size="small"):
 
     # --- MOUNTING BRACKET ---
     bracket_h = max(8, int(body_h * 0.06))
-    bracket_w = body_w * 0.4
+    bracket_w = nearest_odd(body_w * 0.4 / PX) * PX
     rect(d, cx, y, bracket_w, bracket_h, STEEL_MID, outline=STEEL_DARK)
     draw_bolts(d, cx, y, bracket_w, bracket_h,
                max(2, int(bracket_w / (15 * scale))), r=max(2, int(3 * scale)))
@@ -801,7 +809,8 @@ def generate_fres_shield(size="small"):
     # --- MOUNT RING ---
     mount_h = max(10, int(body_h * 0.02))
     ring_w = emitter_w + 20
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- POWER BUS CONNECTOR ---
     bus_h = int(body_h * 0.03)
@@ -949,21 +958,18 @@ def generate_fres_shield(size="small"):
     # --- BOTTOM MOUNT ---
     bot_h = max(10, int(body_h * 0.02))
     bot_w = coil_w + 10
-    draw_mount_ring(d, cx, y, bot_w, bot_h, scale=scale)
+    draw_mount_ring(d, cx, y, mount_w, bot_h, scale=scale)
 
     return img
 
 
 def generate_geodesic_deflector(size="small"):
-    """Geodesic Deflector: exotic-matter toroidal ring with stadium cross-section.
+    """Geodesic Deflector: single horizontal stadium-shaped exotic matter vessel.
 
-    A toroidal containment vessel holding stabilized exotic matter
-    (negative energy density) that generates controlled spacetime
-    curvature. The tube cross-section is stadium-shaped (rectangle
-    with semicircular ends) for clear visibility in 2D. Structural
-    struts wrap around the torus contour. Metric stabilization coils
-    wrap the torus surface. Gravimetric sensor pods monitor curvature.
-    Power conditioning unit at top.
+    A containment vessel holding stabilized exotic matter (negative energy
+    density) that generates controlled spacetime curvature. Single horizontal
+    stadium shape (rectangle with semicircular left/right caps). Structural
+    scaffolding wraps around the perimeter. Teal glow line across the center.
     """
     sizes = {
         "small":  (9, 9),
@@ -982,25 +988,11 @@ def generate_geodesic_deflector(size="small"):
     scale = body_w / 400.0
     y = PAD
 
-    # Stadium torus geometry
-    torus_w = body_w * 0.92
-    thw = int(torus_w / 2)
-    straight_frac = 0.4  # fraction of height with straight sides
-
-    def stadium_cross_frac(tv):
-        """Stadium cross-section: flat sides in middle, semicircular ends."""
-        sh = straight_frac / 2
-        if abs(tv) <= sh:
-            return 1.0
-        else:
-            t_rem = (abs(tv) - sh) / (1.0 - sh)
-            t_rem = min(t_rem, 1.0)
-            return math.sqrt(max(0, 1.0 - t_rem * t_rem))
-
     # --- MOUNT RING ---
     mount_h = max(10, int(body_h * 0.02))
     ring_w = body_w * 0.3
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- POWER CONDITIONING UNIT ---
     pcu_h = int(body_h * 0.06)
@@ -1017,20 +1009,32 @@ def generate_geodesic_deflector(size="small"):
     y += pcu_h
     pcu_y_bottom = y
 
-    # Torus vertical position — fill remaining space minus gaps and bottom mount
+    # --- Horizontal stadium geometry ---
     gap_h = int(body_h * 0.03)
-    bot_mount_h_geo = max(10, int(body_h * 0.02))
-    torus_h = body_h - (y - PAD) - gap_h * 2 - bot_mount_h_geo
-    torus_cross_r = max(25, int(min(torus_h * 0.30, thw * 0.45)))
-    torus_major_r = thw - torus_cross_r
-    torus_y_start = y + gap_h
-    torus_y_center = torus_y_start + torus_h // 2
-
-    # Bottom mount position
+    bot_mount_h = max(10, int(body_h * 0.02))
     bot_mount_w = body_w * 0.35
-    bot_y = torus_y_start + torus_h + gap_h
 
-    # --- WRAPPING STRUCTURAL STRUTS (drawn behind torus) ---
+    # Stadium fills available vertical space, capped for horizontal aspect ratio
+    stadium_y_start = y + gap_h
+    bot_y = body_h + PAD - bot_mount_h
+    available_h = bot_y - gap_h - stadium_y_start
+    stadium_w = int(body_w * 0.92)
+    stadium_h = min(available_h, int(stadium_w * 0.65))
+    # Re-center vertically in the available space
+    stadium_y_start += (available_h - stadium_h) // 2
+    stadium_cy = stadium_y_start + stadium_h // 2
+    R = stadium_h // 2  # radius of semicircular caps
+    straight_w = max(0, stadium_w - 2 * R)  # flat middle width
+
+    def stadium_hw(d_from_center):
+        """Half-width of the stadium at vertical distance d from center."""
+        ad = abs(d_from_center)
+        if ad >= R:
+            return 0
+        cap = math.sqrt(max(0, R * R - ad * ad))
+        return int(straight_w / 2 + cap)
+
+    # --- SCAFFOLDING STRUTS (drawn behind stadium) ---
     strut_w = max(3, int(5 * scale))
     standoff = max(4, int(8 * scale))
     n_struts = max(5, int(GW * 0.7))
@@ -1038,33 +1042,27 @@ def generate_geodesic_deflector(size="small"):
     for si in range(n_struts):
         frac = si / max(1, n_struts - 1)
 
-        # Start at PCU bottom, end at bottom mount
-        top_x = cx - int((pcu_w + 10) / 2) + int(frac * (pcu_w + 10))
-        bot_x = cx - int(bot_mount_w / 2) + int(frac * bot_mount_w)
+        top_spread = stadium_w + standoff * 4
+        bot_spread = stadium_w + standoff * 4
+        top_x = cx - int(top_spread / 2) + int(frac * top_spread)
+        bot_x = cx - int(bot_spread / 2) + int(frac * bot_spread)
 
-        # Build polyline wrapping around the stadium torus silhouette
+        # Polyline wrapping around the stadium silhouette
         points = [(top_x, pcu_y_bottom)]
 
-        n_samples = max(20, torus_h // 8)
+        n_samples = max(20, stadium_h // 6)
         for sample in range(n_samples + 1):
-            row = int(sample / n_samples * (torus_h - 1))
-            t_vert = (row - torus_h / 2) / max(1, torus_h / 2)
-            cf = stadium_cross_frac(t_vert)
-            cw = torus_cross_r * cf
+            d_fc = -R + (sample / n_samples) * 2 * R
+            py = stadium_cy + int(d_fc)
+            hw = stadium_hw(d_fc) + standoff
 
-            py = torus_y_start + row
-
-            # Outer silhouette at this row
-            sil_left = cx - (torus_major_r + cw + standoff)
-            sil_right = cx + (torus_major_r + cw + standoff)
-            sil_w = sil_right - sil_left
-
-            sx = sil_left + int(frac * sil_w)
+            sil_left = cx - hw
+            sil_right = cx + hw
+            sx = sil_left + int(frac * (sil_right - sil_left))
             points.append((sx, py))
 
         points.append((bot_x, bot_y))
 
-        # Draw polyline
         for i in range(len(points) - 1):
             d.line([points[i], points[i + 1]],
                    fill=STEEL_MID, width=strut_w)
@@ -1073,151 +1071,114 @@ def generate_geodesic_deflector(size="small"):
                 d.line([points[i], points[i + 1]],
                        fill=STEEL_LIGHT, width=1)
 
-    # Horizontal cross braces on the wrapping struts
+    # Horizontal cross braces on scaffolding
     for cfrac in [0.15, 0.5, 0.85]:
-        row = int(cfrac * (torus_h - 1))
-        t_vert = (row - torus_h / 2) / max(1, torus_h / 2)
-        cf = stadium_cross_frac(t_vert)
-        cw = torus_cross_r * cf
-        cy_b = torus_y_start + row
-        sil_hw = int(torus_major_r + cw + standoff)
-        d.line([(cx - sil_hw, cy_b), (cx + sil_hw, cy_b)],
+        d_fc = -R + cfrac * 2 * R
+        hw = stadium_hw(d_fc) + standoff
+        cy_b = stadium_cy + int(d_fc)
+        d.line([(cx - hw, cy_b), (cx + hw, cy_b)],
                fill=STEEL_LIGHT, width=max(2, int(3 * scale)))
 
-    # --- EXOTIC MATTER CONTAINMENT TORUS (stadium cross-section) ---
-    y = torus_y_start
+    # --- STADIUM BODY (exotic matter vessel) ---
     n_stab_coils = {"small": 6, "medium": 8, "large": 12}[size]
 
-    for row in range(torus_h):
-        t_vert = (row - torus_h / 2) / max(1, torus_h / 2)
-        if abs(t_vert) > 0.99:
-            continue
-        cross_frac = stadium_cross_frac(t_vert)
-        cross_w = int(torus_cross_r * cross_frac)
+    for row in range(stadium_h):
+        d_from_center = row - stadium_h // 2
+        py = stadium_y_start + row
 
-        if cross_w < 2:
+        hw = stadium_hw(d_from_center)
+        if hw < 2:
             continue
 
-        py = y + row
+        t_vert = d_from_center / max(1, R)
+        tv_clamped = max(-1.0, min(1.0, t_vert))
 
-        # Coil bands: evenly spaced by vertical position
+        # Top-down lighting (brighter at top)
+        vert_light = 0.55 + 0.35 * (1.0 - (tv_clamped + 1) / 2)
+        # Vertical tube curvature (round cross-section)
+        tube_round = 0.35 + 0.50 * math.sqrt(max(0, 1.0 - tv_clamped * tv_clamped))
+
+        # Coil bands
         coil_spacing = 2.0 / max(1, n_stab_coils)
-        coil_phase = ((t_vert + 1.0) % coil_spacing) / coil_spacing
+        coil_phase = ((tv_clamped + 1.0) % coil_spacing) / coil_spacing
         on_coil = coil_phase < 0.12
 
-        # Draw both limbs of the torus
-        for s in [-1, 1]:
-            limb_cx = cx + s * torus_major_r
-            lx0 = limb_cx - cross_w
+        x_left = cx - hw
+        x_right = cx + hw
+        draw_w = x_right - x_left
 
-            vert_shade = 0.55 + 0.35 * (1.0 - (t_vert + 1) / 2)
+        for col in range(draw_w):
+            px = x_left + col
+            dx = px - cx
 
-            for col in range(cross_w * 2):
-                px = lx0 + col
-                col_t = col / max(1, cross_w * 2 - 1)
-                cross_shade = 0.35 + 0.50 * math.sin(col_t * math.pi)
-                shade = vert_shade * cross_shade
+            # Horizontal shading: flat in straight section, curved in caps
+            if abs(dx) <= straight_w / 2:
+                shade = vert_light * tube_round
+            else:
+                cap_cx = cx + (straight_w / 2 if dx > 0 else -straight_w / 2)
+                cap_dx = min(1.0, abs(px - cap_cx) / max(1, R))
+                cap_shade = 0.5 + 0.5 * math.sqrt(max(0, 1.0 - cap_dx * cap_dx))
+                shade = vert_light * tube_round * cap_shade
 
-                if on_coil:
-                    r = int(COIL_DARK[0] + (COIL_LIGHT[0] - COIL_DARK[0]) * shade)
-                    g = int(COIL_DARK[1] + (COIL_LIGHT[1] - COIL_DARK[1]) * shade)
-                    b = int(COIL_DARK[2] + (COIL_LIGHT[2] - COIL_DARK[2]) * shade)
-                else:
-                    r = int(EXOTIC_DARK[0] + (EXOTIC_LIGHT[0] - EXOTIC_DARK[0]) * shade)
-                    g = int(EXOTIC_DARK[1] + (EXOTIC_LIGHT[1] - EXOTIC_DARK[1]) * shade)
-                    b = int(EXOTIC_DARK[2] + (EXOTIC_LIGHT[2] - EXOTIC_DARK[2]) * shade)
+            if on_coil:
+                r = int(COIL_DARK[0] + (COIL_LIGHT[0] - COIL_DARK[0]) * shade)
+                g = int(COIL_DARK[1] + (COIL_LIGHT[1] - COIL_DARK[1]) * shade)
+                b = int(COIL_DARK[2] + (COIL_LIGHT[2] - COIL_DARK[2]) * shade)
+            else:
+                r = int(EXOTIC_DARK[0] + (EXOTIC_LIGHT[0] - EXOTIC_DARK[0]) * shade)
+                g = int(EXOTIC_DARK[1] + (EXOTIC_LIGHT[1] - EXOTIC_DARK[1]) * shade)
+                b = int(EXOTIC_DARK[2] + (EXOTIC_LIGHT[2] - EXOTIC_DARK[2]) * shade)
 
-                d.point((px, py), fill=clamp_color((r, g, b)))
+            d.point((px, py), fill=clamp_color((r, g, b)))
 
-        # Front of the torus (connecting arc between limbs)
-        inner_left = cx - torus_major_r + cross_w
-        inner_right = cx + torus_major_r - cross_w
-        front_visibility = max(0, cross_frac - 0.7) / 0.3 if cross_frac > 0.7 else 0
-        if front_visibility > 0 and inner_right > inner_left:
-            front_shade = 0.5 + 0.3 * front_visibility
-            fr = int(EXOTIC_DARK[0] + (EXOTIC_MID[0] - EXOTIC_DARK[0]) * front_shade)
-            fg = int(EXOTIC_DARK[1] + (EXOTIC_MID[1] - EXOTIC_DARK[1]) * front_shade)
-            fb = int(EXOTIC_DARK[2] + (EXOTIC_MID[2] - EXOTIC_DARK[2]) * front_shade)
-            d.line([(inner_left, py), (inner_right, py)],
-                   fill=clamp_color((fr, fg, fb)), width=1)
+    # --- CENTER GLOW LINE ---
+    glow_hw = stadium_hw(0)
+    glow_w = max(2, int(3 * scale))
+    d.line([(cx - glow_hw + 4, stadium_cy), (cx + glow_hw - 4, stadium_cy)],
+           fill=EXOTIC_GLOW, width=glow_w)
+    d.line([(cx - glow_hw + 6, stadium_cy - 1),
+            (cx + glow_hw - 6, stadium_cy - 1)],
+           fill=EXOTIC_HIGHLIGHT, width=1)
+    d.line([(cx - glow_hw + 6, stadium_cy + 1),
+            (cx + glow_hw - 6, stadium_cy + 1)],
+           fill=EXOTIC_HIGHLIGHT, width=1)
 
-        # Back of torus (far side, through the hole)
-        back_visibility = max(0, cross_frac - 0.85) / 0.15 if cross_frac > 0.85 else 0
-        if back_visibility > 0 and inner_right > inner_left:
-            br = int(EXOTIC_DARK[0] * 0.6)
-            bg = int(EXOTIC_DARK[1] * 0.6)
-            bb = int(EXOTIC_DARK[2] * 0.6)
-            d.line([(inner_left + 4, py), (inner_right - 4, py)],
-                   fill=clamp_color((br, bg, bb)), width=1)
-
-    # Cherenkov-like glow highlights — follow stadium contour
-    for s in [-1, 1]:
-        limb_cx = cx + s * torus_major_r
-        # Highlight along the front surface of each limb
-        n_glow = max(20, torus_h // 4)
-        for gi in range(n_glow):
-            gfrac = gi / max(1, n_glow - 1)
-            gt_vert = -1.0 + 2.0 * gfrac
-            gcf = stadium_cross_frac(gt_vert)
-            if gcf < 0.3:
-                continue
-            gx = limb_cx + int(torus_cross_r * 0.65 * gcf)
-            gy = torus_y_start + int(gfrac * (torus_h - 1))
+    # Cherenkov-like glow highlight along the top edge
+    for col in range(0, stadium_w, max(2, int(3 * scale))):
+        gx = cx - stadium_w // 2 + col
+        d_fc = -R + int(R * 0.15)
+        hw_at = stadium_hw(d_fc)
+        if abs(gx - cx) <= hw_at:
+            gy = stadium_cy + d_fc
             if 0 <= gx < img_w and 0 <= gy < img_h:
                 d.point((gx, gy), fill=EXOTIC_GLOW)
-                if gcf > 0.8:
-                    if 0 <= gx + 1 < img_w:
-                        d.point((gx + 1, gy), fill=EXOTIC_HIGHLIGHT)
-                    if 0 <= gx - 1:
-                        d.point((gx - 1, gy), fill=EXOTIC_HIGHLIGHT)
 
-    # Gravimetric sensor pods
+    # Gravimetric sensor pods around the perimeter
     sensor_r = max(3, int(5 * scale))
     n_sensors = {"small": 4, "medium": 6, "large": 8}[size]
     for i in range(n_sensors):
         angle = (i / n_sensors) * math.pi * 2
         if math.cos(angle) < -0.3:
             continue
-        # Follow stadium contour for sensor placement
-        t_v = -math.cos(angle)
-        scf = stadium_cross_frac(t_v)
-        sx = cx + int((torus_major_r + torus_cross_r * scf + sensor_r + 3) *
-                      math.sin(angle))
-        sy = torus_y_center + int((torus_h / 2 * abs(t_v) + sensor_r + 5) *
-                                   (1 if t_v > 0 else -1))
-        # Clamp to torus vertical range
-        sy = max(torus_y_start, min(torus_y_start + torus_h, sy))
+        d_fc = -math.cos(angle) * R
+        hw_at = stadium_hw(d_fc)
+        sx = cx + int(math.sin(angle) * (hw_at + sensor_r + 3))
+        sy = stadium_cy + int(d_fc)
         if 0 <= sx - sensor_r and sx + sensor_r < img_w and \
            0 <= sy - sensor_r and sy + sensor_r < img_h:
             circ(d, sx, sy, sensor_r + 1, fill=STEEL_MID, outline=STEEL_DARK)
             circ(d, sx, sy, max(1, sensor_r - 1), fill=EXOTIC_LIGHT)
 
-    # Exotic matter injector ports on the torus
+    # Exotic matter injector ports at left and right tips
     port_r = max(3, int(4 * scale))
     for s in [-1, 1]:
-        px = cx + s * (torus_major_r + torus_cross_r - port_r)
-        py_port = torus_y_center
-        circ(d, px, py_port, port_r + 2, fill=STEEL_MID)
-        circ(d, px, py_port, port_r, fill=STEEL_DARK)
-        circ(d, px, py_port, max(1, port_r - 2), fill=EXOTIC_MID)
-
-    # Central hole glow
-    hole_left = cx - torus_major_r + torus_cross_r + 4
-    hole_right = cx + torus_major_r - torus_cross_r - 4
-    if hole_right > hole_left:
-        glow_w = max(2, int(3 * scale))
-        d.line([(hole_left, torus_y_center), (hole_right, torus_y_center)],
-               fill=EXOTIC_GLOW, width=glow_w)
-        d.line([(hole_left + 3, torus_y_center - 1),
-                (hole_right - 3, torus_y_center - 1)],
-               fill=EXOTIC_HIGHLIGHT, width=1)
-        d.line([(hole_left + 3, torus_y_center + 1),
-                (hole_right - 3, torus_y_center + 1)],
-               fill=EXOTIC_HIGHLIGHT, width=1)
+        px = cx + s * (straight_w // 2 + R - port_r)
+        circ(d, px, stadium_cy, port_r + 2, fill=STEEL_MID)
+        circ(d, px, stadium_cy, port_r, fill=STEEL_DARK)
+        circ(d, px, stadium_cy, max(1, port_r - 2), fill=EXOTIC_MID)
 
     # --- BOTTOM MOUNT ---
-    bot_h = max(10, int(body_h * 0.02))
-    draw_mount_ring(d, cx, bot_y, bot_mount_w + 10, bot_h, scale=scale)
+    draw_mount_ring(d, cx, bot_y, mount_w, bot_mount_h, scale=scale)
 
     return img
 

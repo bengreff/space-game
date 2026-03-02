@@ -151,3 +151,12 @@ openspec/specs/game/     # Requirements specs
 - **UI**: egui 0.27 (immediate mode)
 - **Serialization**: serde + ron 0.8
 - **No game engine** — custom physics loop, wgpu rendering, egui UI
+
+## License
+
+This project uses split licensing:
+
+- **Source code** (`src/`, `tools/`, `Cargo.toml`, `build.rs`): [MIT License](LICENSE-MIT)
+- **Game assets** (`data/`, `assets/`): [All Rights Reserved](LICENSE-ASSETS)
+
+You are free to use, modify, and redistribute the source code under the MIT license. Game assets (sprites, part definitions, blueprints, textures, sounds) are proprietary and may not be redistributed or used in other projects without permission.

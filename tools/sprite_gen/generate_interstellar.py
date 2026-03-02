@@ -122,6 +122,14 @@ def lerp_color(c1, c2, t):
 def clamp_color(c):
     return tuple(max(0, min(255, v)) for v in c)
 
+def nearest_odd(x):
+    """Round a float to the nearest odd integer."""
+    n = round(x)
+    if n % 2 == 0:
+        return n + 1 if x >= n else n - 1
+    return n
+
+
 def draw_bolts(d, cx, y, w, h, n, r=3):
     """Draw a row of bolts across a horizontal span."""
     hw = int(w / 2)
@@ -419,7 +427,8 @@ def generate_orion():
     # --- MOUNT RING ---
     mount_h = max(10, int(total_h * 0.02))
     ring_w = top_w + 30
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- PAYLOAD ADAPTER (taper from mount to magazine) ---
     adapter_h = int(total_h * 0.04)
@@ -622,7 +631,8 @@ def generate_daedalus(stage=1):
     # --- MOUNT RING ---
     mount_h = max(10, int(total_h * 0.025))
     ring_w = top_w + 20
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- REACTOR HOUSING ---
     reactor_h = int(total_h * 0.18)
@@ -760,7 +770,8 @@ def generate_zpinch(variant="probe"):
     # --- MOUNT RING ---
     mount_h = max(10, int(total_h * 0.025))
     ring_w = top_w + 16
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- REACTOR/DRIVER SECTION ---
     reactor_h = int(total_h * 0.16)
@@ -883,7 +894,8 @@ def generate_amcat():
     # --- MOUNT RING ---
     mount_h = max(10, int(total_h * 0.025))
     ring_w = top_w + 20
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- PENNING TRAP MODULE ---
     trap_h = max(20, int(total_h * 0.07))
@@ -1011,7 +1023,8 @@ def generate_am_torch():
     # --- MOUNT RING ---
     mount_h = max(10, int(total_h * 0.025))
     ring_w = top_w + 16
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- ANTIMATTER FEED SYSTEM ---
     feed_h = int(total_h * 0.16)
@@ -1058,7 +1071,7 @@ def generate_am_torch():
     longeron_w = max(3, int(4 * scale))
 
     cage_hw = int(cage_w / 2)
-    n_cage_longerons = max(3, int(cage_w / (60 * scale)))
+    n_cage_longerons = 4
     for li in range(n_cage_longerons):
         pos_frac = li / max(1, n_cage_longerons - 1)
         lx = cx - cage_hw + int(pos_frac * cage_w)
@@ -1148,7 +1161,8 @@ def generate_gamma_conversion():
     # --- MOUNT RING ---
     mount_h = max(10, int(total_h * 0.025))
     ring_w = top_w + 20
-    y = draw_mount_ring(d, cx, y, ring_w, mount_h, scale=scale)
+    mount_w = nearest_odd(ring_w / PX) * PX
+    y = draw_mount_ring(d, cx, y, mount_w, mount_h, scale=scale)
 
     # --- ANNIHILATION REACTOR (compact purple dome) ---
     dome_h = int(total_h * 0.10)
