@@ -1,3 +1,37 @@
+# Save Game System
+
+## Implementation
+- [x] Phase 1: Add Serialize/Deserialize to core types (Ship, ShipState, ShipOrbit, AutopilotTarget, Orbit, FlightVessel, FlightPart, ManeuverNode, ManeuverDeltaV)
+- [x] Phase 2: Create `src/save.rs` with SaveGame/SavedVessel structs and save/load/list/restore functions
+- [x] Phase 3: Add TitleScreen game mode, TitleScreenUiState, save_name field, TitleScreenAction enum
+- [x] Phase 4: Title screen rendering and UI (render_title_screen_frame, New Game/Load Game dialogs)
+- [x] Phase 5: Update escape/quit behavior — all modes quit to title screen with save
+- [x] Phase 6: Auto-save every 5 minutes when game is loaded
+- [x] Phase 7: Full build verification and spec updates
+
+## Files Changed
+- `src/ship/mod.rs` — Serialize/Deserialize derives on Ship, ShipState, ShipOrbit, AutopilotTarget; #[serde(skip)] on cache fields
+- `src/bodies.rs` — Serialize/Deserialize on Orbit
+- `src/parts/vessel.rs` — Serialize/Deserialize on FlightVessel, FlightPart
+- `src/parts/registry.rs` — `all_blueprints()` and `merge_blueprints()` methods
+- `src/render/types.rs` — Serialize/Deserialize on ManeuverNode, ManeuverDeltaV; TitleScreenAction enum; Quit variant on MainMenuAction
+- `src/render/mod.rs` — re-export TitleScreenAction
+- `src/render/state.rs` — render_title_screen() method; "Quit" button text on all pause overlays
+- `src/save.rs` — NEW: SaveGame, SavedVessel, SaveFileInfo; save/load/list/restore functions
+- `src/lib.rs` — `pub mod save;`
+- `src/game.rs` — TitleScreen variant, TitleScreenUiState, save_name field, enter_title_screen(), reset_for_new_game()
+- `src/main.rs` — render_title_screen_frame(), save_and_quit_to_title(), auto-save timer, TitleScreen input handling
+
+## Verification
+- [x] `cargo build` — compiles clean
+- [ ] Visual test: title screen appears on launch
+- [ ] Visual test: New Game → name → Start → game menu
+- [ ] Visual test: build/launch/fly → Escape → Quit → title screen
+- [ ] Visual test: Load Game → save file → game menu with correct state
+- [ ] Visual test: auto-save creates file after 5 minutes
+
+---
+
 # Sprite-Based Part Rendering
 
 ## Implementation

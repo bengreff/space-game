@@ -14,7 +14,8 @@ use sunscatter::editor::{
 use egui;
 use sunscatter::bodies::G;
 use sunscatter::game::{Game, GameMode};
-use sunscatter::render::{RenderState, MainMenuAction, PauseAction, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, SelectedTarget, StagedPartInfo, TargetPopup, Vertex, BodyInfoData};
+use sunscatter::render::{RenderState, MainMenuAction, PauseAction, TitleScreenAction, OrbitRenderData, ShipRenderData, ShipOrbitData, ShipPartRenderData, OrbitSegmentData, SelectedTarget, StagedPartInfo, TargetPopup, Vertex, BodyInfoData};
+use sunscatter::save::SaveGame;
 use sunscatter::ship::{AutopilotTarget, ShipState, VesselPhysicsData, SHIP_SIZE, MAX_THRUST_ACCELERATION, AMBIENT_TEMPERATURE, RAILS_WARP_THRESHOLD};
 use sunscatter::parts::{default_heat_tolerance, GRID_SQUARE_SIZE};
 
@@ -35,6 +36,18 @@ const GALAXY_VIEW_THRESHOLD_M: f64 = 0.1 * 9.461e15; // 0.1 light-years in meter
 fn is_galaxy_view(camera_zoom: f32, _screen_height: u32) -> bool {
     let screen_span_m = 2.0 / (camera_zoom as f64 * SCALE);
     screen_span_m >= GALAXY_VIEW_THRESHOLD_M
+}
+
+/// Save the current game and return to the title screen
+fn save_and_quit_to_title(game: &mut Game, render_state: &mut RenderState) {
+    if let Some(ref name) = game.save_name {
+        let nodes = render_state.maneuver_nodes.clone();
+        let save = SaveGame::from_game(game, &nodes, name);
+        if let Err(e) = save.write_to_file() {
+            log::error!("Failed to save game: {}", e);
+        }
+    }
+    game.enter_title_screen();
 }
 
 fn main() {
@@ -73,6 +86,14 @@ fn main() {
     let mut last_click_time: Option<Instant> = None;
     let mut last_click_pos: [f32; 2] = [0.0, 0.0];
 
+    // Auto-save timer (every 5 minutes)
+    let mut last_autosave = Instant::now();
+    const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(300);
+
+    // Cached quicksave list for pause overlay
+    let mut cached_quicksaves: Vec<sunscatter::save::QuicksaveInfo> = Vec::new();
+    let mut quicksaves_dirty = true;
+
     // Initial camera: focus on Sun, zoomed out to see all planets
     {
         let sun_pos = game.solar_system.body_position(1);
@@ -92,6 +113,16 @@ fn main() {
 
                     match event {
                         WindowEvent::CloseRequested => {
+                            // Save before closing
+                            if let Some(ref name) = game.save_name {
+                                let nodes = render_state.maneuver_nodes.clone();
+                                let save = SaveGame::from_game(&game, &nodes, name);
+                                if let Err(e) = save.write_to_file() {
+                                    log::error!("Failed to save on close: {}", e);
+                                } else {
+                                    log::info!("Saved on close");
+                                }
+                            }
                             elwt.exit();
                         }
                         WindowEvent::Resized(physical_size) => {
@@ -110,6 +141,13 @@ fn main() {
                             }
 
                             match game.mode {
+                                GameMode::TitleScreen => {
+                                    render_title_screen_frame(
+                                        &mut game,
+                                        &mut render_state,
+                                        elwt,
+                                    );
+                                }
                                 GameMode::MainMenu => {
                                     render_main_menu_frame(
                                         &mut game,
@@ -118,9 +156,18 @@ fn main() {
                                     );
                                 }
                                 GameMode::Flight => {
+                                    // Refresh quicksave cache when paused and dirty
+                                    if game.paused && quicksaves_dirty {
+                                        if let Some(ref name) = game.save_name {
+                                            cached_quicksaves = SaveGame::list_quicksaves(name);
+                                        }
+                                        quicksaves_dirty = false;
+                                    }
                                     render_flight_frame(
                                         &mut game,
                                         &mut render_state,
+                                        &mut cached_quicksaves,
+                                        &mut quicksaves_dirty,
                                     );
                                 }
                                 GameMode::Editor => {
@@ -137,11 +184,23 @@ fn main() {
                                     );
                                 }
                             }
+
+                            // Auto-save check
+                            if game.save_name.is_some() && last_autosave.elapsed() >= AUTOSAVE_INTERVAL {
+                                let nodes = render_state.maneuver_nodes.clone();
+                                let save = SaveGame::from_game(&game, &nodes, game.save_name.as_ref().unwrap());
+                                if let Err(e) = save.write_to_file() {
+                                    log::error!("Auto-save failed: {}", e);
+                                } else {
+                                    log::info!("Auto-saved");
+                                }
+                                last_autosave = Instant::now();
+                            }
                         }
 
                         WindowEvent::MouseInput { state, button, .. } => {
                             match game.mode {
-                                GameMode::MainMenu => {
+                                GameMode::TitleScreen | GameMode::MainMenu => {
                                     // egui-only handling (buttons in menu)
                                 }
                                 GameMode::Flight => {
@@ -183,7 +242,7 @@ fn main() {
                             let y = position.y as f32;
 
                             match game.mode {
-                                GameMode::MainMenu => {
+                                GameMode::TitleScreen | GameMode::MainMenu => {
                                     render_state.camera.last_mouse_pos = [x, y];
                                 }
                                 GameMode::Flight => {
@@ -223,8 +282,8 @@ fn main() {
                                     GameMode::Flight | GameMode::TrackingStation => {
                                         render_state.camera.zoom_by(zoom_factor);
                                     }
-                                    GameMode::MainMenu => {
-                                        // Camera is locked at fixed zoom in main menu
+                                    GameMode::TitleScreen | GameMode::MainMenu => {
+                                        // Camera is locked at fixed zoom
                                     }
                                     GameMode::Editor => {
                                         game.editor.zoom_camera(zoom_factor);
@@ -254,11 +313,18 @@ fn main() {
                                 && (game.editor.selected_part_def.is_some() || game.editor.selected_placed_part.is_some())
                             {
                                 game.editor.deselect();
+                            } else if escape_pressed && render_state.show_quicksave_list {
+                                render_state.show_quicksave_list = false;
                             } else if escape_pressed {
                                 game.toggle_pause();
+                                if !game.paused {
+                                    render_state.show_quicksave_list = false;
+                                } else {
+                                    quicksaves_dirty = true;
+                                }
                             } else if !game.paused {
                                 match game.mode {
-                                    GameMode::MainMenu | GameMode::TrackingStation => {
+                                    GameMode::TitleScreen | GameMode::MainMenu | GameMode::TrackingStation => {
                                         // No keyboard shortcuts in these modes
                                     }
                                     GameMode::Flight => {
@@ -297,6 +363,8 @@ fn main() {
 fn render_flight_frame(
     game: &mut Game,
     render_state: &mut RenderState,
+    cached_quicksaves: &mut Vec<sunscatter::save::QuicksaveInfo>,
+    quicksaves_dirty: &mut bool,
 ) {
     let dt = 1.0 / 60.0; // Approximate for now, actual dt passed separately
 
@@ -1802,7 +1870,7 @@ fn render_flight_frame(
     };
 
     let pre_render_warp_index = game.warp_index;
-    match render_state.render(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, can_exit_flight, can_recover) {
+    match render_state.render(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, can_exit_flight, can_recover, cached_quicksaves) {
         Ok((new_warp_index, pause_action)) => {
             game.warp_index = new_warp_index;
             // If user manually changed warp (clicked a button), cancel auto-warp
@@ -1822,6 +1890,30 @@ fn render_flight_frame(
                     game.flight.vessel = None;
                     log::info!("Recovered vessel: {} (id={})", game.flight.active_vessel_name, game.flight.active_vessel_id);
                     game.enter_main_menu();
+                }
+                PauseAction::Quicksave => {
+                    if let Some(ref name) = game.save_name {
+                        let nodes = render_state.maneuver_nodes.clone();
+                        let save = SaveGame::from_game(game, &nodes, name);
+                        match save.write_quicksave() {
+                            Ok(index) => log::info!("Quicksaved #{}", index),
+                            Err(e) => log::error!("Quicksave failed: {}", e),
+                        }
+                        *quicksaves_dirty = true;
+                    }
+                }
+                PauseAction::LoadQuicksave(filename) => {
+                    if let Some(ref name) = game.save_name {
+                        match SaveGame::load_quicksave(name, &filename) {
+                            Ok(save) => {
+                                let active_nodes = save.restore_to_game(game);
+                                render_state.swap_maneuver_nodes(active_nodes);
+                                game.paused = false;
+                                render_state.show_quicksave_list = false;
+                            }
+                            Err(e) => log::error!("Failed to load quicksave: {}", e),
+                        }
+                    }
                 }
                 PauseAction::Resume | PauseAction::None => {}
             }
@@ -2148,8 +2240,11 @@ fn render_editor_frame(
 
     // Handle pause action
     match editor_pause_action {
-        PauseAction::MainMenu => game.enter_main_menu(),
-        PauseAction::Resume | PauseAction::None | PauseAction::RecoverVessel => {}
+        PauseAction::MainMenu => {
+            game.enter_main_menu();
+        }
+        PauseAction::Resume | PauseAction::None | PauseAction::RecoverVessel
+        | PauseAction::Quicksave | PauseAction::LoadQuicksave(_) => {}
     }
 
     // Process any pending part deletions
@@ -2407,12 +2502,12 @@ fn build_tracking_vessel_data(
 }
 
 /// Render a main menu frame
-fn render_main_menu_frame(
+fn render_title_screen_frame(
     game: &mut Game,
     render_state: &mut RenderState,
-    _elwt: &winit::event_loop::EventLoopWindowTarget<()>,
+    elwt: &winit::event_loop::EventLoopWindowTarget<()>,
 ) {
-    // Always keep camera focused on the Sun at a fixed zoom
+    // Static camera on Sun — no time advancement
     let sun_pos = game.solar_system.body_position(1);
     render_state.camera.position[0] = sun_pos[0] * SCALE * BODY_SCALE;
     render_state.camera.position[1] = sun_pos[1] * SCALE * BODY_SCALE;
@@ -2420,6 +2515,186 @@ fn render_main_menu_frame(
     render_state.camera.ship_offset = [0.0, 0.0];
     render_state.camera.zoom = 0.002;
 
+    // Generate geometry for visual background only (no simulation update)
+    let scaled_positions = compute_scaled_positions(game);
+    let bodies = build_body_data(game, &scaled_positions, false);
+    let orbits = build_orbit_data(game, &scaled_positions, render_state);
+    render_state.update_tracking(&scaled_positions, SCALE);
+    render_state.update_bodies_orbits_and_ship(&bodies, &orbits, None, SCALE, None);
+
+    let paused = game.paused;
+    let mut show_new_game = game.title_screen.show_new_game;
+    let mut show_load_game = game.title_screen.show_load_game;
+    let mut new_game_name = game.title_screen.new_game_name.clone();
+    let save_list = if show_load_game {
+        SaveGame::list_saves()
+    } else {
+        Vec::new()
+    };
+
+    match render_state.render_title_screen(|ctx| {
+        let mut action = TitleScreenAction::None;
+
+        if paused {
+            // Quit confirmation overlay
+            egui::Area::new(egui::Id::new("quit_overlay"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180))
+                        .inner_margin(egui::Margin::same(40.0))
+                        .rounding(egui::Rounding::same(8.0))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.heading(egui::RichText::new("Quit Game?").size(32.0).color(egui::Color32::WHITE));
+                                ui.add_space(20.0);
+                                if ui.button(egui::RichText::new("Quit").size(18.0)).clicked() {
+                                    action = TitleScreenAction::QuitGame;
+                                }
+                            });
+                        });
+                });
+        } else if show_new_game {
+            // New game dialog
+            egui::Area::new(egui::Id::new("new_game_dialog"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 200))
+                        .inner_margin(egui::Margin::same(40.0))
+                        .rounding(egui::Rounding::same(8.0))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.heading(egui::RichText::new("New Game").size(28.0).color(egui::Color32::WHITE));
+                                ui.add_space(20.0);
+                                ui.label(egui::RichText::new("Save name:").color(egui::Color32::LIGHT_GRAY));
+                                ui.add_space(5.0);
+                                let response = ui.text_edit_singleline(&mut new_game_name);
+                                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !new_game_name.trim().is_empty() {
+                                    action = TitleScreenAction::NewGame(new_game_name.trim().to_string());
+                                }
+                                ui.add_space(15.0);
+                                ui.horizontal(|ui| {
+                                    if ui.button(egui::RichText::new("Start").size(18.0)).clicked() && !new_game_name.trim().is_empty() {
+                                        action = TitleScreenAction::NewGame(new_game_name.trim().to_string());
+                                    }
+                                    ui.add_space(10.0);
+                                    if ui.button(egui::RichText::new("Back").size(18.0)).clicked() {
+                                        show_new_game = false;
+                                    }
+                                });
+                            });
+                        });
+                });
+        } else if show_load_game {
+            // Load game dialog
+            egui::Area::new(egui::Id::new("load_game_dialog"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 200))
+                        .inner_margin(egui::Margin::same(40.0))
+                        .rounding(egui::Rounding::same(8.0))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.heading(egui::RichText::new("Load Game").size(28.0).color(egui::Color32::WHITE));
+                                ui.add_space(20.0);
+                                if save_list.is_empty() {
+                                    ui.label(egui::RichText::new("No saves found").color(egui::Color32::GRAY));
+                                } else {
+                                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                                        for save in &save_list {
+                                            let label = format!(
+                                                "{} — {} vessels — {}",
+                                                save.name,
+                                                save.vessel_count,
+                                                sunscatter::game::format_date(save.simulation_time),
+                                            );
+                                            if ui.button(egui::RichText::new(&label).size(16.0)).clicked() {
+                                                action = TitleScreenAction::LoadGame(save.save_id.clone());
+                                            }
+                                        }
+                                    });
+                                }
+                                ui.add_space(15.0);
+                                if ui.button(egui::RichText::new("Back").size(18.0)).clicked() {
+                                    show_load_game = false;
+                                }
+                            });
+                        });
+                });
+        } else {
+            // Main title screen
+            egui::Area::new(egui::Id::new("title_screen"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180))
+                        .inner_margin(egui::Margin::same(40.0))
+                        .rounding(egui::Rounding::same(8.0))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.heading(egui::RichText::new("Sunscatter").size(48.0).color(egui::Color32::WHITE));
+                                ui.add_space(30.0);
+                                if ui.button(egui::RichText::new("New Game").size(20.0)).clicked() {
+                                    new_game_name = "default".to_string();
+                                    show_new_game = true;
+                                }
+                                ui.add_space(10.0);
+                                if ui.button(egui::RichText::new("Load Game").size(20.0)).clicked() {
+                                    show_load_game = true;
+                                }
+                            });
+                        });
+                });
+        }
+
+        action
+    }) {
+        Ok(title_action) => {
+            match &title_action {
+                TitleScreenAction::NewGame(name) => {
+                    game.reset_for_new_game(name.clone());
+                    return;
+                }
+                TitleScreenAction::LoadGame(save_id) => {
+                    match SaveGame::load_from_file(save_id) {
+                        Ok(save) => {
+                            let save_name = save.name.clone();
+                            let _active_nodes = save.restore_to_game(game);
+                            game.save_name = Some(save_name);
+                            game.mode = GameMode::MainMenu;
+                            game.paused = false;
+                        }
+                        Err(e) => {
+                            log::error!("Failed to load save: {}", e);
+                        }
+                    }
+                    return;
+                }
+                TitleScreenAction::QuitGame => {
+                    elwt.exit();
+                }
+                TitleScreenAction::None => {}
+            }
+
+            // Sync title_screen UI state back
+            game.title_screen.show_new_game = show_new_game;
+            game.title_screen.show_load_game = show_load_game;
+            game.title_screen.new_game_name = new_game_name;
+        }
+        Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
+        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(e) => eprintln!("Title screen render error: {:?}", e),
+    }
+}
+
+fn render_main_menu_frame(
+    game: &mut Game,
+    render_state: &mut RenderState,
+    _elwt: &winit::event_loop::EventLoopWindowTarget<()>,
+) {
     if !game.paused {
         let dt = 1.0 / 60.0;
         let time_warp = WARP_LEVELS[game.warp_index];
@@ -2440,6 +2715,14 @@ fn render_main_menu_frame(
             !(v.ship.periapsis_below_surface(&game.solar_system) && in_landing_zone)
         });
     }
+
+    // Camera follows the Sun AFTER the simulation update so positions match
+    let sun_pos = game.solar_system.body_position(1);
+    render_state.camera.position[0] = sun_pos[0] * SCALE * BODY_SCALE;
+    render_state.camera.position[1] = sun_pos[1] * SCALE * BODY_SCALE;
+    render_state.camera.body_center = render_state.camera.position;
+    render_state.camera.ship_offset = [0.0, 0.0];
+    render_state.camera.zoom = 0.002;
 
     let scaled_positions = compute_scaled_positions(game);
     let bodies = build_body_data(game, &scaled_positions, false);
@@ -2470,8 +2753,8 @@ fn render_main_menu_frame(
                             ui.vertical_centered(|ui| {
                                 ui.heading(egui::RichText::new("Paused").size(32.0).color(egui::Color32::WHITE));
                                 ui.add_space(20.0);
-                                if ui.button(egui::RichText::new("Exit Game").size(18.0)).clicked() {
-                                    std::process::exit(0);
+                                if ui.button(egui::RichText::new("Title Screen").size(18.0)).clicked() {
+                                    action = MainMenuAction::Quit;
                                 }
                             });
                         });
@@ -2513,6 +2796,9 @@ fn render_main_menu_frame(
                     // Zoom so Earth fills ~half the screen
                     let earth_radius_world = game.solar_system.bodies[sunscatter::game::LAUNCHPAD_BODY_INDEX].radius * SCALE * BODY_SCALE;
                     render_state.camera.zoom = (0.25 / earth_radius_world) as f32;
+                },
+                MainMenuAction::Quit => {
+                    save_and_quit_to_title(game, render_state);
                 },
                 MainMenuAction::None => {}
             }
@@ -2625,8 +2911,11 @@ fn render_tracking_station_frame(
         Ok((new_warp_index, pause_action, ts_action)) => {
             game.warp_index = new_warp_index;
             match pause_action {
-                PauseAction::MainMenu => game.enter_main_menu(),
-                PauseAction::Resume | PauseAction::None | PauseAction::RecoverVessel => {}
+                PauseAction::MainMenu => {
+                    game.enter_main_menu();
+                }
+                PauseAction::Resume | PauseAction::None | PauseAction::RecoverVessel
+                | PauseAction::Quicksave | PauseAction::LoadQuicksave(_) => {}
             }
             // Handle tracking station actions
             match ts_action {

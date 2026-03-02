@@ -245,14 +245,14 @@ pub struct OrbitSegmentData {
 }
 
 /// Delta-V components for a maneuver node
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ManeuverDeltaV {
     pub prograde: f64,    // m/s (positive = prograde, negative = retrograde)
     pub radial_out: f64,  // m/s (positive = radial out, negative = radial in)
 }
 
 /// A maneuver node - fixed on the orbit it was created on
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ManeuverNode {
     pub id: u64,
     // Orbit parameters (fixed at creation time)
@@ -390,6 +390,7 @@ pub enum MainMenuAction {
     None,
     Editor,
     TrackingStation,
+    Quit,
 }
 
 /// A selected navigation target (body or vessel)
@@ -420,10 +421,21 @@ pub struct TargetPopup {
 }
 
 /// Action returned from the pause overlay UI
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PauseAction {
     None,
     Resume,
     MainMenu,
     RecoverVessel,
+    Quicksave,
+    LoadQuicksave(String),
+}
+
+/// Action returned from the title screen UI
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TitleScreenAction {
+    None,
+    NewGame(String),
+    LoadGame(String),
+    QuitGame,
 }

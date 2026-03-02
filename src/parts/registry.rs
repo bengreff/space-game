@@ -119,6 +119,20 @@ impl BlueprintRegistry {
     pub fn is_empty(&self) -> bool {
         self.blueprints.is_empty()
     }
+
+    /// Get all blueprints (for save game)
+    pub fn all_blueprints(&self) -> Vec<&VesselBlueprint> {
+        self.blueprints.values().collect()
+    }
+
+    /// Merge blueprints into the registry (from save game load), without overwriting existing
+    pub fn merge_blueprints(&mut self, blueprints: Vec<VesselBlueprint>) {
+        for bp in blueprints {
+            if !self.blueprints.contains_key(&bp.name) {
+                self.blueprints.insert(bp.name.clone(), bp);
+            }
+        }
+    }
 }
 
 /// Sanitize a string to be safe for use as a filename

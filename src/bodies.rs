@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
 /// Atmosphere data for a celestial body
@@ -98,7 +98,7 @@ impl CelestialBody {
 }
 
 /// Keplerian orbital elements (simplified for 2D)
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Orbit {
     pub semi_major_axis: f64,     // meters
     pub eccentricity: f64,        // 0 = circle, <1 = ellipse

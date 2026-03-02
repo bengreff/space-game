@@ -12,6 +12,8 @@ pub use state::RenderState;
 pub use types::{
     BodyData, BodyInfoData, MainMenuAction, ManeuverDeltaV, ManeuverNode, OrbitRenderData,
     OrbitSegmentData, PauseAction, RcsNozzleState, SelectedTarget, ShipOrbitData,
-    ShipPartRenderData, ShipRenderData, StagedPartInfo, TargetPopup, TrackingStationAction,
-    TrackingVesselData, Vertex, HYPERBOLIC_RENDER_MARGIN, HYPERBOLIC_SKIP_MARGIN,
+    ShipPartRenderData, ShipRenderData, StagedPartInfo, TargetPopup, TitleScreenAction,
+    TrackingStationAction, TrackingVesselData, Vertex, HYPERBOLIC_RENDER_MARGIN,
+    HYPERBOLIC_SKIP_MARGIN,
 };
+pub use crate::save::QuicksaveInfo;

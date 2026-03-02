@@ -14,10 +14,19 @@ pub const LAUNCHPAD_BOTTOM_WIDTH: f64 = 120.0; // meters
 /// The current game mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameMode {
+    TitleScreen,
     MainMenu,
     Editor,
     Flight,
     TrackingStation,
+}
+
+/// UI state for the title screen dialogs
+#[derive(Debug, Clone, Default)]
+pub struct TitleScreenUiState {
+    pub show_new_game: bool,
+    pub show_load_game: bool,
+    pub new_game_name: String,
 }
 
 /// Unique identifier for a vessel (active or inactive)
@@ -319,6 +328,10 @@ pub struct Game {
     pub editor: EditorState,
     pub part_definitions: PartDefinitions,
     pub blueprints: BlueprintRegistry,
+    /// Current save game name (None when on title screen / no game loaded)
+    pub save_name: Option<String>,
+    /// Title screen UI state
+    pub title_screen: TitleScreenUiState,
 }
 
 impl Game {
@@ -347,7 +360,7 @@ impl Game {
         let editor = EditorState::new();
 
         Self {
-            mode: GameMode::MainMenu,
+            mode: GameMode::TitleScreen,
             paused: false,
             warp_index: 0,
             simulation_time: 0.0,
@@ -356,7 +369,32 @@ impl Game {
             editor,
             part_definitions,
             blueprints,
+            save_name: None,
+            title_screen: TitleScreenUiState::default(),
         }
+    }
+
+    /// Switch to title screen (pre-game)
+    pub fn enter_title_screen(&mut self) {
+        self.mode = GameMode::TitleScreen;
+        self.paused = false;
+        self.save_name = None;
+        self.title_screen = TitleScreenUiState::default();
+        log::info!("Entered title screen");
+    }
+
+    /// Reset game state for a new game
+    pub fn reset_for_new_game(&mut self, name: String) {
+        self.simulation_time = 0.0;
+        self.solar_system.time = 0.0;
+        self.warp_index = 0;
+        let ship = Ship::spawn_on_earth(&self.solar_system);
+        self.flight = FlightState::new(ship);
+        self.editor = EditorState::new();
+        self.save_name = Some(name);
+        self.mode = GameMode::MainMenu;
+        self.paused = false;
+        log::info!("Started new game: {:?}", self.save_name);
     }
 
     /// Switch to main menu

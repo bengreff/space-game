@@ -4,17 +4,69 @@ Game-wide requirements shared across all modes (editor and flight).
 
 ## Game Modes
 
-### Requirement: Two game modes
+### Requirement: Five game modes
 
-The system SHALL support two game modes: **Editor** and **Flight**, represented by the `GameMode` enum.
+The system SHALL support five game modes represented by the `GameMode` enum: `TitleScreen`, `MainMenu`, `Editor`, `Flight`, `TrackingStation`.
 
-#### Scenario: Game starts in editor
+#### Scenario: Game starts on title screen
 - **WHEN** the application launches
-- **THEN** the game mode SHALL be `Editor`
+- **THEN** the game mode SHALL be `TitleScreen`
+
+#### Scenario: New game
+- **WHEN** the player clicks "New Game" on the title screen and enters a save name
+- **THEN** the game SHALL reset to fresh state and transition to `MainMenu`
+
+#### Scenario: Load game
+- **WHEN** the player clicks "Load Game" on the title screen and selects a save
+- **THEN** the game SHALL restore the saved state and transition to `MainMenu`
 
 #### Scenario: Mode switching
 - **WHEN** the player launches a vessel from the editor
 - **THEN** the game mode SHALL switch to `Flight`
+
+## Save System
+
+### Requirement: Save game persistence
+
+The system SHALL persist game state in folder-based saves at `data/saves/{sanitized_name}/save.ron` as RON-serialized `SaveGame` structs. Legacy flat files (`data/saves/{name}.ron`) are supported for loading via fallback.
+
+### Requirement: SaveGame format
+
+Each save file SHALL contain: format version (u32), save name, simulation_time, all vessels (active first, then inactive) with ship state and optional FlightVessel, next_vessel_id, debris_counter, blueprint copies, and editor vessel name.
+
+### Requirement: Auto-save
+
+The system SHALL auto-save every 5 minutes when a game is loaded (i.e., `save_name` is `Some`).
+
+### Requirement: Save on quit
+
+When quitting from any game mode to the title screen, the system SHALL save the current game state before transitioning.
+
+### Requirement: Quicksave
+
+The system SHALL support quicksaving from the flight pause overlay. Each quicksave creates an indexed file `data/saves/{name}/quicksave_{N}.ron` where N increments from the highest existing index. Quicksaves use the same `SaveGame` format as main saves.
+
+### Requirement: Load quicksave
+
+The flight pause overlay SHALL show a "Load Quicksave" button (when quicksaves exist) that opens a scrollable list of available quicksaves sorted newest-first. Selecting a quicksave restores that state and unpauses.
+
+### Requirement: Save directory layout
+
+```
+data/saves/
+  {sanitized_name}/
+    save.ron              <- main save (auto-save, save-on-quit)
+    quicksave_1.ron       <- first quicksave
+    quicksave_2.ron       <- second quicksave
+```
+
+### Requirement: Legacy save compatibility
+
+`load_from_file()` SHALL first check for `data/saves/{id}/save.ron`, then fall back to `data/saves/{id}.ron`. `list_saves()` SHALL find both folder-based and legacy flat saves, with folders taking priority for deduplication.
+
+### Requirement: Save file listing
+
+`SaveFileInfo` uses `save_id` (sanitized directory name) rather than a filename. The title screen load dialog passes `save_id` to `LoadGame`.
 
 ## Coordinate System
 

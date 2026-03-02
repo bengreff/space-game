@@ -1,8 +1,9 @@
+use serde::{Serialize, Deserialize};
 use super::{FuelType, Propellant, PartDefinitions, VesselBlueprint};
 use std::collections::HashMap;
 
 /// A vessel in flight - runtime representation with physics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlightVessel {
     // Physics state (same as Ship)
     pub rel_position: [f64; 2],
@@ -34,7 +35,7 @@ pub struct FlightVessel {
 }
 
 /// A part in flight
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlightPart {
     pub definition_id: String,
     pub local_position: [f64; 2],  // Relative to vessel center of mass

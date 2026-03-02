@@ -8,8 +8,8 @@ use super::camera::Camera;
 use super::textures::BodyTextureMap;
 use super::types::{
     BodyData, BodyInfoData, MainMenuAction, ManeuverNode, OrbitRenderData, PauseAction,
-    ShipOrbitData, ShipRenderData, TrackingStationAction, TrackingVesselData, Vertex,
-    HYPERBOLIC_RENDER_MARGIN, HYPERBOLIC_SKIP_MARGIN,
+    ShipOrbitData, ShipRenderData, TitleScreenAction, TrackingStationAction,
+    TrackingVesselData, Vertex, HYPERBOLIC_RENDER_MARGIN, HYPERBOLIC_SKIP_MARGIN,
 };
 
 /// Format seconds into a human-readable duration string (e.g., "1d 2h 3m 4s")
@@ -196,6 +196,8 @@ pub struct RenderState {
     pub transfer_hohmann_targets: Vec<(usize, String)>,
     pub transfer_interplanetary_targets: Vec<(usize, String)>,
     pub transfer_node_request: Option<(f64, f64, f64, f64)>, // (position_angle, prograde_dv, radial_dv, time_to_window)
+    // Quicksave UI state
+    pub show_quicksave_list: bool,
     // Debug menu
     pub debug_menu_open: bool,
     pub debug_infinite_fuel: bool,
@@ -547,6 +549,7 @@ impl RenderState {
             transfer_hohmann_targets: Vec::new(),
             transfer_interplanetary_targets: Vec::new(),
             transfer_node_request: None,
+            show_quicksave_list: false,
             debug_menu_open: false,
             debug_infinite_fuel: false,
             debug_teleport_leo: false,
@@ -644,6 +647,7 @@ impl RenderState {
         date_str: &str,
         can_exit_flight: bool,
         can_recover: bool,
+        quicksaves: &[crate::save::QuicksaveInfo],
     ) -> Result<(usize, PauseAction), wgpu::SurfaceError> {
         // Update camera buffer before rendering
         self.update_camera_buffer();
@@ -2275,26 +2279,62 @@ impl RenderState {
                             .rounding(egui::Rounding::same(8.0))
                             .show(ui, |ui| {
                                 ui.vertical_centered(|ui| {
-                                    ui.heading(egui::RichText::new("Paused").size(32.0).color(egui::Color32::WHITE));
-                                    ui.add_space(20.0);
-                                    if can_recover {
-                                        let recover_btn = egui::Button::new(
-                                            egui::RichText::new("Recover Vessel").size(18.0)
-                                        ).fill(egui::Color32::from_rgb(60, 130, 60));
-                                        if ui.add(recover_btn).clicked() {
-                                            pause_action = PauseAction::RecoverVessel;
-                                        }
-                                        ui.add_space(8.0);
-                                    }
-                                    if can_exit_flight {
-                                        if ui.button(egui::RichText::new("Main Menu").size(18.0)).clicked() {
-                                            pause_action = PauseAction::MainMenu;
+                                    if self.show_quicksave_list {
+                                        // Quicksave list view
+                                        ui.heading(egui::RichText::new("Load Quicksave").size(28.0).color(egui::Color32::WHITE));
+                                        ui.add_space(12.0);
+                                        egui::ScrollArea::vertical()
+                                            .max_height(300.0)
+                                            .show(ui, |ui| {
+                                                for qs in quicksaves {
+                                                    let label = format!(
+                                                        "#{} — {}",
+                                                        qs.index,
+                                                        crate::game::format_date(qs.simulation_time),
+                                                    );
+                                                    if ui.button(egui::RichText::new(&label).size(16.0)).clicked() {
+                                                        pause_action = PauseAction::LoadQuicksave(qs.filename.clone());
+                                                        self.show_quicksave_list = false;
+                                                    }
+                                                }
+                                            });
+                                        ui.add_space(12.0);
+                                        if ui.button(egui::RichText::new("Back").size(18.0)).clicked() {
+                                            self.show_quicksave_list = false;
                                         }
                                     } else {
-                                        ui.add_enabled(false, egui::Button::new(egui::RichText::new("Main Menu").size(18.0)));
-                                        ui.label(egui::RichText::new("Cannot exit while in atmosphere or landing zone")
-                                            .size(11.0)
-                                            .color(egui::Color32::from_rgb(200, 150, 100)));
+                                        // Default pause view
+                                        ui.heading(egui::RichText::new("Paused").size(32.0).color(egui::Color32::WHITE));
+                                        ui.add_space(20.0);
+                                        if ui.button(egui::RichText::new("Quicksave").size(18.0)).clicked() {
+                                            pause_action = PauseAction::Quicksave;
+                                        }
+                                        if !quicksaves.is_empty() {
+                                            ui.add_space(8.0);
+                                            if ui.button(egui::RichText::new("Load Quicksave").size(18.0)).clicked() {
+                                                self.show_quicksave_list = true;
+                                            }
+                                        }
+                                        if can_recover {
+                                            ui.add_space(8.0);
+                                            let recover_btn = egui::Button::new(
+                                                egui::RichText::new("Recover Vessel").size(18.0)
+                                            ).fill(egui::Color32::from_rgb(60, 130, 60));
+                                            if ui.add(recover_btn).clicked() {
+                                                pause_action = PauseAction::RecoverVessel;
+                                            }
+                                        }
+                                        ui.add_space(8.0);
+                                        if can_exit_flight {
+                                            if ui.button(egui::RichText::new("Main Menu").size(18.0)).clicked() {
+                                                pause_action = PauseAction::MainMenu;
+                                            }
+                                        } else {
+                                            ui.add_enabled(false, egui::Button::new(egui::RichText::new("Main Menu").size(18.0)));
+                                            ui.label(egui::RichText::new("Cannot exit while in atmosphere or landing zone")
+                                                .size(11.0)
+                                                .color(egui::Color32::from_rgb(200, 150, 100)));
+                                        }
                                     }
                                 });
                             });
@@ -5254,6 +5294,95 @@ impl RenderState {
         output.present();
 
         Ok((new_warp_index, menu_action))
+    }
+
+    /// Render the title screen: planets + egui overlay (no time warp bar).
+    pub fn render_title_screen(
+        &mut self,
+        egui_callback: impl FnOnce(&egui::Context) -> TitleScreenAction,
+    ) -> Result<TitleScreenAction, wgpu::SurfaceError> {
+        self.update_camera_buffer();
+
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut action = TitleScreenAction::None;
+
+        let raw_input = self.egui_state.take_egui_input(&self.window);
+        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            // No time warp panel — just the callback
+            action = egui_callback(ctx);
+        });
+
+        self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
+        let tris = self.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+        for (id, image_delta) in &full_output.textures_delta.set {
+            self.egui_renderer.update_texture(&self.device, &self.queue, *id, image_delta);
+        }
+
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [self.size.width, self.size.height],
+            pixels_per_point: self.window.scale_factor() as f32,
+        };
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Title Screen Render Encoder"),
+        });
+        self.egui_renderer.update_buffers(&self.device, &self.queue, &mut encoder, &tris, &screen_descriptor);
+
+        // Geometry pass (planets/orbits already in self.vertex_buffer)
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Title Screen Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.msaa_view,
+                    resolve_target: Some(&view),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.sprite_atlas.bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+        }
+
+        // Egui pass
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Title Screen Egui Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            self.egui_renderer.render(&mut render_pass, &tris, &screen_descriptor);
+        }
+
+        for id in &full_output.textures_delta.free {
+            self.egui_renderer.free_texture(id);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(action)
     }
 
     /// Render tracking station: planets + time warp panel + vessel list.

@@ -1,3 +1,4 @@
+use serde::{Serialize, Deserialize};
 use crate::bodies::{SolarSystem, G, Orbit};
 use crate::render::ManeuverNode;
 
@@ -7,7 +8,7 @@ mod soi;
 pub mod transfer;
 
 /// Autopilot target direction for ship rotation
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AutopilotTarget {
     #[default]
     Off,
@@ -101,7 +102,7 @@ pub(crate) const SOI_REFINE_ITERATIONS: usize = 10;
 pub(crate) const HYPERBOLIC_ANGLE_MARGIN: f64 = 0.01;
 
 /// Ship state - either flying through space or landed on a body
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ShipState {
     Flying,
     Landed { body_index: usize, surface_angle: f64 },
@@ -123,7 +124,7 @@ pub struct ShipInput {
 }
 
 /// Cached orbit with mean anomaly for on-rails propagation
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ShipOrbit {
     pub orbit: Orbit,
     pub mean_anomaly: f64,
@@ -164,7 +165,7 @@ pub struct PatchedTrajectory {
 
 /// A flyable spaceship
 /// Position and velocity are stored RELATIVE to the current SOI body
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Ship {
     pub rel_position: [f64; 2],
     pub rel_velocity: [f64; 2],
@@ -175,20 +176,27 @@ pub struct Ship {
     pub color: [f32; 4],
     pub soi_body: usize,
     pub on_rails: bool,
+    #[serde(skip)]
     pub(crate) cached_orbit: Option<ShipOrbit>,
     /// Cached patched trajectory to avoid recalculating every frame
+    #[serde(skip)]
     pub(crate) cached_trajectory: Option<PatchedTrajectory>,
     /// Frame counter when trajectory was last calculated
+    #[serde(skip)]
     pub(crate) trajectory_calc_frame: u64,
     /// SOI body when trajectory was calculated (for cache invalidation)
+    #[serde(skip)]
     pub(crate) trajectory_soi_body: usize,
     /// Current frame counter (incremented each update)
+    #[serde(skip)]
     pub(crate) frame_counter: u64,
     /// Current vessel temperature (Kelvin)
     pub temperature: f64,
     /// Current aerodynamic heat flux (W/m²) for HUD display
+    #[serde(skip)]
     pub heat_flux: f64,
     /// RCS translation input: [forward, right] in vessel-local frame, -1..1 each
+    #[serde(skip)]
     pub rcs_translate: [f64; 2],
 }
 
