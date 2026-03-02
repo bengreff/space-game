@@ -1060,7 +1060,7 @@ impl EditorState {
     /// Zoom the editor camera
     pub fn zoom_camera(&mut self, factor: f32) {
         self.camera_zoom *= factor;
-        self.camera_zoom = self.camera_zoom.clamp(0.033, 16666.0);  // Zoom range
+        self.camera_zoom = self.camera_zoom.clamp(0.011, 16666.0);  // Zoom range
     }
 
     /// Center and zoom the camera to fit all placed parts
@@ -1104,7 +1104,7 @@ impl EditorState {
         // The editor camera maps: visible_half_extent ≈ 1/zoom (in meters)
         // We want extent to be ~60% of the view, so visible extent ≈ extent / 0.6
         self.camera_zoom = (0.6 / extent) as f32;
-        self.camera_zoom = self.camera_zoom.clamp(0.033, 16666.0);
+        self.camera_zoom = self.camera_zoom.clamp(0.011, 16666.0);
     }
 
     /// Check if the editor has any parts

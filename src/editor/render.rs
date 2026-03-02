@@ -106,15 +106,22 @@ fn generate_solar_panel_partial(
     let base_squares: f32 = if def.grid_width >= 2.0 { 2.0 } else { 1.0 };
     let base_height: f32 = base_squares * GRID_SQUARE_SIZE as f32;
 
-    // Grey base rectangle (always drawn)
+    // Grey base rectangle: when retracted (deploy_fraction == 0), draw a narrow
+    // stowed mast (0.2 grid squares wide, full panel height). When deploying, draw
+    // the wider base at the bottom.
     let base_color = [0.45, 0.45, 0.48, alpha];
-    let base_top = panel_bottom + base_height;
-    vertices.push(Vertex::new([sp_x - sp_hw, panel_bottom], base_color));
-    vertices.push(Vertex::new([sp_x + sp_hw, panel_bottom], base_color));
-    vertices.push(Vertex::new([sp_x + sp_hw, base_top], base_color));
-    vertices.push(Vertex::new([sp_x - sp_hw, panel_bottom], base_color));
-    vertices.push(Vertex::new([sp_x + sp_hw, base_top], base_color));
-    vertices.push(Vertex::new([sp_x - sp_hw, base_top], base_color));
+    let (base_hw, base_bottom, base_top) = if deploy_fraction <= 0.0 {
+        let stowed_height = 0.2 * GRID_SQUARE_SIZE as f32;
+        (sp_hw, panel_bottom, panel_bottom + stowed_height)
+    } else {
+        (sp_hw, panel_bottom, panel_bottom + base_height)
+    };
+    vertices.push(Vertex::new([sp_x - base_hw, base_bottom], base_color));
+    vertices.push(Vertex::new([sp_x + base_hw, base_bottom], base_color));
+    vertices.push(Vertex::new([sp_x + base_hw, base_top], base_color));
+    vertices.push(Vertex::new([sp_x - base_hw, base_bottom], base_color));
+    vertices.push(Vertex::new([sp_x + base_hw, base_top], base_color));
+    vertices.push(Vertex::new([sp_x - base_hw, base_top], base_color));
 
     // Partial sprite (if deploying)
     let f = deploy_fraction as f32;
@@ -207,6 +214,12 @@ pub fn generate_grid_vertices(
     let minor_spacing = 0.5;
     let major_spacing = 2.5;
 
+    // Hide minor lines when zoomed out enough that 20+ major lines fit horizontally
+    let aspect_ratio = screen_width / screen_height;
+    let visible_world_width = 2.0 * aspect_ratio / zoom;
+    let major_lines_visible = visible_world_width / major_spacing;
+    let draw_minor = major_lines_visible < 20.0;
+
     // Line thickness in world units (thinner at higher zoom)
     let line_thickness = 0.005 / zoom.sqrt();
 
@@ -254,8 +267,11 @@ pub fn generate_grid_vertices(
     let mut x = start_x;
     while x <= max_x {
         let is_major = (x / major_spacing).abs().fract() < 0.01 || x.abs() < 0.01;
-        let color = if is_major { GRID_MAJOR_COLOR } else { GRID_COLOR };
-        add_line(x, min_y, x, max_y, color);
+        if is_major {
+            add_line(x, min_y, x, max_y, GRID_MAJOR_COLOR);
+        } else if draw_minor {
+            add_line(x, min_y, x, max_y, GRID_COLOR);
+        }
         x += minor_spacing;
     }
 
@@ -263,8 +279,11 @@ pub fn generate_grid_vertices(
     let mut y = start_y;
     while y <= max_y {
         let is_major = (y / major_spacing).abs().fract() < 0.01 || y.abs() < 0.01;
-        let color = if is_major { GRID_MAJOR_COLOR } else { GRID_COLOR };
-        add_line(min_x, y, max_x, y, color);
+        if is_major {
+            add_line(min_x, y, max_x, y, GRID_MAJOR_COLOR);
+        } else if draw_minor {
+            add_line(min_x, y, max_x, y, GRID_COLOR);
+        }
         y += minor_spacing;
     }
 
