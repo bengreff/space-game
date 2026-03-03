@@ -26,7 +26,7 @@ Sprite quads SHALL be placed according to per-category alignment rules via `spri
 
 - **Engines**: width = flight hitbox width, height = flight hitbox height, centered on the editor hitbox center. The flight hitbox may be narrower than the editor hitbox (which is always odd for grid alignment). Sprites render at their natural size within the wider editor placement zone.
 - **Stack decouplers** (non-radial): width = hitbox width, height = visual height, bottom-aligned within the hitbox (y offset = `-(hitbox_half_h - visual_half_h)`).
-- **Heat shields**: width = hitbox width, height = visual height, top-aligned within the hitbox (y offset = `+(hitbox_half_h - visual_half_h)`).
+- **Heat shields**: width = hitbox width, height = visual height, top-aligned within the hitbox (y offset = `+(hitbox_half_h - visual_half_h)`). Each heat shield size has `grid_height` matching its sprite's natural aspect ratio (Tiny: 0.1, Small: 0.28, Medium: 0.48, Large: 0.86 grid squares) and `flight_hitbox_height` matching `grid_height`. The editor hitbox remains 1 tile for grid placement. In flight, `click_local_y` is shifted to the visual center for correct click detection.
 - **RCS thrusters** (standalone, not pods): visual dimensions, side-offset to the appropriate edge of the hitbox based on `is_mirrored`.
 - **Default** (tanks, pods, radial decouplers, fairings): hitbox width x hitbox height, centered. This eliminates visual gaps between stacked tanks.
 

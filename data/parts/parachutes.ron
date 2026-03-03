@@ -1,0 +1,44 @@
+// Parachutes — deployable drag devices for atmospheric re-entry
+// Dome-shaped caps, bottom-aligned in 1x1 hitbox. Deployed width = 40x dome width.
+
+(
+    parts: [
+        // Small Parachute — 0.25m dome, deploys 10m canopy
+        (
+            id: "parachute_small",
+            name: "Small Parachute",
+            description: "A compact parachute dome. Deploys a 10m canopy for atmospheric braking.",
+            category: Aerodynamic,
+            mass: 0.03,
+            cost: 80,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 0.5,
+            grid_height: 0.5,
+            hitbox_width: Some(1),
+            hitbox_height: Some(1),
+            parachute: Some((
+                deployed_width: 20.0,
+            )),
+        ),
+
+        // Large Parachute — 0.5m dome, deploys 20m canopy
+        (
+            id: "parachute_large",
+            name: "Large Parachute",
+            description: "A full-size parachute dome. Deploys a 20m canopy for atmospheric braking.",
+            category: Aerodynamic,
+            mass: 0.10,
+            cost: 200,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 1.0,
+            hitbox_width: Some(1),
+            hitbox_height: Some(1),
+            parachute: Some((
+                deployed_width: 40.0,
+            )),
+        ),
+    ],
+)

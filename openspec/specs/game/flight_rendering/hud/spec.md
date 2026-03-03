@@ -124,9 +124,9 @@ When vessel has fuel data, show fuel bar with 10px gap below throttle. The fuel 
 When the vessel has batteries (max electricity > 0), an electricity bar SHALL be shown below the fuel bar with 10px gap.
 
 #### Scenario: Electricity bar layout
-- "ELEC" label at font size 10, stored Wh readout at font size 11
+- "ELEC" label at font size 10, stored/max Wh readout at font size 11
 - Bar height 80px, width 20px, fill from bottom proportional to `electricity_fraction`
-- Stored Wh formatted as "{X.X}k Wh" for >= 1000 Wh, or "{X} Wh" otherwise
+- Stored and max Wh formatted as "{stored} / {max} Wh" where each value uses "{X.X}k" for >= 1000 or "{X}" otherwise
 
 #### Scenario: Electricity bar colors
 - `> 0.3` -> gold/yellow `rgb(220, 200, 80)`, `> 0.1` -> orange `rgb(220, 160, 60)`, `<= 0.1` -> red `rgb(220, 80, 80)`
@@ -134,6 +134,12 @@ When the vessel has batteries (max electricity > 0), an electricity bar SHALL be
 
 #### Scenario: Power generation/consumption text
 - Below the bar, "+{gen}W" and "-{cons}W" SHALL be displayed at font size 9
+
+#### Scenario: Power duration display
+- **WHEN** net power (generation - consumption) < 0 AND stored electricity > 0
+- **THEN** an amber `rgb(220, 180, 40)` duration label SHALL be shown below the power text at font size 9
+- Duration formula: `seconds = (stored_wh / |net_watts|) * 3600`
+- Duration formatted as `format_duration()`: "Xd Xh Xm Xs" / "Xh Xm Xs" / "Xm Xs" / "Xs"
 
 ### Requirement: Heat bar below electricity bar
 

@@ -16,6 +16,7 @@
             grid_width: 3.0,
             grid_height: 2.0,
             pod: Some((
+                can_control: true,
                 crew_capacity: 1,
                 power_draw: 150.0,
             )),
@@ -42,6 +43,7 @@
             grid_width: 5.0,
             grid_height: 2.0,
             pod: Some((
+                can_control: true,
                 crew_capacity: 2,
                 power_draw: 350.0,
             )),
@@ -68,6 +70,7 @@
             grid_width: 9.0,
             grid_height: 3.0,
             pod: Some((
+                can_control: true,
                 crew_capacity: 3,
                 power_draw: 600.0,
             )),
@@ -94,6 +97,7 @@
             grid_width: 13.0,
             grid_height: 4.0,
             pod: Some((
+                can_control: true,
                 crew_capacity: 6,
                 power_draw: 1200.0,
             )),

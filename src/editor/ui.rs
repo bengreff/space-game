@@ -32,6 +32,27 @@ fn format_power(watts: f64) -> String {
     }
 }
 
+/// Format seconds into a human-readable duration string (e.g., "1d 2h 3m 4s")
+fn format_duration(seconds: f64) -> String {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return "---".to_string();
+    }
+    let total = seconds as u64;
+    let d = total / 86400;
+    let h = (total % 86400) / 3600;
+    let m = (total % 3600) / 60;
+    let s = total % 60;
+    if d > 0 {
+        format!("{}d {}h {}m {}s", d, h, m, s)
+    } else if h > 0 {
+        format!("{}h {}m {}s", h, m, s)
+    } else if m > 0 {
+        format!("{}m {}s", m, s)
+    } else {
+        format!("{}s", s)
+    }
+}
+
 /// Editor UI action that should be handled by the game
 #[derive(Debug, Clone)]
 pub enum EditorAction {
@@ -222,6 +243,11 @@ pub fn render_editor_ui(
                     }
                     if stats.power_generation > 0.0 || stats.power_consumption > 0.0 {
                         ui.label(format!("Power: +{:.0}W / -{:.0}W", stats.power_generation, stats.power_consumption));
+                        let net = stats.power_generation - stats.power_consumption;
+                        if net < 0.0 && stats.electricity_capacity > 0.0 {
+                            let seconds = (stats.electricity_capacity / net.abs()) * 3600.0;
+                            ui.label(format!("Duration: {}", format_duration(seconds)));
+                        }
                     }
                 }
             });
@@ -601,6 +627,14 @@ pub fn render_editor_ui(
                             } else {
                                 ui.label("Power Draw: None (passive)");
                             }
+                        }
+
+                        // Parachute info
+                        if let Some(ref chute) = def.parachute {
+                            ui.separator();
+                            ui.heading("Parachute");
+                            let width_m = chute.deployed_width * crate::parts::GRID_SQUARE_SIZE;
+                            ui.label(format!("Deployed Width: {:.1} m", width_m));
                         }
 
                     }

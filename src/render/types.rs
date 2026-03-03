@@ -146,6 +146,14 @@ pub struct ShipPartRenderData {
     // Solar panel deployment
     pub deploy_fraction: f64,
     pub is_solar_panel: bool,
+    // Parachute info
+    pub is_parachute: bool,
+    pub parachute_deployed: bool,
+    pub parachute_spent: bool,
+    pub parachute_deploy_fraction: f64,
+    pub parachute_deployed_width_m: f64,
+    pub parachute_fully_deployed: bool,
+    pub sprite_half_h: f64,  // Visual sprite half-height in meters (for cable anchoring)
 }
 
 /// Ship render data
@@ -179,6 +187,7 @@ pub struct ShipRenderData {
     pub power_consumption: Option<f64>,      // Watts
     pub electricity_fraction: Option<f64>,   // 0.0-1.0
     pub electricity_stored: Option<f64>,     // Wh currently stored
+    pub electricity_max: Option<f64>,        // Wh max capacity
     // Staging
     pub current_stage: Option<usize>,  // Stages activated so far
     pub total_stages: Option<usize>,   // Total number of stages

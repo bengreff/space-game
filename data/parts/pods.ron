@@ -18,12 +18,16 @@
             hitbox_width: Some(3),
             hitbox_height: Some(3),
             pod: Some((
+                can_control: true,
                 crew_capacity: 2,
                 power_draw: 200.0,
             )),
             rcs: Some((
                 thrust: 0.1,
                 isp: 240.0,
+            )),
+            battery: Some((
+                capacity_wh: 800.0,
             )),
             resources: {"monopropellant": 10.0},
         ),
@@ -44,12 +48,16 @@
             hitbox_width: Some(5),
             hitbox_height: Some(4),
             pod: Some((
+                can_control: true,
                 crew_capacity: 4,
                 power_draw: 500.0,
             )),
             rcs: Some((
                 thrust: 0.3,
                 isp: 240.0,
+            )),
+            battery: Some((
+                capacity_wh: 2000.0,
             )),
             resources: {"monopropellant": 30.0},
         ),

@@ -442,6 +442,8 @@ fn render_flight_frame(
             gimbal_torque: v.compute_gimbal_torque(),
             vessel_half_width: v.bounding_half_width(),
             rcs_translation_force: if rcs_enabled { v.compute_rcs_translation_force(&game.part_definitions) } else { 0.0 },
+            parachute_drag_width: v.parachute_drag_width(),
+            parachute_drag_multiplier: v.parachute_drag_multiplier(),
         });
 
         // Compute RCS translation from input (only when RCS enabled)
@@ -530,6 +532,16 @@ fn render_flight_frame(
 
             // Animate solar panel deployment
             vessel.update_solar_deploy(effective_dt);
+
+            // Animate parachute deployment and auto-retract
+            let chute_altitude = {
+                let dist = (game.flight.ship.rel_position[0].powi(2) + game.flight.ship.rel_position[1].powi(2)).sqrt();
+                dist - game.solar_system.bodies[game.flight.ship.soi_body].radius
+            };
+            vessel.update_parachute_deploy(effective_dt, chute_altitude);
+            let in_atmo = game.flight.ship.in_atmosphere(&game.solar_system);
+            let is_landed = matches!(game.flight.ship.state, ShipState::Landed { .. });
+            vessel.auto_retract_parachutes(in_atmo, is_landed);
 
             // Sync vessel state from ship
             vessel.rel_position = game.flight.ship.rel_position;
@@ -737,6 +749,8 @@ fn render_flight_frame(
             gimbal_torque: v.compute_gimbal_torque(),
             vessel_half_width: v.bounding_half_width(),
             rcs_translation_force: if rcs_enabled { v.compute_rcs_translation_force(&game.part_definitions) } else { 0.0 },
+            parachute_drag_width: v.parachute_drag_width(),
+            parachute_drag_multiplier: v.parachute_drag_multiplier(),
         })
     };
 
@@ -763,6 +777,8 @@ fn render_flight_frame(
                     gimbal_torque: v.compute_gimbal_torque(),
                     vessel_half_width: v.bounding_half_width(),
                     rcs_translation_force: v.compute_rcs_translation_force(&game.part_definitions),
+                    parachute_drag_width: v.parachute_drag_width(),
+                    parachute_drag_multiplier: v.parachute_drag_multiplier(),
                 });
                 game.flight.ship.autopilot_desired_direction(target_angle, vessel_physics.as_ref())
             } else {
@@ -1164,6 +1180,11 @@ fn render_flight_frame(
                                 let base_half_h = base_squares * GRID_SQUARE_SIZE * 0.5;
                                 let half_h = if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[0] } else { p.hitbox_half_extents[1] };
                                 p.local_position[1] - half_h + base_half_h
+                            } else if def.map(|d| d.is_heat_shield).unwrap_or(false) {
+                                // Heat shields are top-aligned: shift click center to visual center
+                                let editor_half_h = def.map(|d| d.hitbox_height() / 2.0).unwrap_or(0.0);
+                                let flight_half_h = if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[0] } else { p.hitbox_half_extents[1] };
+                                p.local_position[1] + (editor_half_h - flight_half_h)
                             } else {
                                 p.local_position[1]
                             }
@@ -1217,6 +1238,13 @@ fn render_flight_frame(
                         fairing_half: p.fairing_half,
                         deploy_fraction: p.deploy_fraction,
                         is_solar_panel: def.map(|d| d.solar_panel.is_some()).unwrap_or(false),
+                        is_parachute: p.is_parachute,
+                        parachute_deployed: p.parachute_deployed,
+                        parachute_spent: p.parachute_spent,
+                        parachute_deploy_fraction: p.parachute_deploy_fraction,
+                        parachute_deployed_width_m: p.parachute_deployed_width_m,
+                        parachute_fully_deployed: p.parachute_fully_deployed,
+                        sprite_half_h: def.map(|d| d.height() / 2.0).unwrap_or(0.0),
                     }
                 })
                 .collect();
@@ -1297,6 +1325,10 @@ fn render_flight_frame(
         drag_mag * mass_kg / 1000.0 // N -> kN
     };
 
+    // Set atmosphere/landed state for parachute UI
+    render_state.ship_in_atmosphere = game.flight.ship.in_atmosphere(&game.solar_system);
+    render_state.ship_is_landed = matches!(game.flight.ship.state, ShipState::Landed { .. });
+
     // Use scaled_positions + rel_position to match body rendering precision
     let soi_pos_render = scaled_positions[game.flight.ship.soi_body];
     let rel_render = game.flight.ship.rel_position;
@@ -1322,6 +1354,7 @@ fn render_flight_frame(
         power_consumption: if game.flight.vessel.is_some() { Some(power_consumption) } else { None },
         electricity_fraction: game.flight.vessel.as_ref().and_then(|v| v.electricity_fraction()),
         electricity_stored: game.flight.vessel.as_ref().map(|v| v.total_electricity()),
+        electricity_max: game.flight.vessel.as_ref().map(|v| v.max_electricity()),
         thrust_kn: vessel_thrust,
         drag_kn,
         delta_v: vessel_delta_v,
@@ -1968,6 +2001,19 @@ fn render_flight_frame(
         }
     }
 
+    // Process parachute deploy request from part info popup
+    if let Some(part_idx) = render_state.parachute_deploy_request.take() {
+        if let Some(ref mut vessel) = game.flight.vessel {
+            if part_idx < vessel.parts.len()
+                && vessel.parts[part_idx].is_parachute
+                && !vessel.parts[part_idx].parachute_spent
+                && !vessel.parts[part_idx].parachute_deployed
+            {
+                vessel.parts[part_idx].parachute_deployed = true;
+            }
+        }
+    }
+
     // Process crossfeed toggle request from part info popup
     if let Some((part_idx, enabled)) = render_state.crossfeed_toggle_request.take() {
         if let Some(ref mut vessel) = game.flight.vessel {
@@ -2450,6 +2496,13 @@ fn build_vessel_part_render_data(
                 fairing_half: p.fairing_half,
                 deploy_fraction: p.deploy_fraction,
                 is_solar_panel: def.map(|d| d.solar_panel.is_some()).unwrap_or(false),
+                is_parachute: p.is_parachute,
+                parachute_deployed: p.parachute_deployed,
+                parachute_spent: p.parachute_spent,
+                parachute_deploy_fraction: p.parachute_deploy_fraction,
+                parachute_deployed_width_m: p.parachute_deployed_width_m,
+                parachute_fully_deployed: p.parachute_fully_deployed,
+                sprite_half_h: def.map(|d| d.height() / 2.0).unwrap_or(0.0),
             }
         })
         .collect()

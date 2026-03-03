@@ -262,6 +262,8 @@ pub struct PodData {
     pub crew_capacity: u32,
     #[serde(default)]
     pub power_draw: f64,  // Watts consumed
+    #[serde(default)]
+    pub can_control: bool, // Whether this part provides vessel control
 }
 
 /// Battery-specific data
@@ -302,6 +304,12 @@ pub struct ShieldData {
     pub shield_type: ShieldType,
     pub max_velocity_c: f64,    // Max speed rating as fraction of c
     pub power_base_watts: f64,  // Base power consumption (0 for Whipple)
+}
+
+/// Parachute-specific data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParachuteData {
+    pub deployed_width: f64,  // Deployed canopy diameter in grid squares
 }
 
 /// Fairing-specific data
@@ -372,6 +380,8 @@ pub struct PartDefinition {
     pub reactor: Option<ReactorData>,
     #[serde(default)]
     pub shield: Option<ShieldData>,
+    #[serde(default)]
+    pub parachute: Option<ParachuteData>,
     #[serde(default)]
     pub resources: HashMap<String, f64>,
     // Thermal properties

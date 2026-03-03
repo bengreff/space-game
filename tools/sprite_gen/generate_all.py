@@ -39,7 +39,7 @@ PIPE_HIGHLIGHT = (100, 105, 115)
 NOZZLE_UPPER = (85, 88, 96)
 VALVE_COLOR = (72, 75, 82)
 
-PX = 90
+PX = 360
 PAD = 0
 BELL_EXP = 1.5
 
@@ -123,19 +123,20 @@ def draw_powerhead(d, cx, y, tw, bw, h,
 
 # --- NEW DISTINCTIVE COMPONENTS ---
 
-def draw_preburner_domes(d, cx, y_top, ph_top_w, n=1, r_scale=1.0):
+def draw_preburner_domes(d, cx, y_top, ph_top_w, n=1, px_scale=1.0):
     """Rounded dome(s) on top of powerhead for staged combustion / full-flow."""
-    dome_r = max(4, int(ph_top_w * 0.08 * r_scale))
+    dome_r = max(int(4 * px_scale), int(ph_top_w * 0.06))
+    gap = max(2, int(2 * px_scale))
     if n == 1:
         # Single centered dome
         circ(d, cx, y_top, dome_r, fill=STEEL_LIGHT, outline=STEEL_DARK)
-        circ(d, cx, y_top, dome_r - 2, fill=STEEL_MID)
+        circ(d, cx, y_top, dome_r - gap, fill=STEEL_MID)
     elif n == 2:
         # Dual domes (full-flow: ox-rich + fuel-rich preburners)
         for s in [-1, 1]:
             dx = cx + s * int(ph_top_w * 0.2)
             circ(d, dx, y_top, dome_r, fill=STEEL_LIGHT, outline=STEEL_DARK)
-            circ(d, dx, y_top, dome_r - 2, fill=STEEL_MID)
+            circ(d, dx, y_top, dome_r - gap, fill=STEEL_MID)
 
 def draw_fixed_mount_frame(d, cx, mount_y, ring_w, ch_y, cc_w, cc_h, scale=1.0):
     """Rigid truss for 0° gimbal engines (instead of actuators)."""
@@ -254,10 +255,13 @@ def draw_transition_flange(d, cx, bell_y, nozzle_h, throat_w, exit_w, regen_frac
     d.rectangle([cx - fhw - flange_extra, fy + 3,
                  cx + fhw + flange_extra, fy + 4], fill=STEEL_DARK)
     # Bolts along flange
-    n_bolts = max(3, int(fw / 20))
+    bolt_spacing = 20 * PX / 90
+    bolt_r = max(2, int(2 * PX / 90))
+    n_bolts = max(3, int(fw / bolt_spacing))
+    pad = int(4 * PX / 90)
     for i in range(n_bolts):
-        bx = cx - fhw + 4 + i * int((fw - 8) / max(1, n_bolts - 1))
-        circ(d, bx, fy, 2, fill=STEEL_HIGHLIGHT)
+        bx = cx - fhw + pad + i * int((fw - pad * 2) / max(1, n_bolts - 1))
+        circ(d, bx, fy, bolt_r, fill=STEEL_HIGHLIGHT)
 
 def draw_nozzle_extension_seam(d, cx, bell_y, nozzle_h, throat_w, exit_w, frac=0.6):
     """Visible joint where deployable nozzle extension attaches."""
@@ -538,7 +542,8 @@ def generate_engine(name, spec):
     # Scale detail size proportionally to engine pixel size
     # Reference: ~200px exit width (small engine like Wolf)
     scale = max(0.4, exit_w_px / 200.0)
-    is_tiny = top_w_px < 60
+    px_scale = PX / 90.0  # Resolution multiplier (for PX-dependent constants)
+    is_tiny = spec["top_w"] < 0.67  # Grid-based, not pixel-based
     is_large = exit_w_px > 400
     bolt_r = max(2, int(2 * scale))
 
@@ -576,7 +581,7 @@ def generate_engine(name, spec):
     # ---- PREBURNER DOMES (on top of powerhead) ----
     n_domes = spec.get("preburner", 0)
     if n_domes > 0:
-        draw_preburner_domes(d, cx, y, ph_top_w, n=n_domes, r_scale=scale)
+        draw_preburner_domes(d, cx, y, ph_top_w, n=n_domes, px_scale=px_scale)
 
     # ---- HEAT EXCHANGER FINS (expander cycle) ----
     if spec.get("heat_fins"):
@@ -697,13 +702,14 @@ def generate_engine(name, spec):
         nozzle_h = int(total_h - (y - PAD) - 3)
         bell_y = y
 
-        # Ring positions
+        # Ring positions (spacing scaled with resolution)
+        ring_spacing = px_scale
         if vacuum:
             regen_frac = 0.35 if er > 60 else 0.45
-            n_per = max(2, int(regen_frac * nozzle_h / 40))
+            n_per = max(2, int(regen_frac * nozzle_h / (40 * ring_spacing)))
             ring_pos = [regen_frac * (i+1) / (n_per+1) for i in range(n_per)]
         else:
-            n_r = max(3, int(nozzle_h / 35))
+            n_r = max(3, int(nozzle_h / (35 * ring_spacing)))
             ring_pos = [(i+1) / (n_r+1) for i in range(n_r)]
 
         regen_frac = 0.35 if vacuum and er > 60 else 0.45

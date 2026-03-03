@@ -89,6 +89,15 @@ pub struct FlightPart {
     pub deploy_fraction: f64,     // 0.0 = retracted, 1.0 = fully deployed
     pub deploy_target: bool,      // desired state (false = retract, true = deploy)
     pub mirror_partner: Option<usize>, // index of mirror partner in parts vec
+
+    // Parachute state
+    pub is_parachute: bool,
+    pub parachute_deployed: bool,       // currently deployed
+    pub parachute_spent: bool,          // used once, permanently disabled
+    pub parachute_deploy_fraction: f64, // 0.0-1.0 animation
+    pub parachute_deployed_width_m: f64, // meters (from ParachuteData)
+    #[serde(default)]
+    pub parachute_fully_deployed: bool, // true when altitude <= 2000m (full drag)
 }
 
 impl FlightVessel {
@@ -194,6 +203,14 @@ impl FlightVessel {
                 deploy_fraction: 0.0,
                 deploy_target: false,
                 mirror_partner: None,
+                is_parachute: def.parachute.is_some(),
+                parachute_deployed: false,
+                parachute_spent: false,
+                parachute_deploy_fraction: 0.0,
+                parachute_deployed_width_m: def.parachute.as_ref()
+                    .map(|p| p.deployed_width * crate::parts::definition::GRID_SQUARE_SIZE)
+                    .unwrap_or(0.0),
+                parachute_fully_deployed: false,
             };
 
             // Set engine data if this is an engine
@@ -1112,6 +1129,64 @@ impl FlightVessel {
                 }
             }
         }
+    }
+
+    /// Animate parachute deployment and update full-deployment state based on altitude
+    pub fn update_parachute_deploy(&mut self, dt: f64, altitude: f64) {
+        const DEPLOY_SPEED: f64 = 1.0; // fraction per second (1s full deploy)
+        for part in &mut self.parts {
+            if !part.is_parachute || part.destroyed || part.decoupled { continue; }
+            let target = if part.parachute_deployed { 1.0 } else { 0.0 };
+            if (part.parachute_deploy_fraction - target).abs() > 1e-6 {
+                if part.parachute_deploy_fraction < target {
+                    part.parachute_deploy_fraction = (part.parachute_deploy_fraction + DEPLOY_SPEED * dt).min(1.0);
+                } else {
+                    part.parachute_deploy_fraction = (part.parachute_deploy_fraction - DEPLOY_SPEED * dt).max(0.0);
+                }
+            }
+            // Full deployment at or below 2000m altitude
+            if part.parachute_deployed {
+                part.parachute_fully_deployed = altitude <= 2000.0;
+            }
+        }
+    }
+
+    /// Auto-retract parachutes when leaving atmosphere or landing, marking them spent
+    pub fn auto_retract_parachutes(&mut self, in_atmosphere: bool, is_landed: bool) {
+        for part in &mut self.parts {
+            if !part.is_parachute || part.destroyed || part.decoupled { continue; }
+            if part.parachute_deployed && (!in_atmosphere || is_landed) {
+                part.parachute_deployed = false;
+                part.parachute_spent = true;
+                // Instant visual retraction on landing (skip animation)
+                if is_landed {
+                    part.parachute_deploy_fraction = 0.0;
+                }
+            }
+        }
+    }
+
+    /// Total parachute drag width in meters (sum of deployed canopies scaled by deploy fraction)
+    pub fn parachute_drag_width(&self) -> f64 {
+        let mut total = 0.0;
+        for part in &self.parts {
+            if part.is_parachute && part.parachute_deployed && !part.destroyed && !part.decoupled {
+                total += part.parachute_deployed_width_m * part.parachute_deploy_fraction;
+            }
+        }
+        total
+    }
+
+    /// Drag multiplier for parachutes: 100x when any deployed chute is fully deployed (<=2000m), 1x otherwise
+    pub fn parachute_drag_multiplier(&self) -> f64 {
+        for part in &self.parts {
+            if part.is_parachute && part.parachute_deployed && !part.destroyed && !part.decoupled
+                && part.parachute_fully_deployed
+            {
+                return 100.0;
+            }
+        }
+        1.0
     }
 
     /// Get the bounding half-width of the vessel (max extent from COM in X)
@@ -2351,6 +2426,14 @@ impl FlightVessel {
                 self.parts[part_idx].engine_enabled = true;
             }
 
+            // Deploy parachutes in this stage
+            if self.parts[part_idx].is_parachute
+                && !self.parts[part_idx].parachute_spent
+                && !self.parts[part_idx].parachute_deployed
+            {
+                self.parts[part_idx].parachute_deployed = true;
+            }
+
             // Fire fairings: decouple just the fairing base (parts inside stay)
             let def = part_defs.get(&self.parts[part_idx].definition_id);
             if let Some(def) = def {
@@ -2593,6 +2676,12 @@ pub fn create_default_vessel(
             deploy_fraction: 0.0,
             deploy_target: false,
             mirror_partner: None,
+            is_parachute: false,
+            parachute_deployed: false,
+            parachute_spent: false,
+            parachute_deploy_fraction: 0.0,
+            parachute_deployed_width_m: 0.0,
+            parachute_fully_deployed: false,
         }],
         root_part_index: 0,
         total_mass: 2.0,

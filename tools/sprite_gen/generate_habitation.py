@@ -25,7 +25,7 @@ Cargo Containers:
   cargo_medium (Medium 5x4), cargo_large (Large 9x5)
   Utilitarian storage boxes with reinforcement ribs and cargo markings.
 
-All parts use PX=90 px/grid, PAD=0.
+All parts use PX=360 px/grid, PAD=0.
 """
 
 from PIL import Image, ImageDraw
@@ -35,7 +35,7 @@ import os
 # ================================================================
 # Constants
 # ================================================================
-PX = 90
+PX = 360
 PAD = 0
 
 # ================================================================
@@ -673,6 +673,124 @@ def generate_cargo(size):
 
 
 # ================================================================
+# Probe Core generator
+# ================================================================
+
+# Probe palette (darker than control modules — minimal, electronics-heavy)
+PROBE_BODY = (35, 38, 45)
+PROBE_DARK = (22, 24, 30)
+PROBE_LIGHT = (52, 56, 65)
+
+# HAL eye colors
+HAL_FRAME = (100, 20, 20)
+HAL_RED = (200, 30, 30)
+HAL_BRIGHT = (240, 80, 50)
+HAL_CENTER = (255, 180, 120)
+
+
+def generate_probe(size):
+    """Probe core: unmanned control unit with HAL-style red eye."""
+    sizes = {
+        "tiny":   (1, 1),
+        "small":  (3, 1),
+        "medium": (5, 1),
+        "large":  (9, 1),
+    }
+    GW, GH = sizes[size]
+    w, h = int(GW * PX), int(GH * PX)
+    cw, ch = w + PAD * 2, h + PAD * 2
+    img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+
+    cx = cw // 2
+    x0, y0 = PAD, PAD
+    x1, y1 = x0 + w, y0 + h
+    scale = max(0.3, w / 270.0)
+
+    # Main body (dark electronics)
+    d.rectangle([x0, y0, x1, y1], fill=PROBE_BODY, outline=PROBE_DARK)
+
+    # Top and bottom mount rings
+    ring_h = max(3, int(h * 0.14))
+    d.rectangle([x0, y0, x1, y0 + ring_h], fill=STEEL_MID)
+    d.rectangle([x0, y1 - ring_h, x1, y1], fill=STEEL_MID)
+    d.line([(x0, y0 + ring_h), (x1, y0 + ring_h)], fill=PROBE_DARK, width=1)
+    d.line([(x0, y1 - ring_h), (x1, y1 - ring_h)], fill=PROBE_DARK, width=1)
+    d.line([(x0 + 2, y0 + 1), (x1 - 2, y0 + 1)], fill=STEEL_HIGHLIGHT, width=1)
+    d.line([(x0 + 2, y1 - 1), (x1 - 2, y1 - 1)], fill=STEEL_LIGHT, width=1)
+
+    # Bolts on rings
+    bolt_r = max(1, int(2 * scale))
+    n_bolts = max(2, int(GW * 1.0))
+    draw_bolts(d, cx, y0, w, ring_h, n_bolts, r=bolt_r)
+    draw_bolts(d, cx, y1 - ring_h, w, ring_h, n_bolts, r=bolt_r)
+
+    inner_top = y0 + ring_h
+    inner_bot = y1 - ring_h
+    inner_h = inner_bot - inner_top
+
+    # Left edge highlight
+    d.line([(x0 + 2, inner_top + 1), (x0 + 2, inner_bot - 1)],
+           fill=PROBE_LIGHT, width=max(1, int(1.5 * scale)))
+
+    # Subtle panel seams
+    n_seams = max(0, int(GW * 0.3))
+    seam_spacing = w / (n_seams + 1)
+    for i in range(n_seams):
+        sx = x0 + int((i + 1) * seam_spacing)
+        d.line([(sx, inner_top + 1), (sx, inner_bot - 1)], fill=PROBE_DARK, width=1)
+
+    # --- HAL 9000 red eye (central) ---
+    eye_r = max(4, int(min(inner_h * 0.35, w * 0.08)))
+    eye_cx = cx
+    eye_cy = (inner_top + inner_bot) // 2
+
+    # Dark frame ring
+    circ(d, eye_cx, eye_cy, eye_r + max(2, int(3 * scale)), fill=HAL_FRAME)
+    # Main red
+    circ(d, eye_cx, eye_cy, eye_r, fill=HAL_RED)
+    # Brighter inner ring
+    circ(d, eye_cx, eye_cy, max(2, int(eye_r * 0.6)), fill=HAL_BRIGHT)
+    # Hot center highlight
+    circ(d, eye_cx, eye_cy, max(1, int(eye_r * 0.25)), fill=HAL_CENTER)
+    # Specular glint (offset up-left)
+    glint_r = max(1, int(eye_r * 0.15))
+    circ(d, eye_cx - int(eye_r * 0.25), eye_cy - int(eye_r * 0.25),
+         glint_r, fill=(255, 220, 200))
+    # Outline
+    circ(d, eye_cx, eye_cy, eye_r + max(2, int(3 * scale)), outline=PROBE_DARK)
+
+    # Small status LEDs flanking the eye (for wider probes)
+    if GW >= 3:
+        led_r = max(1, int(2 * scale))
+        led_offset = int(eye_r * 2.5 + 4 * scale)
+        for sx in [-1, 1]:
+            lx = eye_cx + sx * led_offset
+            circ(d, lx, eye_cy, led_r, fill=CTRL_LED_GREEN)
+
+    # Additional circuit trace lines (for medium+ probes)
+    if GW >= 5:
+        trace_color = (45, 50, 60)
+        trace_y = eye_cy
+        # Left traces
+        tx0 = x0 + int(w * 0.06)
+        tx1 = eye_cx - int(eye_r * 3)
+        if tx1 > tx0:
+            d.line([(tx0, trace_y), (tx1, trace_y)], fill=trace_color, width=1)
+            d.line([(tx0, trace_y - 3), (tx1 - int(w * 0.03), trace_y - 3)],
+                   fill=trace_color, width=1)
+        # Right traces
+        tx0 = eye_cx + int(eye_r * 3)
+        tx1 = x1 - int(w * 0.06)
+        if tx1 > tx0:
+            d.line([(tx0, trace_y), (tx1, trace_y)], fill=trace_color, width=1)
+            d.line([(tx0 + int(w * 0.03), trace_y - 3), (tx1, trace_y - 3)],
+                   fill=trace_color, width=1)
+
+    return img
+
+
+# ================================================================
 # Registry and main
 # ================================================================
 
@@ -706,6 +824,16 @@ PARTS = {
                           lambda: generate_greenhouse("medium"), "parts"),
     "greenhouse_large":  ("Arboretum (Large 9x6)",
                           lambda: generate_greenhouse("large"), "parts"),
+
+    # Probe Cores -> parts/
+    "probe_tiny":   ("Tiny Probe Core (1x1)",
+                     lambda: generate_probe("tiny"), "parts"),
+    "probe_small":  ("Small Probe Core (3x1)",
+                     lambda: generate_probe("small"), "parts"),
+    "probe_medium": ("Medium Probe Core (5x1)",
+                     lambda: generate_probe("medium"), "parts"),
+    "probe_large":  ("Large Probe Core (9x1)",
+                     lambda: generate_probe("large"), "parts"),
 
     # Cargo Containers -> parts/
     "cargo_tiny":   ("Utility Crate (Tiny 1x2)",

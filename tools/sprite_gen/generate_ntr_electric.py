@@ -23,7 +23,7 @@ Xenon Tanks (4):
   Xe Tiny (1x1), Small (3x1), Medium (5x1), Large (9x1)
   High-pressure dark grey/charcoal vessels, very short.
 
-All parts use PX=90 px/grid. Engine sprites use PAD=0, part sprites use PAD=0.
+All parts use PX=360 px/grid. Engine sprites use PAD=0, part sprites use PAD=0.
 """
 
 from PIL import Image, ImageDraw
@@ -33,7 +33,7 @@ import os
 # ================================================================
 # Constants
 # ================================================================
-PX = 90
+PX = 360
 PAD = 0  # No padding — atlas packer adds spacing
 
 # ================================================================

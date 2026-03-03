@@ -31,3 +31,6 @@ The stats bar SHALL display resource totals at body text size in consistent orde
 When the vessel has any electricity capacity, power generation, or power consumption > 0, the stats bar SHALL display after a separator:
 - "EC: {value}k Wh" for capacity >= 1000 Wh, or "EC: {value} Wh" otherwise
 - "Power: +{generation}W / -{consumption}W"
+- **WHEN** net power (generation - consumption) < 0 AND electricity capacity > 0, "Duration: {formatted}" SHALL be shown
+- Duration formula: `seconds = (electricity_capacity / |net_watts|) * 3600`
+- Duration formatted as `format_duration()`: "Xd Xh Xm Xs" / "Xh Xm Xs" / "Xm Xs" / "Xs"

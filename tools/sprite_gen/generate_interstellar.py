@@ -29,7 +29,7 @@ import random
 # ================================================================
 # Constants
 # ================================================================
-PX = 90   # pixels per grid square (matches chemical engines)
+PX = 360   # pixels per grid square (4x base resolution)
 PAD = 0  # No padding — atlas packer adds spacing
 
 # ================================================================

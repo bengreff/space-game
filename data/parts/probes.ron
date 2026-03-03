@@ -1,0 +1,94 @@
+// Probe Core Part Definitions — unmanned control units
+// Lightweight alternatives to crewed pods for uncrewed missions.
+
+(
+    parts: [
+        // Tiny Probe Core
+        (
+            id: "probe_tiny",
+            name: "Tiny Probe Core",
+            description: "A miniature probe core for the smallest payloads. Low power, low mass.",
+            category: Pods,
+            mass: 0.02,
+            cost: 150,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 1.0,
+            pod: Some((
+                can_control: true,
+                crew_capacity: 0,
+                power_draw: 5.0,
+            )),
+            battery: Some((
+                capacity_wh: 200.0,
+            )),
+        ),
+
+        // Small Probe Core
+        (
+            id: "probe_small",
+            name: "Small Probe Core",
+            description: "A compact probe core suitable for lightweight satellite buses and landers.",
+            category: Pods,
+            mass: 0.05,
+            cost: 300,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 1.0,
+            pod: Some((
+                can_control: true,
+                crew_capacity: 0,
+                power_draw: 10.0,
+            )),
+            battery: Some((
+                capacity_wh: 500.0,
+            )),
+        ),
+
+        // Medium Probe Core
+        (
+            id: "probe_medium",
+            name: "Medium Probe Core",
+            description: "A mid-size probe core with ample processing power for interplanetary missions.",
+            category: Pods,
+            mass: 0.10,
+            cost: 600,
+            size: Medium,
+            shape: Rectangle,
+            grid_width: 5.0,
+            grid_height: 1.0,
+            pod: Some((
+                can_control: true,
+                crew_capacity: 0,
+                power_draw: 20.0,
+            )),
+            battery: Some((
+                capacity_wh: 1000.0,
+            )),
+        ),
+
+        // Large Probe Core
+        (
+            id: "probe_large",
+            name: "Large Probe Core",
+            description: "A high-capability probe core for deep-space exploration and heavy relay satellites.",
+            category: Pods,
+            mass: 0.20,
+            cost: 1200,
+            size: Large,
+            shape: Rectangle,
+            grid_width: 9.0,
+            grid_height: 1.0,
+            pod: Some((
+                can_control: true,
+                crew_capacity: 0,
+                power_draw: 40.0,
+            )),
+            battery: Some((
+                capacity_wh: 2000.0,
+            )),
+        ),
+    ],
+)

@@ -21,7 +21,7 @@ STEEL_HIGHLIGHT = (155, 160, 170)
 STEEL_VERY_DARK = (32, 34, 38)
 INTERIOR = (20, 18, 16)
 
-PX = 90   # Pixels per grid square
+PX = 360   # Pixels per grid square (4x base resolution)
 PAD = 0   # No padding — atlas packer adds 1px spacing between sprites
 
 

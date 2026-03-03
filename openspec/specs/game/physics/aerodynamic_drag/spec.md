@@ -35,9 +35,13 @@ Where `width` is `vessel_half_width` and `height` is `vessel_height` (bounding h
 - **WHEN** ship rotation is perpendicular to velocity (aoa = 1)
 - **THEN** cross-section SHALL be `2 * vessel_height` (maximum area)
 
+### Requirement: Parachute drag contribution
+
+Deployed parachute area SHALL be added to the body cross-section before computing drag force with an altitude-dependent drag multiplier: `total_cross_section = body_cross_section + parachute_drag_width * parachute_drag_multiplier`. The multiplier is 100x when any deployed parachute is fully deployed (altitude <= 2000m), or 1x when partially deployed (above 2000m). Parachute drag is orientation-independent (always full width regardless of angle of attack). Both `parachute_drag_width` and `parachute_drag_multiplier` come from `VesselPhysicsData`.
+
 ### Requirement: Drag force calculation
 
-Drag force SHALL be computed using the drag equation: `F_drag = 0.5 * density * airspeed^2 * Cd * cross_section`. Drag acceleration is `F_drag / total_mass_kg`, applied opposite to the airspeed direction.
+Drag force SHALL be computed using the drag equation: `F_drag = 0.5 * density * airspeed^2 * Cd * total_cross_section`. Drag acceleration is `F_drag / total_mass_kg`, applied opposite to the airspeed direction.
 
 ### Requirement: Drag skip conditions
 

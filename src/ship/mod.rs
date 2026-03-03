@@ -42,6 +42,8 @@ pub struct VesselPhysicsData {
     pub gimbal_torque: f64,    // kN·m from gimbaled engines (signed: + = CCW)
     pub vessel_half_width: f64, // meters (half-width for cross-section)
     pub rcs_translation_force: f64, // kN total from all RCS thrusters for translation
+    pub parachute_drag_width: f64, // meters, total deployed parachute width
+    pub parachute_drag_multiplier: f64, // 50x when fully deployed (<=2000m), 1x partial
 }
 
 /// Rotation drag (natural deceleration) in radians/second² (9 degrees/s/s)
@@ -795,7 +797,11 @@ impl Ship {
 
         let velocity_angle = airspeed_y.atan2(airspeed_x);
         let aoa = (self.rotation - velocity_angle).sin().abs(); // 0 = nose-on, 1 = broadside
-        let cross_section = half_width * 2.0 * (1.0 - aoa) + half_height * 2.0 * aoa;
+        let body_cross_section = half_width * 2.0 * (1.0 - aoa) + half_height * 2.0 * aoa;
+        // Parachute drag is orientation-independent (multiplier depends on full vs partial deployment)
+        let parachute_multiplier = vessel.map(|v| v.parachute_drag_multiplier).unwrap_or(1.0);
+        let parachute_area = vessel.map(|v| v.parachute_drag_width).unwrap_or(0.0) * parachute_multiplier;
+        let cross_section = body_cross_section + parachute_area;
 
         // F_drag = 0.5 * rho * v^2 * Cd * A
         let total_mass_kg = vessel

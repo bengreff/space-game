@@ -2424,3 +2424,82 @@ pub fn part_at_screen_pos(
 
     None
 }
+
+/// Generate vertices for a deployed parachute canopy in METER space.
+///
+/// All output coordinates are in meters relative to the anchor point (0,0).
+/// The caller is responsible for scaling and transforming to screen coordinates.
+///
+/// `retro_x, retro_y`: unit vector pointing in the retrograde direction (canopy opens toward this).
+/// `deployed_width_m`: full canopy diameter in meters.
+/// `deploy_fraction`: 0.0-1.0 animation progress.
+pub fn generate_parachute_canopy_vertices(
+    vertices: &mut Vec<Vertex>,
+    retro_x: f32,
+    retro_y: f32,
+    deployed_width_m: f64,
+    deploy_fraction: f64,
+    visual_width_scale: f32,
+) {
+    if deploy_fraction < 1e-6 { return; }
+
+    let frac = deploy_fraction as f32;
+    let radius = (deployed_width_m * 0.5 * deploy_fraction) as f32 * visual_width_scale;
+    let cable_length = (deployed_width_m * 2.0 * deploy_fraction) as f32 * visual_width_scale;
+
+    // Anchor is at origin (0,0). Canopy center is at anchor + retrograde * cable_length.
+    let cx = retro_x * cable_length;
+    let cy = retro_y * cable_length;
+
+    // Perpendicular axis (rotate retrograde 90 degrees CCW)
+    let perp_x = -retro_y;
+    let perp_y = retro_x;
+
+    // Draw semicircle canopy as alternating white/orange wedges
+    let white: [f32; 4] = [0.90, 0.91, 0.92, 0.85 * frac];
+    let orange: [f32; 4] = [0.82, 0.47, 0.16, 0.85 * frac];
+    let num_wedges = 12;
+
+    for i in 0..num_wedges {
+        let color = if i % 2 == 0 { white } else { orange };
+        let a0 = (i as f32 / num_wedges as f32) * std::f32::consts::PI;
+        let a1 = ((i + 1) as f32 / num_wedges as f32) * std::f32::consts::PI;
+
+        let dir0_x = -perp_x * a0.cos() + retro_x * a0.sin();
+        let dir0_y = -perp_y * a0.cos() + retro_y * a0.sin();
+        let dir1_x = -perp_x * a1.cos() + retro_x * a1.sin();
+        let dir1_y = -perp_y * a1.cos() + retro_y * a1.sin();
+
+        vertices.push(Vertex::new([cx, cy], color));
+        vertices.push(Vertex::new([cx + dir0_x * radius, cy + dir0_y * radius], color));
+        vertices.push(Vertex::new([cx + dir1_x * radius, cy + dir1_y * radius], color));
+    }
+
+    // Draw cables as quad strips from flat edge to anchor (origin)
+    let cable_color: [f32; 4] = [0.9, 0.91, 0.93, 0.9 * frac];
+    // Cable width: 0.1% of canopy radius, min 0.015m
+    let cable_half_w = (radius * 0.001).max(0.015);
+    let num_cables = 5;
+    for i in 0..num_cables {
+        let frac_pos = i as f32 / (num_cables - 1) as f32;
+        let edge_x = cx + perp_x * (frac_pos * 2.0 - 1.0) * radius;
+        let edge_y = cy + perp_y * (frac_pos * 2.0 - 1.0) * radius;
+
+        // Direction from edge to anchor (origin)
+        let dx = -edge_x;
+        let dy = -edge_y;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 0.01 { continue; }
+        let nx = -dy / len * cable_half_w;
+        let ny = dx / len * cable_half_w;
+
+        // Quad as two triangles
+        vertices.push(Vertex::new([edge_x - nx, edge_y - ny], cable_color));
+        vertices.push(Vertex::new([edge_x + nx, edge_y + ny], cable_color));
+        vertices.push(Vertex::new([nx, ny], cable_color));
+
+        vertices.push(Vertex::new([edge_x - nx, edge_y - ny], cable_color));
+        vertices.push(Vertex::new([nx, ny], cable_color));
+        vertices.push(Vertex::new([-nx, -ny], cable_color));
+    }
+}

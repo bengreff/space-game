@@ -12,7 +12,7 @@ Shields (9 variants):
   Active FRES Small/Medium/Large     — electromagnetic coil arrays
   Geodesic Deflector Small/Medium/Large — exotic-matter toroidal ring
 
-Visual palette matches generate_interstellar.py. All parts use PX=90 px/grid.
+Visual palette matches generate_interstellar.py. All parts use PX=360 px/grid.
 """
 
 from PIL import Image, ImageDraw
@@ -22,7 +22,7 @@ import os
 # ================================================================
 # Constants
 # ================================================================
-PX = 90
+PX = 360
 PAD = 0  # No padding — atlas packer adds spacing
 
 # ================================================================

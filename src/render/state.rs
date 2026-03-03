@@ -123,6 +123,7 @@ pub struct RenderState {
     pub vessel_power_consumption: Option<f64>, // Watts
     pub vessel_electricity_fraction: Option<f64>, // 0.0-1.0
     pub vessel_electricity_stored: Option<f64>,   // Wh
+    pub vessel_electricity_max: Option<f64>,     // Wh max capacity
     pub vessel_thrust_kn: Option<f64>,     // kN
     pub vessel_drag_kn: f64,               // kN, aerodynamic drag
     pub vessel_delta_v: Option<f64>,       // m/s
@@ -153,6 +154,9 @@ pub struct RenderState {
     pub decouple_request: Option<usize>,  // part_index to manually decouple
     pub fairing_deploy_request: Option<usize>,  // part_index to deploy fairing
     pub solar_deploy_request: Option<(usize, bool)>,  // (part_index, deploy)
+    pub parachute_deploy_request: Option<usize>,  // part_index to deploy parachute
+    pub ship_in_atmosphere: bool,  // Whether the active vessel is in atmosphere
+    pub ship_is_landed: bool,      // Whether the active vessel is landed
     pub ap_markers: Vec<([f64; 2], f64)>, // Apoapsis markers: (world pos relative to camera, altitude)
     pub pe_markers: Vec<([f64; 2], f64)>, // Periapsis markers: (world pos relative to camera, altitude)
     pub closest_approach_world_pos: Option<([f64; 2], f64)>, // (render world pos, distance meters) - set by main.rs
@@ -487,6 +491,7 @@ impl RenderState {
             vessel_power_consumption: None,
             vessel_electricity_fraction: None,
             vessel_electricity_stored: None,
+            vessel_electricity_max: None,
             vessel_thrust_kn: None,
             vessel_drag_kn: 0.0,
             vessel_delta_v: None,
@@ -515,6 +520,9 @@ impl RenderState {
             decouple_request: None,
             fairing_deploy_request: None,
             solar_deploy_request: None,
+            parachute_deploy_request: None,
+            ship_in_atmosphere: false,
+            ship_is_landed: false,
             ap_markers: Vec::new(),
             pe_markers: Vec::new(),
             closest_approach_world_pos: None,
@@ -677,6 +685,7 @@ impl RenderState {
         let vessel_fuel_fraction = self.vessel_fuel_fraction;
         let vessel_electricity_fraction = self.vessel_electricity_fraction;
         let vessel_electricity_stored = self.vessel_electricity_stored;
+        let vessel_electricity_max = self.vessel_electricity_max;
         let vessel_power_generation = self.vessel_power_generation;
         let vessel_power_consumption = self.vessel_power_consumption;
         let vessel_thrust_kn = self.vessel_thrust_kn;
@@ -719,6 +728,9 @@ impl RenderState {
         let mut decouple_req: Option<usize> = None;
         let mut fairing_deploy_req: Option<usize> = None;
         let mut solar_deploy_req: Option<(usize, bool)> = None;
+        let mut parachute_deploy_req: Option<usize> = None;
+        let ship_in_atmosphere = self.ship_in_atmosphere;
+        let ship_is_landed = self.ship_is_landed;
         let mut staging_reorder_req: Option<Vec<Vec<usize>>> = None;
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
@@ -1135,12 +1147,11 @@ impl RenderState {
                         ui.add_space(3.0);
 
                         let stored = vessel_electricity_stored.unwrap_or(0.0);
-                        let elec_label = if stored >= 1000.0 {
-                            format!("{:.1}k", stored / 1000.0)
-                        } else {
-                            format!("{:.0}", stored)
+                        let max = vessel_electricity_max.unwrap_or(0.0);
+                        let fmt_wh = |v: f64| -> String {
+                            if v >= 1000.0 { format!("{:.1}k", v / 1000.0) } else { format!("{:.0}", v) }
                         };
-                        ui.label(egui::RichText::new(format!("{}Wh", elec_label))
+                        ui.label(egui::RichText::new(format!("{} / {} Wh", fmt_wh(stored), fmt_wh(max)))
                             .size(11.0)
                             .color(egui::Color32::WHITE));
                         ui.add_space(3.0);
@@ -1175,6 +1186,15 @@ impl RenderState {
                             ui.add_space(3.0);
                             let net_text = format!("+{:.0}W\n-{:.0}W", gen, cons);
                             ui.label(egui::RichText::new(net_text).size(9.0).color(egui::Color32::GRAY));
+
+                            // Power duration when draining
+                            let net = gen - cons;
+                            if net < 0.0 && stored > 0.0 {
+                                let seconds = (stored / net.abs()) * 3600.0;
+                                ui.label(egui::RichText::new(format_duration(seconds))
+                                    .size(9.0)
+                                    .color(egui::Color32::from_rgb(220, 180, 40)));
+                            }
                         }
                     }
 
@@ -2024,6 +2044,32 @@ impl RenderState {
                                     fairing_deploy_req = Some(part.part_index);
                                 }
                             }
+
+                            // Parachute info
+                            if part.is_parachute {
+                                ui.separator();
+                                ui.label(egui::RichText::new("Parachute").strong());
+                                ui.label(format!("Deployed Width: {:.1} m", part.parachute_deployed_width_m));
+                                if part.parachute_spent {
+                                    let btn = ui.add_enabled(false, egui::Button::new("Spent"));
+                                    btn.on_disabled_hover_text("Parachute already used");
+                                } else if part.parachute_deployed {
+                                    ui.label("Status: Deployed");
+                                } else {
+                                    let can_deploy = ship_in_atmosphere && !ship_is_landed;
+                                    let btn = ui.add_enabled(can_deploy, egui::Button::new("Deploy"));
+                                    if btn.clicked() {
+                                        parachute_deploy_req = Some(part.part_index);
+                                    }
+                                    if !can_deploy {
+                                        if !ship_in_atmosphere {
+                                            btn.on_disabled_hover_text("Cannot deploy in vacuum");
+                                        } else {
+                                            btn.on_disabled_hover_text("Cannot deploy while landed");
+                                        }
+                                    }
+                                }
+                            }
                         });
                 }
             }
@@ -2383,6 +2429,9 @@ impl RenderState {
         if solar_deploy_req.is_some() {
             self.solar_deploy_request = solar_deploy_req;
         }
+        if parachute_deploy_req.is_some() {
+            self.parachute_deploy_request = parachute_deploy_req;
+        }
         // Store staging reorder request for main.rs to process
         if staging_reorder_req.is_some() {
             self.staging_reorder = staging_reorder_req;
@@ -2660,6 +2709,7 @@ impl RenderState {
             self.vessel_power_consumption = s.power_consumption;
             self.vessel_electricity_fraction = s.electricity_fraction;
             self.vessel_electricity_stored = s.electricity_stored;
+            self.vessel_electricity_max = s.electricity_max;
             self.vessel_thrust_kn = s.thrust_kn;
             self.vessel_drag_kn = s.drag_kn;
             self.vessel_delta_v = s.delta_v;
@@ -3698,6 +3748,65 @@ impl RenderState {
                                     all_indices.push(base_index + i);
                                     all_indices.push(base_index + i + 1);
                                     all_indices.push(base_index + i + 2);
+                                }
+                            }
+                        }
+                    }
+
+                    // Fourth pass: draw deployed parachute canopies
+                    {
+                        // Retrograde direction in world frame
+                        let vdir = ship_data.velocity_direction;
+                        let vel_mag = (vdir[0] * vdir[0] + vdir[1] * vdir[1]).sqrt();
+                        let (retro_world_x, retro_world_y) = if vel_mag > 0.1 {
+                            (-vdir[0] as f32, -vdir[1] as f32)
+                        } else {
+                            let heading = ship_data.rotation as f32;
+                            (-heading.cos(), -heading.sin())
+                        };
+
+                        // Convert retrograde from world frame to vessel-local frame
+                        // (undo the visual_rotation so canopy directions are in local meter space)
+                        let retro_local_x = retro_world_x * cos_r + retro_world_y * sin_r;
+                        let retro_local_y = -retro_world_x * sin_r + retro_world_y * cos_r;
+
+                        for part_data in parts {
+                            if !part_data.is_parachute || part_data.parachute_deploy_fraction < 1e-6 {
+                                continue;
+                            }
+
+                            // Anchor cables to dome top (bottom-aligned sprite, lowered 0.25 grid squares)
+                            let anchor_local_x = part_data.local_x as f32;
+                            let anchor_local_y = part_data.local_y as f32 - part_data.hitbox_half_h as f32 + (part_data.sprite_half_h * 2.0) as f32 - 0.125;
+
+                            // Generate canopy in meter space relative to anchor (0,0)
+                            let mut canopy_verts: Vec<Vertex> = Vec::new();
+                            let visual_scale = if part_data.parachute_fully_deployed { 1.0 } else { 0.5 };
+                            crate::editor::generate_parachute_canopy_vertices(
+                                &mut canopy_verts,
+                                retro_local_x, retro_local_y,
+                                part_data.parachute_deployed_width_m,
+                                part_data.parachute_deploy_fraction,
+                                visual_scale,
+                            );
+
+                            if !canopy_verts.is_empty() {
+                                let base_index = all_vertices.len() as u32;
+                                // Transform from meter space to screen: offset by anchor, scale, rotate
+                                for vert in &canopy_verts {
+                                    let mx = (vert.position[0] + anchor_local_x) * render_scale;
+                                    let my = (vert.position[1] + anchor_local_y) * render_scale;
+                                    let rx = mx * cos_r - my * sin_r;
+                                    let ry = mx * sin_r + my * cos_r;
+                                    all_vertices.push(Vertex::new([rel_x + rx, rel_y + ry], vert.color));
+                                }
+                                let num_verts = canopy_verts.len() as u32;
+                                for i in (0..num_verts).step_by(3) {
+                                    if i + 2 < num_verts {
+                                        all_indices.push(base_index + i);
+                                        all_indices.push(base_index + i + 1);
+                                        all_indices.push(base_index + i + 2);
+                                    }
                                 }
                             }
                         }
