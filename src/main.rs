@@ -374,14 +374,35 @@ fn render_flight_frame(
 
     // --- Simulation (skipped when paused) ---
     let vessel_physics = if !game.paused {
-        // Force warp to 1x if ship is below landing altitude at on-rails warp speeds (>10x)
-        // Only when flying — landed ships can warp at any speed (update_landed is analytical)
-        if game.flight.ship.below_landing_altitude(&game.solar_system)
-            && matches!(game.flight.ship.state, ShipState::Flying)
-        {
+        // Auto-drop on-rails warp when approaching atmosphere/surface.
+        // Uses time-to-periapsis so it works even when the ship is ascending
+        // toward apoapsis — it looks ahead to when it will reach periapsis.
+        // Only when flying — landed ships can warp at any speed (update_landed is analytical).
+        if matches!(game.flight.ship.state, ShipState::Flying) {
             let warp = WARP_LEVELS[game.warp_index];
             if warp > RAILS_WARP_THRESHOLD {
-                game.warp_index = 0;
+                let soi_body = &game.solar_system.bodies[game.flight.ship.soi_body];
+                let dist = (game.flight.ship.rel_position[0].powi(2)
+                          + game.flight.ship.rel_position[1].powi(2)).sqrt();
+                let altitude = dist - soi_body.radius;
+                let danger_altitude = soi_body.landing_altitude();
+
+                if altitude < danger_altitude {
+                    // Already in landing zone — drop immediately
+                    game.warp_index = 0;
+                } else if game.flight.ship.periapsis_below_surface(&game.solar_system) {
+                    if let Some(ttp) = game.flight.ship.time_to_periapsis(&game.solar_system) {
+                        // Find the highest warp level where 3 frames won't overshoot periapsis
+                        const SAFE_FRAMES: f64 = 10.0;
+                        let max_safe_warp = ttp / (dt as f64 * SAFE_FRAMES);
+                        let safe_index = WARP_LEVELS.iter()
+                            .rposition(|&w| w <= max_safe_warp)
+                            .unwrap_or(0);
+                        if safe_index < game.warp_index {
+                            game.warp_index = safe_index;
+                        }
+                    }
+                }
             }
         }
 
@@ -676,6 +697,9 @@ fn render_flight_frame(
                 true // Keep — not in danger zone
             }
         });
+
+        // Delete debris vessels that are far from all controllable vessels
+        game.flight.cleanup_distant_debris();
 
         // Collision detection: active vs inactive vessels during physics warp (1x-10x)
         // Uses oriented bounding box (OBB) collision via Separating Axis Theorem
@@ -1011,7 +1035,7 @@ fn render_flight_frame(
                     argument_of_periapsis: seg.orbit.argument_of_periapsis,
                     start_true_anomaly: seg.start_true_anomaly,
                     end_true_anomaly: seg.end_true_anomaly,
-                    color: [game.flight.ship.color[0] * 0.6, game.flight.ship.color[1] * 0.6, game.flight.ship.color[2] * 0.6, alpha],
+                    color: [0.9, 0.2, 0.2, alpha],
                     is_first_segment: i == 0,
                     retrograde: seg.retrograde,
                     soi_radius: parent_soi * SCALE * BODY_SCALE,
@@ -1424,6 +1448,7 @@ fn render_flight_frame(
                 orbit: orbit_data,
                 parts,
                 rotation: v.ship.rotation,
+                is_debris: v.is_debris,
             }
         })
         .collect();
@@ -2135,7 +2160,7 @@ fn render_flight_frame(
 
     // Create debris vessels outside the vessel borrow (thermal breakup — no ejection force)
     for (debris_vessel, com_offset) in debris_list {
-        game.flight.create_debris_vessel(debris_vessel, com_offset, 0.0, &game.solar_system);
+        game.flight.create_debris_vessel(debris_vessel, com_offset, 0.0, &game.solar_system, &game.part_definitions);
     }
 
     // Remove vessel if all parts destroyed
@@ -2155,6 +2180,14 @@ fn render_editor_frame(
 ) {
     // Update camera position based on held keys
     game.editor.update_camera(dt);
+
+    // Tick alert timer
+    if game.editor.alert_timer > 0.0 {
+        game.editor.alert_timer -= dt as f64;
+        if game.editor.alert_timer <= 0.0 {
+            game.editor.alert_message = None;
+        }
+    }
 
     let screen_width = render_state.size.width as f32;
     let screen_height = render_state.size.height as f32;
@@ -2252,7 +2285,11 @@ fn render_editor_frame(
                     }
                     log::info!("Launched vessel");
                 }
-                Err(e) => log::error!("Failed to launch: {}", e),
+                Err(e) => {
+                    log::error!("Failed to launch: {}", e);
+                    game.editor.alert_message = Some(e);
+                    game.editor.alert_timer = 3.0;
+                }
             }
         }
         EditorAction::SaveBlueprint(name) => {
@@ -2548,6 +2585,7 @@ fn build_tracking_vessel_data(
             orbit: orbit_data,
             parts,
             rotation: v.ship.rotation,
+            is_debris: v.is_debris,
         });
     }
 
@@ -3283,7 +3321,7 @@ fn handle_post_decouple(game: &mut Game) {
         });
 
     if let Some((debris_vessel, com_offset)) = extracted {
-        game.flight.create_debris_vessel(debris_vessel, com_offset, ejection_force, &game.solar_system);
+        game.flight.create_debris_vessel(debris_vessel, com_offset, ejection_force, &game.solar_system, &game.part_definitions);
     }
 
     // Recenter parts on new COM and shift ship position to match
@@ -3379,7 +3417,7 @@ fn switch_to_next_vessel_by_id(game: &mut Game, render_state: &mut RenderState, 
     }
 
     let old_nodes = render_state.swap_maneuver_nodes(Vec::new());
-    match game.flight.switch_to_vessel(target_id, old_nodes, &game.solar_system) {
+    match game.flight.switch_to_vessel(target_id, old_nodes, &game.solar_system, &game.part_definitions) {
         Ok(new_nodes) => {
             render_state.swap_maneuver_nodes(new_nodes);
             render_state.tracked_body = None;

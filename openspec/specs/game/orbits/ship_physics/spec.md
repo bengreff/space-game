@@ -163,9 +163,17 @@ The ship SHALL enter on-rails mode when ALL of the following are true:
 - **WHEN** time warp is 1000x and throttle is 0 but ship is below landing altitude
 - **THEN** the ship SHALL NOT enter on-rails mode
 
-### Requirement: Warp reset below landing altitude
+### Requirement: Predictive warp drop before atmospheric entry
 
-When the ship is **flying** and below landing altitude and the current warp level exceeds `RAILS_WARP_THRESHOLD`, warp SHALL be automatically reset to 1x (warp index 0). This prevents high time warp in dangerous proximity to a body's surface. Landed ships are exempt — the `update_landed` function is analytical (pins ship to surface via `surface_angle * body_radius`) and works correctly at any timestep, so landed ships MAY use any warp level including on-rails speeds (100x+).
+When the ship is **flying** and the current warp level exceeds `RAILS_WARP_THRESHOLD`, warp SHALL be reduced using predictive logic to prevent the ship from phasing through the atmosphere during on-rails propagation:
+
+1. **Already in danger zone**: If altitude < `landing_altitude()`, drop warp to 1x immediately.
+2. **Approaching periapsis**: If the orbit's periapsis is below the body's surface (`periapsis_below_surface()`), compute time-to-periapsis from the cached orbital elements (mean anomaly distance to M=0). Find the highest warp level where `dt * warp * 10 <= time_to_periapsis` (10-frame safety buffer). If that level is lower than the current warp, clamp warp down to it. This works regardless of whether the ship is currently ascending or descending — it uses orbital mechanics to predict when periapsis will be reached.
+3. **Safe orbit**: If periapsis does not dip below surface, no warp drop is needed.
+
+`Ship::time_to_periapsis()` computes time until mean anomaly reaches 0 (periapsis) using the cached orbit's mean anomaly and mean motion. Handles prograde and retrograde orbits. Returns `None` for hyperbolic orbits or when no cached orbit exists.
+
+Landed ships are exempt — the `update_landed` function is analytical (pins ship to surface via `surface_angle * body_radius`) and works correctly at any timestep, so landed ships MAY use any warp level including on-rails speeds (100x+).
 
 #### Scenario: Landed ship at high warp
 - **WHEN** the ship is in `Landed` state and warp is set to 100x or higher
@@ -174,6 +182,14 @@ When the ship is **flying** and below landing altitude and the current warp leve
 #### Scenario: Flying ship below landing altitude at high warp
 - **WHEN** the ship is in `Flying` state and below landing altitude and warp > RAILS_WARP_THRESHOLD
 - **THEN** warp SHALL be reset to 1x (warp index 0)
+
+#### Scenario: Approaching atmosphere at high warp (ascending or descending)
+- **WHEN** the ship is in `Flying` state, warp > RAILS_WARP_THRESHOLD, periapsis is below surface
+- **THEN** warp SHALL be clamped to the highest level where 10 frames of on-rails propagation won't overshoot periapsis, dropping directly to the correct safe level
+
+#### Scenario: High orbit with safe periapsis at high warp
+- **WHEN** the ship is in `Flying` state, warp > RAILS_WARP_THRESHOLD, and periapsis is above the body's surface
+- **THEN** warp SHALL NOT be reset
 
 ### Requirement: On-rails mode propagation
 

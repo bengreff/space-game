@@ -272,6 +272,24 @@ impl Ship {
         ]
     }
 
+    /// Time in seconds until the ship reaches periapsis.
+    /// Returns None if no cached orbit or orbit is hyperbolic.
+    pub fn time_to_periapsis(&self, solar_system: &SolarSystem) -> Option<f64> {
+        let ship_orbit = self.cached_orbit.as_ref()?;
+        let a = ship_orbit.orbit.semi_major_axis;
+        if a <= 0.0 { return None; } // hyperbolic
+        let parent = &solar_system.bodies[ship_orbit.parent_idx];
+        let parent_mass = parent.effective_mass_at(a);
+        let n = ship_orbit.orbit.mean_motion(parent_mass);
+        if n <= 0.0 { return None; }
+        // Periapsis is at mean anomaly = 0
+        // For prograde: time = (TAU - M) / n (going forward to M=0)
+        // For retrograde: time = M / n (going backward to M=0)
+        let m = ship_orbit.mean_anomaly;
+        let time = if ship_orbit.retrograde { m / n } else { (std::f64::consts::TAU - m) % std::f64::consts::TAU / n };
+        Some(time)
+    }
+
     /// Check if the ship is currently inside an atmosphere
     pub fn in_atmosphere(&self, solar_system: &SolarSystem) -> bool {
         let soi_body = &solar_system.bodies[self.soi_body];
