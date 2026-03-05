@@ -74,7 +74,7 @@ When rendering a part with `fairing_half.is_some()`, the base disc SHALL be skip
 
 ### Requirement: Engine exhaust plumes during thrust
 
-When an engine is active and throttle > 0, an exhaust plume SHALL be rendered below the engine nozzle.
+When an engine is active and throttle > 0, an exhaust plume SHALL be rendered below the engine nozzle. Multi-nozzle engines (with `nozzle_offsets`) render separate plumes at each nozzle position, scaled by `1/nozzle_count`.
 
 #### Scenario: Plume geometry
 - `plume_length = nozzle_width * 2.0 * throttle`

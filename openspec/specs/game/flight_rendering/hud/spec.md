@@ -99,9 +99,13 @@ Right side of bottom panel SHALL show: "VEL" label with value at font size 13 st
 
 ## Throttle Bar
 
-### Requirement: Throttle bar on left side panel
+### Requirement: Throttle bar on right side panel
 
-An egui left panel named "throttle_panel" with width 50 and background `rgba(20, 20, 30, 200)`.
+An egui right panel named "throttle_panel" with width 50 and background `rgba(20, 20, 30, 200)`. Created after the staging panel so it appears to the left of staging in the UI. Contains only the THR label, percentage, and throttle bar.
+
+### Requirement: Status panel on left side
+
+An egui left panel named "status_panel" with width 50 and background `rgba(20, 20, 30, 200)`. Contains fuel, electricity, heat bars, stage indicator, XFER button, and debug button.
 
 #### Scenario: Throttle bar layout
 - "THR" label at font size 10, percentage at font size 12 strong
@@ -173,6 +177,10 @@ When vessel has stages, an egui right panel named "flight_staging_panel" with de
 #### Scenario: Per-stage delta-v
 - Green `rgb(120, 200, 120)` at font size 10
 - `>= 1000` -> "{X.X}km/s", else "{X.0}m/s"
+
+#### Scenario: Selected part highlighting
+- When a flight part is selected (clicked in the viewport), its corresponding staging entry SHALL be highlighted in light blue `rgb(128, 179, 255)`
+- Selection is matched by comparing `selected_flight_part` cache index → `part_index` against each staging entry's `part_index`
 
 #### Scenario: Drag-and-drop
 - Stage headers are drag sources for reordering

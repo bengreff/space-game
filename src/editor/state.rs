@@ -378,12 +378,19 @@ impl EditorState {
                     // Check mirror ghost overlap too
                     if !overlaps {
                         let mirror_bounds = Self::calc_bounds([mirror_x, snapped_y], rot_hitbox_w, rot_hitbox_h);
-                        for (_, part) in &self.parts {
-                            if let Some(existing_def) = part_defs.get(&part.definition_id) {
-                                let existing_bounds = Self::calc_bounds(part.position, existing_def.rotated_hitbox_width(part.rotation), existing_def.rotated_hitbox_height(part.rotation));
-                                if Self::bounds_overlap(&mirror_bounds, &existing_bounds) {
-                                    overlaps = true;
-                                    break;
+                        // Check mirror vs primary ghost overlap
+                        if Self::bounds_overlap(&new_bounds, &mirror_bounds) {
+                            overlaps = true;
+                        }
+                        // Check mirror vs existing parts
+                        if !overlaps {
+                            for (_, part) in &self.parts {
+                                if let Some(existing_def) = part_defs.get(&part.definition_id) {
+                                    let existing_bounds = Self::calc_bounds(part.position, existing_def.rotated_hitbox_width(part.rotation), existing_def.rotated_hitbox_height(part.rotation));
+                                    if Self::bounds_overlap(&mirror_bounds, &existing_bounds) {
+                                        overlaps = true;
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -1257,6 +1264,49 @@ impl EditorState {
             .filter(|id| !decoupled.contains(id))
             .collect();
 
+        // Pre-compute adapter targets for non-radial decouplers.
+        // Decouplers connect upward only through their adapter target
+        // (closest aligned tank/pod above the ring).
+        let tolerance = 0.01;
+        let mut decoupler_ring_tops: HashMap<PlacedPartId, f64> = HashMap::new();
+        let mut adapter_targets: HashMap<PlacedPartId, PlacedPartId> = HashMap::new();
+
+        for &id in &active_ids {
+            let part = &self.parts[&id];
+            let Some(def) = part_defs.get(&part.definition_id) else { continue };
+            let Some(ref dec) = def.decoupler else { continue };
+            if dec.is_radial { continue; }
+
+            let ring_top = part.position[1] - def.hitbox_height() / 2.0 + def.height();
+            decoupler_ring_tops.insert(id, ring_top);
+
+            // Find adapter target: closest aligned tank/pod whose bottom >= ring_top
+            let dec_x = part.position[0];
+            let mut best_target: Option<PlacedPartId> = None;
+            let mut best_dist = f64::MAX;
+
+            for &tid in &active_ids {
+                if tid == id { continue; }
+                let t_part = &self.parts[&tid];
+                let Some(t_def) = part_defs.get(&t_part.definition_id) else { continue };
+                if t_def.tank.is_none() && t_def.pod.is_none() { continue; }
+                if (t_part.position[0] - dec_x).abs() > tolerance { continue; }
+
+                let t_bottom = t_part.position[1] - t_def.hitbox_height() / 2.0;
+                if t_bottom < ring_top - tolerance { continue; }
+
+                let dist = t_bottom - ring_top;
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_target = Some(tid);
+                }
+            }
+
+            if let Some(target) = best_target {
+                adapter_targets.insert(id, target);
+            }
+        }
+
         let mut zone_of: HashMap<PlacedPartId, usize> = HashMap::new();
         let mut current_zone = 0usize;
 
@@ -1281,6 +1331,33 @@ impl EditorState {
                     if zone_of.contains_key(&other_id) { continue; }
                     let other = &self.parts[&other_id];
                     let Some(other_def) = part_defs.get(&other.definition_id) else { continue };
+
+                    // Enforce decoupler adapter connectivity:
+                    // If current is a non-radial decoupler and other is above its ring,
+                    // only connect if other is the adapter target. Use center Y so
+                    // that a large hitbox extending below ring_top doesn't bridge.
+                    if let Some(&ring_top) = decoupler_ring_tops.get(&current_id) {
+                        if other.position[1] > ring_top + tolerance {
+                            if adapter_targets.get(&current_id) == Some(&other_id) {
+                                zone_of.insert(other_id, current_zone);
+                                queue.push_back(other_id);
+                            }
+                            continue;
+                        }
+                    }
+
+                    // If other is a non-radial decoupler and current is above its ring,
+                    // only connect if current is the adapter target.
+                    if let Some(&ring_top) = decoupler_ring_tops.get(&other_id) {
+                        if current.position[1] > ring_top + tolerance {
+                            if adapter_targets.get(&other_id) == Some(&current_id) {
+                                zone_of.insert(other_id, current_zone);
+                                queue.push_back(other_id);
+                            }
+                            continue;
+                        }
+                    }
+
                     if Self::weld_bounds_overlap(current.position, current_def, current.rotation, other.position, other_def, other.rotation) {
                         zone_of.insert(other_id, current_zone);
                         queue.push_back(other_id);
@@ -1337,7 +1414,17 @@ impl EditorState {
                 }
             }
 
-            // 2. Enable engines in this stage
+            // 2. Fire fairings: decouple just the fairing base (parts inside stay)
+            for &part_id in stage {
+                if decoupled.contains(&part_id) { continue; }
+                let Some(part) = self.parts.get(&part_id) else { continue };
+                let Some(def) = part_defs.get(&part.definition_id) else { continue };
+                if def.fairing.is_some() {
+                    decoupled.insert(part_id);
+                }
+            }
+
+            // 3. Enable engines in this stage
             for &part_id in stage {
                 if decoupled.contains(&part_id) { continue; }
                 let Some(part) = self.parts.get(&part_id) else { continue };
@@ -1347,17 +1434,17 @@ impl EditorState {
                 }
             }
 
-            // 3. Compute fuel zones — non-crossfeed decouplers divide the rocket
+            // 4. Compute fuel zones — non-crossfeed decouplers divide the rocket
             let zone_of = self.compute_editor_fuel_zones(part_defs, &decoupled);
 
-            // 4. Find zones containing active (non-decoupled, non-covered) engines
+            // 5. Find zones containing active (non-decoupled, non-covered) engines
             let engine_zones: HashSet<usize> = engines_enabled.iter()
                 .filter(|id| !decoupled.contains(id))
                 .filter(|id| !self.is_editor_engine_covered_with_decoupled(**id, part_defs, &decoupled))
                 .filter_map(|id| zone_of.get(id).copied())
                 .collect();
 
-            // 5. Calculate wet mass of ALL remaining parts, but only count
+            // 6. Calculate wet mass of ALL remaining parts, but only count
             //    fuel from tanks in engine zones as burnable
             let mut wet_mass = 0.0;
             let mut burnable_fuel = 0.0;
@@ -1374,7 +1461,7 @@ impl EditorState {
                 }
             }
 
-            // 6. Calculate thrust-weighted average Isp (skip covered engines)
+            // 7. Calculate thrust-weighted average Isp (skip covered engines)
             let mut total_thrust = 0.0;
             let mut weighted_isp = 0.0;
             for &engine_id in &engines_enabled {
@@ -1389,7 +1476,7 @@ impl EditorState {
             }
             let isp = if total_thrust > 0.0 { weighted_isp / total_thrust } else { 0.0 };
 
-            // 7. Δv = Isp * g0 * ln(wet / dry)
+            // 8. Δv = Isp * g0 * ln(wet / dry)
             let dry_mass = wet_mass - burnable_fuel;
             let dv = if isp > 0.0 && dry_mass > 0.0 && wet_mass > dry_mass {
                 isp * g0 * (wet_mass / dry_mass).ln()
@@ -1398,7 +1485,7 @@ impl EditorState {
             };
             stage_dvs.push(dv);
 
-            // 8. Consume only burnable fuel (in engine zones)
+            // 9. Consume only burnable fuel (in engine zones)
             for (&part_id, fuel) in fuel_remaining.iter_mut() {
                 if decoupled.contains(&part_id) { continue; }
                 if let Some(&zone) = zone_of.get(&part_id) {

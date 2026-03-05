@@ -213,7 +213,19 @@ Ghost previews SHALL render procedural details at `alpha = 0.5`, then overlay gr
 
 ### Requirement: Engine exhaust plume geometry
 
-`generate_engine_plume_vertices` SHALL draw two nested triangles from the nozzle exit. Outer red (`[1.0, 0.2, 0.0, 0.9]`): full width, length = `diameter * 2.0 * throttle`. Inner yellow (`[1.0, 0.9, 0.1, 1.0]`): 60% width, 40% length. No plume when throttle = 0.0.
+`generate_engine_plume_vertices` SHALL render exhaust plumes from engine nozzle exits. No plume when throttle = 0.0.
+
+#### Scenario: Single-nozzle engine (default)
+- Two nested triangles from the nozzle exit
+- Outer red (`[1.0, 0.2, 0.0, 0.9]`): full width × 1.2, length = `nozzle_width * 4.0 * throttle`
+- Inner yellow (`[1.0, 0.9, 0.1, 1.0]`): 60% width, 40% length
+
+#### Scenario: Multi-nozzle engine (`nozzle_offsets`)
+- `EngineData.nozzle_offsets: Option<Vec<f64>>` specifies X offsets in grid squares from part center
+- Each nozzle renders a separate plume at `x + offset * GRID_SQUARE_SIZE`
+- Per-nozzle plume width and height scaled by `1 / nozzle_count`
+- For sprite plumes: per-nozzle width = `half_nozzle / n * 1.2`, height = `nozzle_width / n * 5.0 * throttle`
+- For procedural plumes: same scaling applied to both outer and inner triangles
 
 #### Scenario: Full throttle plume
 - **GIVEN** engine width 1.5m at throttle 1.0

@@ -248,7 +248,28 @@ fn build_sprite_atlas(
     log::info!("Packing {} sprites into atlas", entries.len());
 
     let max_dim = device.limits().max_texture_dimension_2d;
-    let atlas_width = max_dim.min(8192);
+    let atlas_width = max_dim;
+
+    // Downscale any sprite whose width or height exceeds atlas_width.
+    // This handles very large parts (e.g. interstellar engines at 4x resolution)
+    // that would overflow the atlas blit or fail to pack.
+    for entry in entries.iter_mut() {
+        if entry.width > atlas_width || entry.height > atlas_width {
+            let scale = (atlas_width as f64 / entry.width.max(entry.height) as f64).min(1.0);
+            let new_w = ((entry.width as f64 * scale) as u32).max(1);
+            let new_h = ((entry.height as f64 * scale) as u32).max(1);
+            log::info!(
+                "Downscaling oversized sprite '{}' from {}x{} to {}x{}",
+                entry.id, entry.width, entry.height, new_w, new_h
+            );
+            entry.image = image::imageops::resize(
+                &entry.image, new_w, new_h, image::imageops::FilterType::Lanczos3,
+            );
+            entry.width = new_w;
+            entry.height = new_h;
+        }
+    }
+
     let (mut packed, mut atlas_height) = shelf_pack(&mut entries, atlas_width);
 
     // If atlas is too tall, downscale all sprites and repack

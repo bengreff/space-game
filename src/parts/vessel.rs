@@ -1348,7 +1348,80 @@ impl FlightVessel {
             }
         }
 
+        // Post-process: non-radial decouplers connect upward only via adapter
+        let skip: Vec<bool> = self.parts.iter().map(|p| p.destroyed || p.decoupled).collect();
+        self.apply_decoupler_adapter_connections(part_defs, &mut connections, &skip);
+
         connections
+    }
+
+    /// Post-process adjacency so non-radial decouplers connect upward only
+    /// through their adapter target (closest aligned tank/pod above the ring),
+    /// not via welding hitbox overlap. Downward connections remain normal.
+    fn apply_decoupler_adapter_connections(
+        &self,
+        part_defs: &PartDefinitions,
+        connections: &mut Vec<Vec<usize>>,
+        skip: &[bool],
+    ) {
+        let n = self.parts.len();
+        let tolerance = 0.01;
+
+        for d in 0..n {
+            if skip[d] { continue; }
+            let Some(def_d) = part_defs.get(&self.parts[d].definition_id) else { continue };
+            let Some(ref decoupler) = def_d.decoupler else { continue };
+            if decoupler.is_radial { continue; }
+
+            // Ring top in local coordinates (mirrors rendering formula in editor/render.rs)
+            let ring_top = self.parts[d].local_position[1]
+                - def_d.hitbox_height() / 2.0
+                + def_d.height();
+            let dec_x = self.parts[d].local_position[0];
+
+            // Find adapter target: closest aligned tank/pod whose bottom >= ring_top
+            let mut best_target: Option<usize> = None;
+            let mut best_dist = f64::MAX;
+
+            for t in 0..n {
+                if skip[t] || t == d { continue; }
+                let Some(def_t) = part_defs.get(&self.parts[t].definition_id) else { continue };
+                if def_t.tank.is_none() && def_t.pod.is_none() { continue; }
+                if (self.parts[t].local_position[0] - dec_x).abs() > tolerance { continue; }
+
+                let target_bottom = self.parts[t].local_position[1] - def_t.hitbox_height() / 2.0;
+                if target_bottom < ring_top - tolerance { continue; }
+
+                let dist = target_bottom - ring_top;
+                if dist < best_dist {
+                    best_dist = dist;
+                    best_target = Some(t);
+                }
+            }
+
+            // Remove all upward welding connections from this decoupler.
+            // A neighbor is "above" if its center is above ring_top — even if
+            // its welding hitbox extends below ring_top, it should not bridge
+            // through the decoupler.
+            let upward: Vec<usize> = connections[d].iter().copied()
+                .filter(|&nb| self.parts[nb].local_position[1] > ring_top + tolerance)
+                .collect();
+
+            for &nb in &upward {
+                connections[d].retain(|&x| x != nb);
+                connections[nb].retain(|&x| x != d);
+            }
+
+            // Add adapter target connection
+            if let Some(t) = best_target {
+                if !connections[d].contains(&t) {
+                    connections[d].push(t);
+                }
+                if !connections[t].contains(&d) {
+                    connections[t].push(d);
+                }
+            }
+        }
     }
 
     /// Compute fuel zones by flood-filling the weld adjacency graph.
@@ -1573,6 +1646,9 @@ impl FlightVessel {
             }
         }
 
+        // Post-process: non-radial decouplers connect upward only via adapter
+        self.apply_decoupler_adapter_connections(part_defs, &mut connections, sim_decoupled);
+
         // Flood-fill zones; non-crossfeed decouplers are barriers
         let mut zones = vec![usize::MAX; n];
         let mut current_zone = 0;
@@ -1630,6 +1706,9 @@ impl FlightVessel {
                 }
             }
         }
+
+        // Post-process: non-radial decouplers connect upward only via adapter
+        self.apply_decoupler_adapter_connections(part_defs, &mut connections, sim_decoupled);
 
         // Find root
         let root = if self.root_part_index < n && !sim_decoupled[self.root_part_index] {
@@ -2160,7 +2239,16 @@ impl FlightVessel {
                 }
             }
 
-            // 2. Enable engines in this stage
+            // 2. Fire fairings: decouple just the fairing base (parts inside stay)
+            for &part_idx in stage {
+                if part_idx >= self.parts.len() || decoupled[part_idx] { continue; }
+                let Some(def) = part_defs.get(&self.parts[part_idx].definition_id) else { continue };
+                if def.fairing.is_some() {
+                    decoupled[part_idx] = true;
+                }
+            }
+
+            // 3. Enable engines in this stage
             for &part_idx in stage {
                 if part_idx >= self.parts.len() || decoupled[part_idx] { continue; }
                 if self.parts[part_idx].propellant_type.is_some() {
@@ -2168,18 +2256,18 @@ impl FlightVessel {
                 }
             }
 
-            // 3. Compute fuel zones and drain priorities with simulated decoupled state
+            // 4. Compute fuel zones and drain priorities with simulated decoupled state
             let zones = self.compute_fuel_zones_simulated(part_defs, &decoupled);
             let sim_priorities = self.compute_drain_priorities_simulated(part_defs, &decoupled);
 
-            // 4. Find zones containing active (non-decoupled, non-covered) engines
+            // 5. Find zones containing active (non-decoupled, non-covered) engines
             let engine_zones: std::collections::HashSet<usize> = (0..self.parts.len())
                 .filter(|&i| !decoupled[i] && engines_enabled[i] && zones[i] != usize::MAX
                     && !self.is_engine_covered_simulated(i, part_defs, &decoupled))
                 .map(|i| zones[i])
                 .collect();
 
-            // 5. Calculate wet mass of ALL remaining parts, but only count
+            // 6. Calculate wet mass of ALL remaining parts, but only count
             //    fuel from min-priority tanks in engine zones as burnable
             let mut zone_min_priority: HashMap<usize, usize> = HashMap::new();
             for i in 0..self.parts.len() {
@@ -2206,7 +2294,7 @@ impl FlightVessel {
                 }
             }
 
-            // 6. Calculate thrust-weighted average Isp (skip covered engines)
+            // 7. Calculate thrust-weighted average Isp (skip covered engines)
             let mut total_thrust = 0.0;
             let mut weighted_isp = 0.0;
             for i in 0..self.parts.len() {
@@ -2217,7 +2305,7 @@ impl FlightVessel {
             }
             let isp = if total_thrust > 0.0 { weighted_isp / total_thrust } else { 0.0 };
 
-            // 7. Δv = Isp * g0 * ln(wet / dry)
+            // 8. Δv = Isp * g0 * ln(wet / dry)
             let dry_mass = wet_mass - burnable_fuel;
             let dv = if isp > 0.0 && dry_mass > 0.0 && wet_mass > dry_mass {
                 isp * g0 * (wet_mass / dry_mass).ln()
@@ -2226,7 +2314,7 @@ impl FlightVessel {
             };
             stage_dvs.push(dv);
 
-            // 8. Consume only min-priority burnable fuel (in engine zones)
+            // 9. Consume only min-priority burnable fuel (in engine zones)
             for i in 0..self.parts.len() {
                 if decoupled[i] { continue; }
                 if zones[i] != usize::MAX && engine_zones.contains(&zones[i]) {

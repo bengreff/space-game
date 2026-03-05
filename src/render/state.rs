@@ -1045,296 +1045,6 @@ impl RenderState {
                     });
                 });
 
-            // Throttle bar on left side
-            egui::SidePanel::left("throttle_panel")
-                .exact_width(50.0)
-                .frame(egui::Frame::none().fill(egui::Color32::from_rgba_unmultiplied(20, 20, 30, 200)))
-                .show(ctx, |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(10.0);
-                        ui.label(egui::RichText::new("THR").size(10.0).color(egui::Color32::GRAY));
-                        ui.add_space(5.0);
-
-                        // Throttle percentage text
-                        let throttle_pct = (ship_throttle * 100.0) as i32;
-                        ui.label(egui::RichText::new(format!("{}%", throttle_pct))
-                            .size(12.0)
-                            .strong()
-                            .color(egui::Color32::WHITE));
-                        ui.add_space(5.0);
-
-                        // Vertical throttle bar
-                        let bar_height = 150.0;
-                        let bar_width = 20.0;
-                        let (rect, _response) = ui.allocate_exact_size(
-                            egui::vec2(bar_width, bar_height),
-                            egui::Sense::hover()
-                        );
-
-                        let painter = ui.painter();
-
-                        // Background (empty part)
-                        painter.rect_filled(
-                            rect,
-                            2.0,
-                            egui::Color32::from_rgb(40, 40, 50)
-                        );
-
-                        // Filled part (from bottom up)
-                        let fill_height = bar_height * ship_throttle as f32;
-                        let fill_rect = egui::Rect::from_min_size(
-                            egui::pos2(rect.min.x, rect.max.y - fill_height),
-                            egui::vec2(bar_width, fill_height)
-                        );
-
-                        // Color gradient: green at low, yellow at mid, red at high
-                        let fill_color = if ship_throttle < 0.5 {
-                            egui::Color32::from_rgb(100, 200, 100) // Green
-                        } else if ship_throttle < 0.8 {
-                            egui::Color32::from_rgb(200, 200, 100) // Yellow
-                        } else {
-                            egui::Color32::from_rgb(200, 100, 100) // Red
-                        };
-
-                        painter.rect_filled(fill_rect, 2.0, fill_color);
-
-                        // Border
-                        painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
-                    });
-
-                    // Fuel bar (if vessel loaded) - separate scope for borrow management
-                    if let Some(fuel_frac) = vessel_fuel_fraction {
-                        ui.add_space(10.0);
-                        ui.label(egui::RichText::new("FUEL").size(10.0).color(egui::Color32::GRAY));
-                        ui.add_space(3.0);
-
-                        let fuel_pct = (fuel_frac * 100.0) as i32;
-                        ui.label(egui::RichText::new(format!("{}%", fuel_pct))
-                            .size(11.0)
-                            .color(egui::Color32::WHITE));
-                        ui.add_space(3.0);
-
-                        let fuel_bar_height = 80.0;
-                        let bar_width = 20.0;
-                        let (fuel_rect, _) = ui.allocate_exact_size(
-                            egui::vec2(bar_width, fuel_bar_height),
-                            egui::Sense::hover()
-                        );
-
-                        let fuel_painter = ui.painter();
-                        fuel_painter.rect_filled(fuel_rect, 2.0, egui::Color32::from_rgb(40, 40, 50));
-
-                        let fuel_fill = fuel_bar_height * fuel_frac as f32;
-                        let fuel_fill_rect = egui::Rect::from_min_size(
-                            egui::pos2(fuel_rect.min.x, fuel_rect.max.y - fuel_fill),
-                            egui::vec2(bar_width, fuel_fill)
-                        );
-                        let fuel_color = if fuel_frac > 0.3 {
-                            egui::Color32::from_rgb(80, 160, 220)
-                        } else if fuel_frac > 0.1 {
-                            egui::Color32::from_rgb(220, 180, 80)
-                        } else {
-                            egui::Color32::from_rgb(220, 80, 80)
-                        };
-                        fuel_painter.rect_filled(fuel_fill_rect, 2.0, fuel_color);
-                        fuel_painter.rect_stroke(fuel_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
-                    }
-
-                    // Electricity bar (if vessel has batteries)
-                    if let Some(elec_frac) = vessel_electricity_fraction {
-                        ui.add_space(10.0);
-                        ui.label(egui::RichText::new("ELEC").size(10.0).color(egui::Color32::GRAY));
-                        ui.add_space(3.0);
-
-                        let stored = vessel_electricity_stored.unwrap_or(0.0);
-                        let max = vessel_electricity_max.unwrap_or(0.0);
-                        let fmt_wh = |v: f64| -> String {
-                            if v >= 1000.0 { format!("{:.1}k", v / 1000.0) } else { format!("{:.0}", v) }
-                        };
-                        ui.label(egui::RichText::new(format!("{} / {} Wh", fmt_wh(stored), fmt_wh(max)))
-                            .size(11.0)
-                            .color(egui::Color32::WHITE));
-                        ui.add_space(3.0);
-
-                        let elec_bar_height = 80.0;
-                        let bar_width = 20.0;
-                        let (elec_rect, _) = ui.allocate_exact_size(
-                            egui::vec2(bar_width, elec_bar_height),
-                            egui::Sense::hover()
-                        );
-
-                        let elec_painter = ui.painter();
-                        elec_painter.rect_filled(elec_rect, 2.0, egui::Color32::from_rgb(40, 40, 50));
-
-                        let elec_fill = elec_bar_height * elec_frac as f32;
-                        let elec_fill_rect = egui::Rect::from_min_size(
-                            egui::pos2(elec_rect.min.x, elec_rect.max.y - elec_fill),
-                            egui::vec2(bar_width, elec_fill)
-                        );
-                        let elec_color = if elec_frac > 0.3 {
-                            egui::Color32::from_rgb(200, 190, 60)  // gold/yellow
-                        } else if elec_frac > 0.1 {
-                            egui::Color32::from_rgb(220, 140, 40)  // orange
-                        } else {
-                            egui::Color32::from_rgb(220, 60, 60)   // red
-                        };
-                        elec_painter.rect_filled(elec_fill_rect, 2.0, elec_color);
-                        elec_painter.rect_stroke(elec_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
-
-                        // Power generation/consumption text
-                        if let (Some(gen), Some(cons)) = (vessel_power_generation, vessel_power_consumption) {
-                            ui.add_space(3.0);
-                            let net_text = format!("+{:.0}W\n-{:.0}W", gen, cons);
-                            ui.label(egui::RichText::new(net_text).size(9.0).color(egui::Color32::GRAY));
-
-                            // Power duration when draining
-                            let net = gen - cons;
-                            if net < 0.0 && stored > 0.0 {
-                                let seconds = (stored / net.abs()) * 3600.0;
-                                ui.label(egui::RichText::new(format_duration(seconds))
-                                    .size(9.0)
-                                    .color(egui::Color32::from_rgb(220, 180, 40)));
-                            }
-                        }
-                    }
-
-                    // Heat bar (shown when temperature > 350K)
-                    if ship_temperature > 350.0 {
-                        ui.add_space(10.0);
-                        ui.label(egui::RichText::new("HEAT").size(10.0).color(egui::Color32::GRAY));
-                        ui.add_space(3.0);
-
-                        ui.label(egui::RichText::new(format!("{}K", ship_temperature as i32))
-                            .size(11.0)
-                            .color(egui::Color32::WHITE));
-                        ui.add_space(3.0);
-
-                        let heat_bar_height = 80.0;
-                        let bar_width = 20.0;
-                        let (heat_rect, _) = ui.allocate_exact_size(
-                            egui::vec2(bar_width, heat_bar_height),
-                            egui::Sense::hover()
-                        );
-
-                        let heat_painter = ui.painter();
-                        heat_painter.rect_filled(heat_rect, 2.0, egui::Color32::from_rgb(40, 40, 50));
-
-                        let heat_fill = heat_bar_height * ship_heat_fraction;
-                        let heat_fill_rect = egui::Rect::from_min_size(
-                            egui::pos2(heat_rect.min.x, heat_rect.max.y - heat_fill),
-                            egui::vec2(bar_width, heat_fill)
-                        );
-                        let heat_color = if ship_heat_fraction < 0.33 {
-                            egui::Color32::from_rgb(220, 200, 80)  // yellow
-                        } else if ship_heat_fraction < 0.66 {
-                            egui::Color32::from_rgb(220, 140, 40)  // orange
-                        } else {
-                            egui::Color32::from_rgb(220, 60, 60)   // red
-                        };
-                        heat_painter.rect_filled(heat_fill_rect, 2.0, heat_color);
-                        heat_painter.rect_stroke(heat_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
-
-                        // Show the critical part (highest heat_fraction)
-                        if let Some(hottest) = flight_parts_cache.iter()
-                            .max_by(|a, b| a.heat_fraction.partial_cmp(&b.heat_fraction).unwrap_or(std::cmp::Ordering::Equal))
-                        {
-                            if hottest.heat_fraction > 0.01 {
-                                ui.add_space(5.0);
-                                let crit_color = if hottest.heat_fraction < 0.33 {
-                                    egui::Color32::from_rgb(220, 200, 80)
-                                } else if hottest.heat_fraction < 0.66 {
-                                    egui::Color32::from_rgb(220, 140, 40)
-                                } else {
-                                    egui::Color32::from_rgb(220, 60, 60)
-                                };
-                                // Truncate name to fit the narrow panel
-                                let name = if hottest.name.len() > 8 {
-                                    &hottest.name[..8]
-                                } else {
-                                    &hottest.name
-                                };
-                                ui.label(egui::RichText::new(name)
-                                    .size(8.0).color(crit_color));
-                            }
-                        }
-                    }
-
-                    // Stage indicator
-                    if let (Some(current), Some(total)) = (vessel_current_stage, vessel_total_stages) {
-                        if total > 0 {
-                            ui.add_space(10.0);
-                            ui.label(egui::RichText::new("STG").size(10.0).color(egui::Color32::GRAY));
-                            ui.label(egui::RichText::new(format!("{}/{}", current, total))
-                                .size(12.0)
-                                .strong()
-                                .color(egui::Color32::WHITE));
-                        }
-                    }
-
-                    // XFER button anchored at bottom
-                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                        ui.add_space(10.0);
-                        let xfer_active = self.transfer_planner_open;
-                        let xfer_btn_color = if xfer_active {
-                            egui::Color32::from_rgb(80, 120, 180)
-                        } else {
-                            egui::Color32::from_rgb(60, 60, 70)
-                        };
-                        let xfer_text_color = if xfer_active {
-                            egui::Color32::WHITE
-                        } else {
-                            egui::Color32::LIGHT_GRAY
-                        };
-
-                        // Ellipse icon + XFER label as button
-                        let btn_size = egui::vec2(40.0, 32.0);
-                        let (rect, response) = ui.allocate_exact_size(btn_size, egui::Sense::click());
-
-                        // Draw button background
-                        let painter = ui.painter();
-                        painter.rect_filled(rect, 4.0, xfer_btn_color);
-
-                        // Draw ellipse icon (orbit shape) using line segments
-                        let cx = rect.center().x;
-                        let cy = rect.center().y - 4.0;
-                        let rx = 10.0_f32;
-                        let ry = 6.0_f32;
-                        let n = 24;
-                        let ellipse_points: Vec<egui::Pos2> = (0..=n).map(|i| {
-                            let angle = std::f32::consts::TAU * i as f32 / n as f32;
-                            egui::pos2(cx + rx * angle.cos(), cy + ry * angle.sin())
-                        }).collect();
-                        painter.add(egui::Shape::line(ellipse_points, egui::Stroke::new(1.5, xfer_text_color)));
-
-                        // Draw "XFER" label below icon
-                        painter.text(
-                            egui::pos2(rect.center().x, rect.max.y - 6.0),
-                            egui::Align2::CENTER_CENTER,
-                            "XFER",
-                            egui::FontId::proportional(8.0),
-                            xfer_text_color,
-                        );
-
-                        if response.clicked() {
-                            self.transfer_planner_open = !self.transfer_planner_open;
-                        }
-
-                        // Debug menu button (above XFER)
-                        ui.add_space(5.0);
-                        let dbg_color = if self.debug_menu_open {
-                            egui::Color32::from_rgb(180, 80, 80)
-                        } else {
-                            egui::Color32::from_rgb(60, 60, 70)
-                        };
-                        let dbg_btn = egui::Button::new(
-                            egui::RichText::new("DBG").size(9.0).color(egui::Color32::LIGHT_GRAY)
-                        ).fill(dbg_color).min_size(egui::vec2(40.0, 20.0));
-                        if ui.add(dbg_btn).clicked() {
-                            self.debug_menu_open = !self.debug_menu_open;
-                        }
-                    });
-                });
-
             // Only draw label for hovered body
             if let Some(idx) = hovered {
                 if let Some(body) = bodies_copy.get(idx) {
@@ -1717,10 +1427,21 @@ impl RenderState {
                                         ui.weak("(empty)");
                                     }
 
+                                    let selected_vessel_part = selected_flight_part
+                                        .and_then(|ci| flight_parts_cache.get(ci))
+                                        .map(|p| p.part_index);
+
                                     for part_info in &vessel_stages[stage_idx] {
                                         let item_id = egui::Id::new(("flight_staging_item", part_info.part_index));
+                                        let is_selected = selected_vessel_part == Some(part_info.part_index);
                                         ui.dnd_drag_source(item_id, FlightStageDrag::Part(part_info.part_index), |ui| {
-                                            ui.label(&part_info.name);
+                                            let text = egui::RichText::new(&part_info.name);
+                                            let text = if is_selected {
+                                                text.color(egui::Color32::from_rgb(128, 179, 255))
+                                            } else {
+                                                text
+                                            };
+                                            ui.label(text);
                                         });
                                     }
                                 });
@@ -1783,6 +1504,302 @@ impl RenderState {
                         });
                     });
             }
+
+            // Throttle bar on right side (left of staging panel)
+            egui::SidePanel::right("throttle_panel")
+                .exact_width(50.0)
+                .frame(egui::Frame::none().fill(egui::Color32::from_rgba_unmultiplied(20, 20, 30, 200)))
+                .show(ctx, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new("THR").size(10.0).color(egui::Color32::GRAY));
+                        ui.add_space(5.0);
+
+                        // Throttle percentage text
+                        let throttle_pct = (ship_throttle * 100.0) as i32;
+                        ui.label(egui::RichText::new(format!("{}%", throttle_pct))
+                            .size(12.0)
+                            .strong()
+                            .color(egui::Color32::WHITE));
+                        ui.add_space(5.0);
+
+                        // Vertical throttle bar
+                        let bar_height = 150.0;
+                        let bar_width = 20.0;
+                        let (rect, _response) = ui.allocate_exact_size(
+                            egui::vec2(bar_width, bar_height),
+                            egui::Sense::hover()
+                        );
+
+                        let painter = ui.painter();
+
+                        // Background (empty part)
+                        painter.rect_filled(
+                            rect,
+                            2.0,
+                            egui::Color32::from_rgb(40, 40, 50)
+                        );
+
+                        // Filled part (from bottom up)
+                        let fill_height = bar_height * ship_throttle as f32;
+                        let fill_rect = egui::Rect::from_min_size(
+                            egui::pos2(rect.min.x, rect.max.y - fill_height),
+                            egui::vec2(bar_width, fill_height)
+                        );
+
+                        // Color gradient: green at low, yellow at mid, red at high
+                        let fill_color = if ship_throttle < 0.5 {
+                            egui::Color32::from_rgb(100, 200, 100) // Green
+                        } else if ship_throttle < 0.8 {
+                            egui::Color32::from_rgb(200, 200, 100) // Yellow
+                        } else {
+                            egui::Color32::from_rgb(200, 100, 100) // Red
+                        };
+
+                        painter.rect_filled(fill_rect, 2.0, fill_color);
+
+                        // Border
+                        painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+                    });
+                });
+
+            // Left panel - fuel, electricity, heat, stage, XFER, debug
+            egui::SidePanel::left("status_panel")
+                .exact_width(50.0)
+                .frame(egui::Frame::none().fill(egui::Color32::from_rgba_unmultiplied(20, 20, 30, 200)))
+                .show(ctx, |ui| {
+                    // Fuel bar (if vessel loaded)
+                    if let Some(fuel_frac) = vessel_fuel_fraction {
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new("FUEL").size(10.0).color(egui::Color32::GRAY));
+                        ui.add_space(3.0);
+
+                        let fuel_pct = (fuel_frac * 100.0) as i32;
+                        ui.label(egui::RichText::new(format!("{}%", fuel_pct))
+                            .size(11.0)
+                            .color(egui::Color32::WHITE));
+                        ui.add_space(3.0);
+
+                        let fuel_bar_height = 80.0;
+                        let bar_width = 20.0;
+                        let (fuel_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(bar_width, fuel_bar_height),
+                            egui::Sense::hover()
+                        );
+
+                        let fuel_painter = ui.painter();
+                        fuel_painter.rect_filled(fuel_rect, 2.0, egui::Color32::from_rgb(40, 40, 50));
+
+                        let fuel_fill = fuel_bar_height * fuel_frac as f32;
+                        let fuel_fill_rect = egui::Rect::from_min_size(
+                            egui::pos2(fuel_rect.min.x, fuel_rect.max.y - fuel_fill),
+                            egui::vec2(bar_width, fuel_fill)
+                        );
+                        let fuel_color = if fuel_frac > 0.3 {
+                            egui::Color32::from_rgb(80, 160, 220)
+                        } else if fuel_frac > 0.1 {
+                            egui::Color32::from_rgb(220, 180, 80)
+                        } else {
+                            egui::Color32::from_rgb(220, 80, 80)
+                        };
+                        fuel_painter.rect_filled(fuel_fill_rect, 2.0, fuel_color);
+                        fuel_painter.rect_stroke(fuel_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+                    }
+
+                    // Electricity bar (if vessel has batteries)
+                    if let Some(elec_frac) = vessel_electricity_fraction {
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new("ELEC").size(10.0).color(egui::Color32::GRAY));
+                        ui.add_space(3.0);
+
+                        let stored = vessel_electricity_stored.unwrap_or(0.0);
+                        let max = vessel_electricity_max.unwrap_or(0.0);
+                        let fmt_wh = |v: f64| -> String {
+                            if v >= 1000.0 { format!("{:.1}k", v / 1000.0) } else { format!("{:.0}", v) }
+                        };
+                        ui.label(egui::RichText::new(format!("{} / {} Wh", fmt_wh(stored), fmt_wh(max)))
+                            .size(11.0)
+                            .color(egui::Color32::WHITE));
+                        ui.add_space(3.0);
+
+                        let elec_bar_height = 80.0;
+                        let bar_width = 20.0;
+                        let (elec_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(bar_width, elec_bar_height),
+                            egui::Sense::hover()
+                        );
+
+                        let elec_painter = ui.painter();
+                        elec_painter.rect_filled(elec_rect, 2.0, egui::Color32::from_rgb(40, 40, 50));
+
+                        let elec_fill = elec_bar_height * elec_frac as f32;
+                        let elec_fill_rect = egui::Rect::from_min_size(
+                            egui::pos2(elec_rect.min.x, elec_rect.max.y - elec_fill),
+                            egui::vec2(bar_width, elec_fill)
+                        );
+                        let elec_color = if elec_frac > 0.3 {
+                            egui::Color32::from_rgb(200, 190, 60)  // gold/yellow
+                        } else if elec_frac > 0.1 {
+                            egui::Color32::from_rgb(220, 140, 40)  // orange
+                        } else {
+                            egui::Color32::from_rgb(220, 60, 60)   // red
+                        };
+                        elec_painter.rect_filled(elec_fill_rect, 2.0, elec_color);
+                        elec_painter.rect_stroke(elec_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+
+                        // Power generation/consumption text
+                        if let (Some(gen), Some(cons)) = (vessel_power_generation, vessel_power_consumption) {
+                            ui.add_space(3.0);
+                            let net_text = format!("+{:.0}W\n-{:.0}W", gen, cons);
+                            ui.label(egui::RichText::new(net_text).size(9.0).color(egui::Color32::GRAY));
+
+                            // Power duration when draining
+                            let net = gen - cons;
+                            if net < 0.0 && stored > 0.0 {
+                                let seconds = (stored / net.abs()) * 3600.0;
+                                ui.label(egui::RichText::new(format_duration(seconds))
+                                    .size(9.0)
+                                    .color(egui::Color32::from_rgb(220, 180, 40)));
+                            }
+                        }
+                    }
+
+                    // Heat bar (shown when temperature > 350K)
+                    if ship_temperature > 350.0 {
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new("HEAT").size(10.0).color(egui::Color32::GRAY));
+                        ui.add_space(3.0);
+
+                        ui.label(egui::RichText::new(format!("{}K", ship_temperature as i32))
+                            .size(11.0)
+                            .color(egui::Color32::WHITE));
+                        ui.add_space(3.0);
+
+                        let heat_bar_height = 80.0;
+                        let bar_width = 20.0;
+                        let (heat_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(bar_width, heat_bar_height),
+                            egui::Sense::hover()
+                        );
+
+                        let heat_painter = ui.painter();
+                        heat_painter.rect_filled(heat_rect, 2.0, egui::Color32::from_rgb(40, 40, 50));
+
+                        let heat_fill = heat_bar_height * ship_heat_fraction;
+                        let heat_fill_rect = egui::Rect::from_min_size(
+                            egui::pos2(heat_rect.min.x, heat_rect.max.y - heat_fill),
+                            egui::vec2(bar_width, heat_fill)
+                        );
+                        let heat_color = if ship_heat_fraction < 0.33 {
+                            egui::Color32::from_rgb(220, 200, 80)  // yellow
+                        } else if ship_heat_fraction < 0.66 {
+                            egui::Color32::from_rgb(220, 140, 40)  // orange
+                        } else {
+                            egui::Color32::from_rgb(220, 60, 60)   // red
+                        };
+                        heat_painter.rect_filled(heat_fill_rect, 2.0, heat_color);
+                        heat_painter.rect_stroke(heat_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+
+                        // Show the critical part (highest heat_fraction)
+                        if let Some(hottest) = flight_parts_cache.iter()
+                            .max_by(|a, b| a.heat_fraction.partial_cmp(&b.heat_fraction).unwrap_or(std::cmp::Ordering::Equal))
+                        {
+                            if hottest.heat_fraction > 0.01 {
+                                ui.add_space(5.0);
+                                let crit_color = if hottest.heat_fraction < 0.33 {
+                                    egui::Color32::from_rgb(220, 200, 80)
+                                } else if hottest.heat_fraction < 0.66 {
+                                    egui::Color32::from_rgb(220, 140, 40)
+                                } else {
+                                    egui::Color32::from_rgb(220, 60, 60)
+                                };
+                                // Truncate name to fit the narrow panel
+                                let name = if hottest.name.len() > 8 {
+                                    &hottest.name[..8]
+                                } else {
+                                    &hottest.name
+                                };
+                                ui.label(egui::RichText::new(name)
+                                    .size(8.0).color(crit_color));
+                            }
+                        }
+                    }
+
+                    // Stage indicator
+                    if let (Some(current), Some(total)) = (vessel_current_stage, vessel_total_stages) {
+                        if total > 0 {
+                            ui.add_space(10.0);
+                            ui.label(egui::RichText::new("STG").size(10.0).color(egui::Color32::GRAY));
+                            ui.label(egui::RichText::new(format!("{}/{}", current, total))
+                                .size(12.0)
+                                .strong()
+                                .color(egui::Color32::WHITE));
+                        }
+                    }
+
+                    // XFER button anchored at bottom
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                        ui.add_space(10.0);
+                        let xfer_active = self.transfer_planner_open;
+                        let xfer_btn_color = if xfer_active {
+                            egui::Color32::from_rgb(80, 120, 180)
+                        } else {
+                            egui::Color32::from_rgb(60, 60, 70)
+                        };
+                        let xfer_text_color = if xfer_active {
+                            egui::Color32::WHITE
+                        } else {
+                            egui::Color32::LIGHT_GRAY
+                        };
+
+                        // Ellipse icon + XFER label as button
+                        let btn_size = egui::vec2(40.0, 32.0);
+                        let (rect, response) = ui.allocate_exact_size(btn_size, egui::Sense::click());
+
+                        // Draw button background
+                        let painter = ui.painter();
+                        painter.rect_filled(rect, 4.0, xfer_btn_color);
+
+                        // Draw ellipse icon (orbit shape) using line segments
+                        let cx = rect.center().x;
+                        let cy = rect.center().y - 4.0;
+                        let rx = 10.0_f32;
+                        let ry = 6.0_f32;
+                        let n = 24;
+                        let ellipse_points: Vec<egui::Pos2> = (0..=n).map(|i| {
+                            let angle = std::f32::consts::TAU * i as f32 / n as f32;
+                            egui::pos2(cx + rx * angle.cos(), cy + ry * angle.sin())
+                        }).collect();
+                        painter.add(egui::Shape::line(ellipse_points, egui::Stroke::new(1.5, xfer_text_color)));
+
+                        // Draw "XFER" label below icon
+                        painter.text(
+                            egui::pos2(rect.center().x, rect.max.y - 6.0),
+                            egui::Align2::CENTER_CENTER,
+                            "XFER",
+                            egui::FontId::proportional(8.0),
+                            xfer_text_color,
+                        );
+
+                        if response.clicked() {
+                            self.transfer_planner_open = !self.transfer_planner_open;
+                        }
+
+                        // Debug menu button (above XFER)
+                        ui.add_space(5.0);
+                        let dbg_color = if self.debug_menu_open {
+                            egui::Color32::from_rgb(180, 80, 80)
+                        } else {
+                            egui::Color32::from_rgb(60, 60, 70)
+                        };
+                        let dbg_btn = egui::Button::new(
+                            egui::RichText::new("DBG").size(9.0).color(egui::Color32::LIGHT_GRAY)
+                        ).fill(dbg_color).min_size(egui::vec2(40.0, 20.0));
+                        if ui.add(dbg_btn).clicked() {
+                            self.debug_menu_open = !self.debug_menu_open;
+                        }
+                    });
+                });
 
             // Right panel for selected maneuver node
             if let Some(node_id) = selected_maneuver_node {
@@ -3858,8 +3875,8 @@ impl RenderState {
                     let (vdx_n, vdy_n) = if vmag > 0.0 { (vdx_s / vmag, vdy_s / vmag) } else { (0.0, 1.0) };
 
                     // Asymmetric margins to keep arrow inside the flight viewport (outside GUI panels)
-                    let margin_left = 60.0_f32;   // throttle panel (50px) + buffer
-                    let margin_right = 160.0_f32;  // staging panel (150px) + buffer
+                    let margin_left = 60.0_f32;    // status panel (50px) + buffer
+                    let margin_right = 220.0_f32;  // staging (150) + throttle (50) + buffer (20)
                     let margin_top = 40.0_f32;     // time warp panel + buffer
                     let margin_bottom = 80.0_f32;  // flight info panel + buffer
 

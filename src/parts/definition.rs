@@ -156,6 +156,8 @@ pub struct EngineData {
     pub alternator_power: f64,  // Watts generated when running
     #[serde(default)]
     pub power_required: f64,    // Watts required to fire (electric propulsion)
+    #[serde(default)]
+    pub nozzle_offsets: Option<Vec<f64>>,  // X offsets in grid squares for multi-nozzle engines
 }
 
 /// Fuel types for tanks

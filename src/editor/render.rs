@@ -1,4 +1,4 @@
-use crate::parts::{PartDefinitions, PartShape, PartDefinition, PartCategory, FairingShape, GRID_SQUARE_SIZE};
+use crate::parts::{PartDefinitions, PartDefinition, PartCategory, FairingShape, GRID_SQUARE_SIZE};
 use crate::render::Vertex;
 use crate::render::sprites::SpriteAtlas;
 use super::EditorState;
@@ -9,12 +9,6 @@ const GRID_MAJOR_COLOR: [f32; 4] = [0.3, 0.3, 0.4, 0.7];
 
 /// Part colors - grey boxes
 const PART_COLOR: [f32; 4] = [0.4, 0.4, 0.45, 1.0];
-const PART_SELECTED_COLOR: [f32; 4] = [0.5, 0.7, 1.0, 1.0];
-const PART_HOVERED_COLOR: [f32; 4] = [0.55, 0.55, 0.6, 1.0];
-
-/// Ghost colors - transparent preview
-const GHOST_VALID_COLOR: [f32; 4] = [0.3, 0.9, 0.3, 0.4];
-const GHOST_INVALID_COLOR: [f32; 4] = [0.9, 0.3, 0.3, 0.4];
 
 // Engine base colors (darker than regular parts)
 // First stage engines are darker, upper stage are slightly lighter
@@ -317,22 +311,11 @@ pub fn generate_part_vertices(
             || editor.dragging_part.and_then(|d| editor.parts.get(&d)?.mirror_partner) == Some(*id);
         let drag_invalid = is_dragging && !editor.drag_valid;
 
-        let color = if is_selected {
-            PART_SELECTED_COLOR
-        } else if is_hovered {
-            PART_HOVERED_COLOR
-        } else {
-            PART_COLOR
-        };
-
         let half_w = (def.width() / 2.0) as f32;
         let half_h = (def.height() / 2.0) as f32;
         // Convert to camera-relative coordinates
         let x = part.position[0] as f32 - cam_x;
         let y = part.position[1] as f32 - cam_y;
-
-        // Try sprite-based rendering first (skip fairings — they have shell geometry)
-        let is_triangle = matches!(def.shape, PartShape::Triangle | PartShape::TriangleLeft | PartShape::TriangleRight);
         if let Some(atlas) = sprite_atlas {
             if def.fairing.is_none() {
                 if let Some(rect) = atlas.parts.get(&def.id) {
@@ -373,106 +356,7 @@ pub fn generate_part_vertices(
             }
         }
 
-        // For engines, use dedicated engine rendering
-        if (def.category == PartCategory::Propulsion || def.category == PartCategory::Interstellar) && def.engine.is_some() {
-            generate_engine_details(&mut vertices, def, x, y, 1.0);
-
-            // Draw overlay for selection, hover, or invalid drag
-            if is_selected || is_hovered || drag_invalid {
-                let highlight_color = if drag_invalid {
-                    [0.9, 0.2, 0.2, 0.4]  // Red tint for invalid position
-                } else if is_selected {
-                    [0.5, 0.7, 1.0, 0.3]
-                } else {
-                    [0.55, 0.55, 0.6, 0.2]
-                };
-                let half_top_w = (def.top_width() / 2.0) as f32;
-                vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_w, y - half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_top_w, y + half_h], highlight_color));
-                vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_top_w, y + half_h], highlight_color));
-                vertices.push(Vertex::new([x - half_top_w, y + half_h], highlight_color));
-            }
-            rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
-            continue;
-        }
-
-        // For pods, use dedicated pod rendering
-        if def.category == PartCategory::Pods {
-            generate_pod_details(&mut vertices, def, x, y, 1.0);
-
-            // Draw overlay for selection, hover, or invalid drag
-            if is_selected || is_hovered || drag_invalid {
-                let highlight_color = if drag_invalid {
-                    [0.9, 0.2, 0.2, 0.4]
-                } else if is_selected {
-                    [0.5, 0.7, 1.0, 0.3]
-                } else {
-                    [0.55, 0.55, 0.6, 0.2]
-                };
-                let half_top_w = (def.top_width() / 2.0) as f32;
-                vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_w, y - half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_top_w, y + half_h], highlight_color));
-                vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_top_w, y + half_h], highlight_color));
-                vertices.push(Vertex::new([x - half_top_w, y + half_h], highlight_color));
-            }
-            rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
-            continue;
-        }
-
-        // For heat shields, use dedicated heat shield rendering
-        if def.is_heat_shield {
-            generate_heat_shield_details(&mut vertices, def, x, y, 1.0);
-
-            if is_selected || is_hovered || drag_invalid {
-                let highlight_color = if drag_invalid {
-                    [0.9, 0.2, 0.2, 0.4]
-                } else if is_selected {
-                    [0.5, 0.7, 1.0, 0.3]
-                } else {
-                    [0.55, 0.55, 0.6, 0.2]
-                };
-                let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
-                vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_w, y - hitbox_half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
-                vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
-                vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], highlight_color));
-            }
-            rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
-            continue;
-        }
-
-        // For decouplers, use dedicated decoupler rendering
-        if def.decoupler.is_some() {
-            generate_decoupler_details(&mut vertices, def, x, y, 1.0);
-
-            // Draw overlay for selection, hover, or invalid drag
-            if is_selected || is_hovered || drag_invalid {
-                let highlight_color = if drag_invalid {
-                    [0.9, 0.2, 0.2, 0.4]
-                } else if is_selected {
-                    [0.5, 0.7, 1.0, 0.3]
-                } else {
-                    [0.55, 0.55, 0.6, 0.2]
-                };
-                let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
-                vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_w, y - hitbox_half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
-                vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], highlight_color));
-                vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], highlight_color));
-            }
-            rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
-            continue;
-        }
-
-        // For fairings, render base only (shell is deferred to third pass for z-ordering)
+        // Fairing bases use procedural rendering (shell is deferred to third pass)
         if def.fairing.is_some() {
             let base_alpha = if is_hovered { 0.5 } else { 1.0 };
             generate_fairing_base_details(&mut vertices, def, x, y, base_alpha);
@@ -497,121 +381,6 @@ pub fn generate_part_vertices(
             continue;
         }
 
-        // For RCS thrusters, use dedicated RCS rendering
-        if def.rcs.is_some() {
-            generate_rcs_details(&mut vertices, def, x, y, 1.0);
-
-            if is_selected || is_hovered || drag_invalid {
-                let highlight_color = if drag_invalid {
-                    [0.9, 0.2, 0.2, 0.4]
-                } else if is_selected {
-                    [0.5, 0.7, 1.0, 0.3]
-                } else {
-                    [0.55, 0.55, 0.6, 0.2]
-                };
-                vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_w, y - half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_w, y + half_h], highlight_color));
-                vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
-                vertices.push(Vertex::new([x + half_w, y + half_h], highlight_color));
-                vertices.push(Vertex::new([x - half_w, y + half_h], highlight_color));
-            }
-            rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
-            continue;
-        }
-
-        // Draw non-engine parts based on shape
-        // Use tank-matching color for nose cones when sprites unavailable
-        let shape_color = if is_triangle { [0.76, 0.78, 0.82, 1.0] } else { color };
-        match def.shape {
-            PartShape::Rectangle => {
-                // Two triangles for a rectangle
-                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color));
-                vertices.push(Vertex::new([x + half_w, y - half_h], shape_color));
-                vertices.push(Vertex::new([x + half_w, y + half_h], shape_color));
-
-                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color));
-                vertices.push(Vertex::new([x + half_w, y + half_h], shape_color));
-                vertices.push(Vertex::new([x - half_w, y + half_h], shape_color));
-
-                // Invalid drag overlay for rectangles
-                if drag_invalid {
-                    let overlay = [0.9, 0.2, 0.2, 0.4];
-                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
-                    vertices.push(Vertex::new([x + half_w, y - half_h], overlay));
-                    vertices.push(Vertex::new([x + half_w, y + half_h], overlay));
-                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
-                    vertices.push(Vertex::new([x + half_w, y + half_h], overlay));
-                    vertices.push(Vertex::new([x - half_w, y + half_h], overlay));
-                }
-            }
-            PartShape::Triangle => {
-                // Single triangle with base at bottom, point at top
-                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color)); // bottom left
-                vertices.push(Vertex::new([x + half_w, y - half_h], shape_color)); // bottom right
-                vertices.push(Vertex::new([x, y + half_h], shape_color));          // top center
-
-                // Invalid drag overlay for triangles
-                if drag_invalid {
-                    let overlay = [0.9, 0.2, 0.2, 0.4];
-                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
-                    vertices.push(Vertex::new([x + half_w, y - half_h], overlay));
-                    vertices.push(Vertex::new([x, y + half_h], overlay));
-                }
-            }
-            PartShape::TriangleRight => {
-                // Right triangle: vertical edge on right, hypotenuse on left
-                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color));
-                vertices.push(Vertex::new([x + half_w, y - half_h], shape_color));
-                vertices.push(Vertex::new([x + half_w, y + half_h], shape_color));
-
-                if drag_invalid {
-                    let overlay = [0.9, 0.2, 0.2, 0.4];
-                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
-                    vertices.push(Vertex::new([x + half_w, y - half_h], overlay));
-                    vertices.push(Vertex::new([x + half_w, y + half_h], overlay));
-                }
-            }
-            PartShape::TriangleLeft => {
-                // Right triangle: vertical edge on left, hypotenuse on right
-                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color));
-                vertices.push(Vertex::new([x + half_w, y - half_h], shape_color));
-                vertices.push(Vertex::new([x - half_w, y + half_h], shape_color));
-
-                if drag_invalid {
-                    let overlay = [0.9, 0.2, 0.2, 0.4];
-                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
-                    vertices.push(Vertex::new([x + half_w, y - half_h], overlay));
-                    vertices.push(Vertex::new([x - half_w, y + half_h], overlay));
-                }
-            }
-            PartShape::Trapezoid => {
-                // Trapezoid: wider at bottom, narrower at top
-                let half_top_w = (def.top_width() / 2.0) as f32;
-
-                // Two triangles for trapezoid
-                // Triangle 1: bottom left, bottom right, top right
-                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color));
-                vertices.push(Vertex::new([x + half_w, y - half_h], shape_color));
-                vertices.push(Vertex::new([x + half_top_w, y + half_h], shape_color));
-
-                // Triangle 2: bottom left, top right, top left
-                vertices.push(Vertex::new([x - half_w, y - half_h], shape_color));
-                vertices.push(Vertex::new([x + half_top_w, y + half_h], shape_color));
-                vertices.push(Vertex::new([x - half_top_w, y + half_h], shape_color));
-
-                // Invalid drag overlay for trapezoids
-                if drag_invalid {
-                    let overlay = [0.9, 0.2, 0.2, 0.4];
-                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
-                    vertices.push(Vertex::new([x + half_w, y - half_h], overlay));
-                    vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay));
-                    vertices.push(Vertex::new([x - half_w, y - half_h], overlay));
-                    vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay));
-                    vertices.push(Vertex::new([x - half_top_w, y + half_h], overlay));
-                }
-            }
-        }
         rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
     }
 
@@ -670,14 +439,13 @@ fn generate_single_ghost_vertices(
     ghost_valid: bool,
     rotation: f64,
     editor: &EditorState,
-    part_defs: &PartDefinitions,
+    _part_defs: &PartDefinitions,
     sprite_atlas: Option<&SpriteAtlas>,
 ) {
     let vert_start = vertices.len();
     let ghost_alpha = 0.5;
 
     let half_w = (def.width() / 2.0) as f32;
-    let half_h = (def.height() / 2.0) as f32;
     let cam_x = editor.camera_offset[0] as f32;
     let cam_y = editor.camera_offset[1] as f32;
     let x = position[0] as f32 - cam_x;
@@ -707,86 +475,7 @@ fn generate_single_ghost_vertices(
         }
     }
 
-    if (def.category == PartCategory::Propulsion || def.category == PartCategory::Interstellar) && def.engine.is_some() {
-        generate_engine_details(vertices, def, x, y, ghost_alpha);
-
-        let overlay_color = if ghost_valid {
-            [0.3, 0.9, 0.3, 0.25]
-        } else {
-            [0.9, 0.3, 0.3, 0.25]
-        };
-        let half_top_w = (def.top_width() / 2.0) as f32;
-        vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_w, y - half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay_color));
-        vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay_color));
-        vertices.push(Vertex::new([x - half_top_w, y + half_h], overlay_color));
-        rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
-        return;
-    }
-
-    if def.category == PartCategory::Pods {
-        generate_pod_details(vertices, def, x, y, ghost_alpha);
-
-        let overlay_color = if ghost_valid {
-            [0.3, 0.9, 0.3, 0.25]
-        } else {
-            [0.9, 0.3, 0.3, 0.25]
-        };
-        let half_top_w = (def.top_width() / 2.0) as f32;
-        vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_w, y - half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay_color));
-        vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_top_w, y + half_h], overlay_color));
-        vertices.push(Vertex::new([x - half_top_w, y + half_h], overlay_color));
-        rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
-        return;
-    }
-
-    if def.is_heat_shield {
-        generate_heat_shield_details(vertices, def, x, y, ghost_alpha);
-
-        let overlay_color = if ghost_valid {
-            [0.3, 0.9, 0.3, 0.25]
-        } else {
-            [0.9, 0.3, 0.3, 0.25]
-        };
-        let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
-        vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_w, y - hitbox_half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
-        vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
-        vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], overlay_color));
-        rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
-        return;
-    }
-
-    if def.decoupler.is_some() {
-        generate_decoupler_details(vertices, def, x, y, ghost_alpha);
-
-        let ghost_world_x = position[0] as f32;
-        let ghost_world_y = position[1] as f32;
-        generate_decoupler_adapter(vertices, def, x, y, ghost_world_x, ghost_world_y, &editor.parts, part_defs, ghost_alpha);
-
-        let overlay_color = if ghost_valid {
-            [0.3, 0.9, 0.3, 0.25]
-        } else {
-            [0.9, 0.3, 0.3, 0.25]
-        };
-        let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
-        vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_w, y - hitbox_half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
-        vertices.push(Vertex::new([x - half_w, y - hitbox_half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
-        vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], overlay_color));
-        rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
-        return;
-    }
-
+    // Fairing bases use procedural rendering (shell geometry handled separately)
     if def.fairing.is_some() {
         generate_fairing_base_details(vertices, def, x, y, ghost_alpha);
 
@@ -803,71 +492,7 @@ fn generate_single_ghost_vertices(
         vertices.push(Vertex::new([x + half_w, y + hitbox_half_h], overlay_color));
         vertices.push(Vertex::new([x - half_w, y + hitbox_half_h], overlay_color));
         rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
-        return;
     }
-
-    if def.rcs.is_some() {
-        generate_rcs_details(vertices, def, x, y, ghost_alpha);
-
-        let overlay_color = if ghost_valid {
-            [0.3, 0.9, 0.3, 0.25]
-        } else {
-            [0.9, 0.3, 0.3, 0.25]
-        };
-        vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_w, y - half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_w, y + half_h], overlay_color));
-        vertices.push(Vertex::new([x - half_w, y - half_h], overlay_color));
-        vertices.push(Vertex::new([x + half_w, y + half_h], overlay_color));
-        vertices.push(Vertex::new([x - half_w, y + half_h], overlay_color));
-        rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
-        return;
-    }
-
-    let color = if ghost_valid {
-        GHOST_VALID_COLOR
-    } else {
-        GHOST_INVALID_COLOR
-    };
-
-    match def.shape {
-        PartShape::Rectangle => {
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y + half_h], color));
-
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y + half_h], color));
-            vertices.push(Vertex::new([x - half_w, y + half_h], color));
-        }
-        PartShape::Triangle => {
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y - half_h], color));
-            vertices.push(Vertex::new([x, y + half_h], color));
-        }
-        PartShape::TriangleRight => {
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y + half_h], color));
-        }
-        PartShape::TriangleLeft => {
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y - half_h], color));
-            vertices.push(Vertex::new([x - half_w, y + half_h], color));
-        }
-        PartShape::Trapezoid => {
-            let half_top_w = (def.top_width() / 2.0) as f32;
-
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_top_w, y + half_h], color));
-
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_top_w, y + half_h], color));
-            vertices.push(Vertex::new([x - half_top_w, y + half_h], color));
-        }
-    }
-    rotate_vertices_around(&mut vertices[vert_start..], x, y, rotation);
 }
 
 /// Generate vertices for the ghost preview (primary + mirror if applicable)
@@ -1871,35 +1496,54 @@ pub fn generate_engine_plume_vertices(
                 let frame_idx = (plume_elapsed_secs * 10.0) as usize % 4;
                 let rect = &anim.frames[frame_idx];
 
-                let plume_half_w = half_nozzle * 1.2;
-                let plume_height = nozzle_width * 5.0 * throttle;
-                let plume_center_y = nozzle_y - plume_height / 2.0;
-
                 let brightness = 0.5 + 0.5 * throttle;
                 let tint = [brightness, brightness, brightness, 1.0];
-                generate_sprite_quad(vertices, rect, x, plume_center_y, plume_half_w, plume_height / 2.0, tint);
+
+                if let Some(ref offsets) = engine.nozzle_offsets {
+                    let n = offsets.len() as f32;
+                    let per_half_w = half_nozzle / n * 1.2;
+                    let per_height = nozzle_width / n * 5.0 * throttle;
+                    for &off in offsets {
+                        let px = x + off as f32 * GRID_SQUARE_SIZE as f32;
+                        let py = nozzle_y - per_height / 2.0;
+                        generate_sprite_quad(vertices, rect, px, py, per_half_w, per_height / 2.0, tint);
+                    }
+                } else {
+                    let plume_half_w = half_nozzle * 1.2;
+                    let plume_height = nozzle_width * 5.0 * throttle;
+                    let plume_center_y = nozzle_y - plume_height / 2.0;
+                    generate_sprite_quad(vertices, rect, x, plume_center_y, plume_half_w, plume_height / 2.0, tint);
+                }
                 return;
             }
         }
     }
 
     // Procedural fallback
-    let plume_length = nozzle_width * 4.0 * throttle;
-    let plume_half_w = half_nozzle * 1.2;
+    let offsets: &[f64] = if let Some(ref engine) = def.engine {
+        engine.nozzle_offsets.as_deref().unwrap_or(&[0.0])
+    } else {
+        &[0.0]
+    };
+    let n = offsets.len() as f32;
+    let plume_length = nozzle_width / n * 4.0 * throttle;
+    let plume_half_w = half_nozzle / n * 1.2;
 
-    // Red outer plume triangle
     let red = [1.0, 0.2, 0.0, 0.9];
-    vertices.push(Vertex::new([x - plume_half_w, nozzle_y], red));
-    vertices.push(Vertex::new([x + plume_half_w, nozzle_y], red));
-    vertices.push(Vertex::new([x, nozzle_y - plume_length], red));
-
-    // Yellow inner plume triangle (60% width, 40% length)
     let yellow = [1.0, 0.9, 0.1, 1.0];
     let inner_half_w = plume_half_w * 0.6;
     let inner_length = plume_length * 0.4;
-    vertices.push(Vertex::new([x - inner_half_w, nozzle_y], yellow));
-    vertices.push(Vertex::new([x + inner_half_w, nozzle_y], yellow));
-    vertices.push(Vertex::new([x, nozzle_y - inner_length], yellow));
+
+    for &off in offsets {
+        let px = x + off as f32 * GRID_SQUARE_SIZE as f32;
+        vertices.push(Vertex::new([px - plume_half_w, nozzle_y], red));
+        vertices.push(Vertex::new([px + plume_half_w, nozzle_y], red));
+        vertices.push(Vertex::new([px, nozzle_y - plume_length], red));
+
+        vertices.push(Vertex::new([px - inner_half_w, nozzle_y], yellow));
+        vertices.push(Vertex::new([px + inner_half_w, nozzle_y], yellow));
+        vertices.push(Vertex::new([px, nozzle_y - inner_length], yellow));
+    }
 }
 
 /// Generate vertices for a single part at the given (x, y) center position.
@@ -1914,8 +1558,7 @@ pub fn generate_part_shape_vertices(
     sprite_atlas: Option<&SpriteAtlas>,
     deploy_fraction: Option<f64>,
 ) {
-    // Try sprite-based rendering first (skip fairings — they have shell geometry)
-    let is_triangle = matches!(def.shape, PartShape::Triangle | PartShape::TriangleLeft | PartShape::TriangleRight);
+    // Try sprite-based rendering (skip fairings — they have shell geometry)
     if let Some(atlas) = sprite_atlas {
         if def.fairing.is_none() {
             if let Some(rect) = atlas.parts.get(&def.id) {
@@ -1941,84 +1584,9 @@ pub fn generate_part_shape_vertices(
         }
     }
 
-    // For engines, use dedicated engine rendering
-    if (def.category == PartCategory::Propulsion || def.category == PartCategory::Interstellar) && def.engine.is_some() {
-        generate_engine_details(vertices, def, x, y, alpha);
-        return;
-    }
-
-    // For pods, use dedicated pod rendering
-    if def.category == PartCategory::Pods {
-        generate_pod_details(vertices, def, x, y, alpha);
-        return;
-    }
-
-    // For heat shields, use dedicated rendering
-    if def.is_heat_shield {
-        generate_heat_shield_details(vertices, def, x, y, alpha);
-        return;
-    }
-
-    // For decouplers, draw the ring (adapter needs parts list, handled separately)
-    if def.decoupler.is_some() {
-        generate_decoupler_details(vertices, def, x, y, alpha);
-        return;
-    }
-
-    // For fairings, draw the base disc (shell needs shape data, handled separately)
+    // Fairing bases use procedural rendering (shell geometry handled separately)
     if def.fairing.is_some() {
         generate_fairing_base_details(vertices, def, x, y, alpha);
-        return;
-    }
-
-    // For RCS thrusters
-    if def.rcs.is_some() {
-        generate_rcs_details(vertices, def, x, y, alpha);
-        return;
-    }
-
-    let half_w = (def.width() / 2.0) as f32;
-    let half_h = (def.height() / 2.0) as f32;
-    // Use tank-matching color for nose cones when sprites unavailable
-    let color = if is_triangle {
-        [0.76, 0.78, 0.82, alpha]
-    } else {
-        [0.4, 0.4, 0.45, alpha]
-    };
-
-    match def.shape {
-        PartShape::Rectangle => {
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y + half_h], color));
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y + half_h], color));
-            vertices.push(Vertex::new([x - half_w, y + half_h], color));
-        }
-        PartShape::Triangle => {
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y - half_h], color));
-            vertices.push(Vertex::new([x, y + half_h], color));
-        }
-        PartShape::TriangleRight => {
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y + half_h], color));
-        }
-        PartShape::TriangleLeft => {
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y - half_h], color));
-            vertices.push(Vertex::new([x - half_w, y + half_h], color));
-        }
-        PartShape::Trapezoid => {
-            let half_top_w = (def.top_width() / 2.0) as f32;
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_top_w, y + half_h], color));
-            vertices.push(Vertex::new([x - half_w, y - half_h], color));
-            vertices.push(Vertex::new([x + half_top_w, y + half_h], color));
-            vertices.push(Vertex::new([x - half_top_w, y + half_h], color));
-        }
     }
 }
 

@@ -329,6 +329,7 @@
                 gimbal_range: 6.0,
                 propellant: Kerolox,
                 alternator_power: 150.0,
+                nozzle_offsets: Some([-1.0, 1.0]),
             )),
             resources: {},
         ),
