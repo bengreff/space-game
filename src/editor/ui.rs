@@ -89,6 +89,7 @@ pub fn render_editor_ui(
     stats: &ShipStats,
     bodies: &[BodyInfo],
     stage_delta_vs: &[f64],
+    stage_burn_times: &[f64],
 ) -> EditorAction {
     let mut action = EditorAction::None;
 
@@ -346,8 +347,8 @@ pub fn render_editor_ui(
             egui::ScrollArea::vertical().show(ui, |ui| {
                 // Track deferred actions
                 let mut insert_stage_at: Option<usize> = None;
-                let mut move_stage_to: Option<(usize, usize)> = None; // (from, to_insert_pos)
                 let mut delete_stage_at: Option<usize> = None;
+                let mut move_stage_to: Option<(usize, usize)> = None; // (from, to_insert_pos)
                 let mut drop_action: Option<(StagingDrag, usize)> = None;
                 let mut staging_select: Option<PlacedPartId> = None;
 
@@ -380,10 +381,11 @@ pub fn render_editor_ui(
 
                     let frame = egui::Frame::group(ui.style());
                     let (_, dropped_payload) = ui.dnd_drop_zone::<StagingDrag, ()>(frame, |ui| {
+                        ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
                             let stage_drag_id = egui::Id::new(("staging_stage", stage_idx));
                             ui.dnd_drag_source(stage_drag_id, StagingDrag::Stage(stage_idx), |ui| {
-                                ui.label(format!("Stage {}", stage_idx + 1));
+                                ui.label(format!("{}", stage_idx + 1));
                             });
                             // Per-stage Δv
                             let stage_dv = stage_delta_vs.get(stage_idx).copied().unwrap_or(0.0);
@@ -391,11 +393,18 @@ pub fn render_editor_ui(
                                 ui.label(egui::RichText::new(format_delta_v(stage_dv))
                                     .size(10.0).color(egui::Color32::from_rgb(120, 200, 120)));
                             }
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.small_button("\u{2715}").on_hover_text("Delete stage").clicked() {
+                            // Per-stage burn time
+                            let burn_time = stage_burn_times.get(stage_idx).copied().unwrap_or(0.0);
+                            if burn_time > 0.0 {
+                                ui.label(egui::RichText::new(format_duration(burn_time))
+                                    .size(10.0).color(egui::Color32::from_rgb(120, 200, 120)));
+                            }
+                            // Delete button for empty stages
+                            if editor.stages[stage_idx].is_empty() {
+                                if ui.small_button("\u{2715}").on_hover_text("Delete empty stage").clicked() {
                                     delete_stage_at = Some(stage_idx);
                                 }
-                            });
+                            }
                         });
 
                         if editor.stages[stage_idx].is_empty() {
@@ -469,10 +478,12 @@ pub fn render_editor_ui(
                         };
                         editor.stages.insert(insert_at, stage);
                     }
+                } else if let Some(idx) = delete_stage_at {
+                    if idx < editor.stages.len() && editor.stages[idx].is_empty() {
+                        editor.stages.remove(idx);
+                    }
                 } else if let Some(idx) = insert_stage_at {
                     editor.stages.insert(idx, Vec::new());
-                } else if let Some(idx) = delete_stage_at {
-                    editor.stages.remove(idx);
                 } else if let Some((drag, target_idx)) = drop_action {
                     match drag {
                         StagingDrag::Part(part_id) => {

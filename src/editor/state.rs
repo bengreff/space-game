@@ -1380,7 +1380,9 @@ impl EditorState {
     /// Simulates staging sequentially: decouplers fire, engines activate.
     /// Fuel zones (divided by non-crossfeed decouplers) determine which fuel
     /// is accessible to active engines in each stage.
-    pub fn calculate_stage_delta_v(&self, part_defs: &PartDefinitions) -> Vec<f64> {
+    /// Supports parallel burn: when multiple engine zones have fuel, burns until
+    /// the first zone empties (phase time = min burn time across zones).
+    pub fn calculate_stage_delta_v(&self, part_defs: &PartDefinitions) -> Vec<(f64, f64)> {
         let g0 = 9.80665;
         let mut stage_dvs = Vec::new();
 
@@ -1406,16 +1408,71 @@ impl EditorState {
                 if decoupled.contains(&part_id) { continue; }
                 let Some(part) = self.parts.get(&part_id) else { continue };
                 let Some(def) = part_defs.get(&part.definition_id) else { continue };
-                if def.decoupler.is_some() {
-                    let decoupler_bottom = part.position[1] - def.hitbox_height() / 2.0;
+                if let Some(ref dec_data) = def.decoupler {
                     decoupled.insert(part_id);
-                    for (&other_id, other_part) in &self.parts {
-                        if decoupled.contains(&other_id) { continue; }
-                        let Some(other_def) = part_defs.get(&other_part.definition_id) else { continue };
-                        let other_top = other_part.position[1] + other_def.hitbox_height() / 2.0;
-                        if other_top <= decoupler_bottom + 0.01 {
-                            decoupled.insert(other_id);
+                    if !dec_data.is_radial {
+                        // Stack decoupler: Y-based decoupling
+                        let decoupler_bottom = part.position[1] - def.hitbox_height() / 2.0;
+                        for (&other_id, other_part) in &self.parts {
+                            if decoupled.contains(&other_id) { continue; }
+                            let Some(other_def) = part_defs.get(&other_part.definition_id) else { continue };
+                            let other_top = other_part.position[1] + other_def.hitbox_height() / 2.0;
+                            if other_top <= decoupler_bottom + 0.01 {
+                                decoupled.insert(other_id);
+                            }
                         }
+                    }
+                    // Radial decouplers: only mark self (done above)
+                }
+            }
+
+            // 1b. BFS connectivity: mark parts disconnected from root as decoupled
+            {
+                let active_ids: Vec<PlacedPartId> = self.parts.keys()
+                    .copied()
+                    .filter(|id| !decoupled.contains(id))
+                    .collect();
+
+                // Build weld adjacency among active parts
+                let mut neighbors: HashMap<PlacedPartId, Vec<PlacedPartId>> = HashMap::new();
+                for (i, &id_a) in active_ids.iter().enumerate() {
+                    let part_a = &self.parts[&id_a];
+                    let Some(def_a) = part_defs.get(&part_a.definition_id) else { continue };
+                    for &id_b in &active_ids[i + 1..] {
+                        let part_b = &self.parts[&id_b];
+                        let Some(def_b) = part_defs.get(&part_b.definition_id) else { continue };
+                        if Self::weld_bounds_overlap(
+                            part_a.position, def_a, part_a.rotation,
+                            part_b.position, def_b, part_b.rotation,
+                        ) {
+                            neighbors.entry(id_a).or_default().push(id_b);
+                            neighbors.entry(id_b).or_default().push(id_a);
+                        }
+                    }
+                }
+
+                // BFS from root
+                let root = self.root_part.unwrap_or(0);
+                let mut reachable: HashSet<PlacedPartId> = HashSet::new();
+                let mut queue = VecDeque::new();
+                if !decoupled.contains(&root) && self.parts.contains_key(&root) {
+                    reachable.insert(root);
+                    queue.push_back(root);
+                }
+                while let Some(id) = queue.pop_front() {
+                    if let Some(nbs) = neighbors.get(&id) {
+                        for &nb in nbs {
+                            if reachable.insert(nb) {
+                                queue.push_back(nb);
+                            }
+                        }
+                    }
+                }
+
+                // Mark unreachable parts as decoupled
+                for &id in &active_ids {
+                    if !reachable.contains(&id) {
+                        decoupled.insert(id);
                     }
                 }
             }
@@ -1450,53 +1507,113 @@ impl EditorState {
                 .filter_map(|id| zone_of.get(id).copied())
                 .collect();
 
-            // 6. Calculate wet mass of ALL remaining parts, but only count
-            //    fuel from tanks in engine zones as burnable
-            let mut wet_mass = 0.0;
-            let mut burnable_fuel = 0.0;
-            for (&part_id, part) in &self.parts {
-                if decoupled.contains(&part_id) { continue; }
-                let Some(def) = part_defs.get(&part.definition_id) else { continue };
-                let part_fuel = fuel_remaining.get(&part_id).copied().unwrap_or(0.0);
-                wet_mass += def.mass + part_fuel;
+            // 6. Per-zone parallel burn parameters
+            let mut zone_thrust: HashMap<usize, f64> = HashMap::new();
+            let mut zone_thrust_over_isp: HashMap<usize, f64> = HashMap::new();
+            let mut zone_fuel: HashMap<usize, f64> = HashMap::new();
 
-                if let Some(&zone) = zone_of.get(&part_id) {
-                    if engine_zones.contains(&zone) {
-                        burnable_fuel += part_fuel;
-                    }
-                }
-            }
-
-            // 7. Calculate thrust-weighted average Isp (skip covered engines)
-            let mut total_thrust = 0.0;
-            let mut weighted_isp = 0.0;
             for &engine_id in &engines_enabled {
                 if decoupled.contains(&engine_id) { continue; }
                 if self.is_editor_engine_covered_with_decoupled(engine_id, part_defs, &decoupled) { continue; }
                 let Some(part) = self.parts.get(&engine_id) else { continue };
                 let Some(def) = part_defs.get(&part.definition_id) else { continue };
                 if let Some(ref engine) = def.engine {
-                    total_thrust += engine.thrust_vac;
-                    weighted_isp += engine.thrust_vac * engine.isp_vac;
+                    if let Some(&z) = zone_of.get(&engine_id) {
+                        if engine_zones.contains(&z) {
+                            *zone_thrust.entry(z).or_insert(0.0) += engine.thrust_vac;
+                            if engine.isp_vac > 0.0 {
+                                *zone_thrust_over_isp.entry(z).or_insert(0.0) +=
+                                    engine.thrust_vac / engine.isp_vac;
+                            }
+                        }
+                    }
                 }
             }
-            let isp = if total_thrust > 0.0 { weighted_isp / total_thrust } else { 0.0 };
 
-            // 8. Δv = Isp * g0 * ln(wet / dry)
-            let dry_mass = wet_mass - burnable_fuel;
-            let dv = if isp > 0.0 && dry_mass > 0.0 && wet_mass > dry_mass {
-                isp * g0 * (wet_mass / dry_mass).ln()
+            for (&part_id, &fuel) in &fuel_remaining {
+                if decoupled.contains(&part_id) || fuel <= 0.0 { continue; }
+                if let Some(&z) = zone_of.get(&part_id) {
+                    if engine_zones.contains(&z) {
+                        *zone_fuel.entry(z).or_insert(0.0) += fuel;
+                    }
+                }
+            }
+
+            // 7. Find phase time (min burn time across zones)
+            let mut phase_time = f64::MAX;
+            for (&z, _) in &zone_thrust {
+                let flow = zone_thrust_over_isp.get(&z).copied().unwrap_or(0.0) / g0;
+                let fuel = zone_fuel.get(&z).copied().unwrap_or(0.0);
+                if flow > 0.0 && fuel > 0.0 {
+                    phase_time = phase_time.min(fuel / flow);
+                }
+            }
+            if phase_time == f64::MAX { phase_time = 0.0; }
+
+            // 8. Compute per-zone fuel consumed and total
+            let mut total_consumed = 0.0;
+            let mut zone_consumed: HashMap<usize, f64> = HashMap::new();
+            for (&z, _) in &zone_thrust {
+                let flow = zone_thrust_over_isp.get(&z).copied().unwrap_or(0.0) / g0;
+                let fuel = zone_fuel.get(&z).copied().unwrap_or(0.0);
+                let consumed = if flow > 0.0 && fuel > 0.0 {
+                    (flow * phase_time).min(fuel)
+                } else {
+                    0.0
+                };
+                zone_consumed.insert(z, consumed);
+                total_consumed += consumed;
+            }
+
+            // Wet mass of all remaining parts
+            let mut wet_mass = 0.0;
+            for (&part_id, part) in &self.parts {
+                if decoupled.contains(&part_id) { continue; }
+                let Some(def) = part_defs.get(&part.definition_id) else { continue };
+                let part_fuel = fuel_remaining.get(&part_id).copied().unwrap_or(0.0);
+                wet_mass += def.mass + part_fuel;
+            }
+
+            // Effective Isp (harmonic weighted mean across zones)
+            let total_thrust: f64 = zone_thrust.values().sum();
+            let total_thrust_over_isp: f64 = zone_thrust_over_isp.values().sum();
+            let effective_isp = if total_thrust_over_isp > 0.0 {
+                total_thrust / total_thrust_over_isp
             } else {
                 0.0
             };
-            stage_dvs.push(dv);
 
-            // 9. Consume only burnable fuel (in engine zones)
-            for (&part_id, fuel) in fuel_remaining.iter_mut() {
-                if decoupled.contains(&part_id) { continue; }
-                if let Some(&zone) = zone_of.get(&part_id) {
-                    if engine_zones.contains(&zone) {
-                        *fuel = 0.0;
+            // 9. Δv = Isp * g0 * ln(wet / dry)
+            let dry_mass = wet_mass - total_consumed;
+            let dv = if effective_isp > 0.0 && dry_mass > 0.0 && wet_mass > dry_mass {
+                effective_isp * g0 * (wet_mass / dry_mass).ln()
+            } else {
+                0.0
+            };
+            stage_dvs.push((dv, phase_time));
+
+            // 10. Update fuel_remaining proportionally within each zone
+            for (&z, &consumed) in &zone_consumed {
+                if consumed <= 0.0 { continue; }
+                let zf = zone_fuel.get(&z).copied().unwrap_or(0.0);
+                if zf <= 0.0 { continue; }
+                if consumed >= zf {
+                    // Zone emptied
+                    for (&part_id, fuel) in fuel_remaining.iter_mut() {
+                        if decoupled.contains(&part_id) { continue; }
+                        if zone_of.get(&part_id).copied() == Some(z) {
+                            *fuel = 0.0;
+                        }
+                    }
+                } else {
+                    // Partial consumption — distribute proportionally
+                    for (&part_id, fuel) in fuel_remaining.iter_mut() {
+                        if decoupled.contains(&part_id) || *fuel <= 0.0 { continue; }
+                        if zone_of.get(&part_id).copied() == Some(z) {
+                            let fraction = *fuel / zf;
+                            *fuel -= consumed * fraction;
+                            if *fuel < 0.0 { *fuel = 0.0; }
+                        }
                     }
                 }
             }

@@ -178,6 +178,11 @@ When vessel has stages, an egui right panel named "flight_staging_panel" with de
 - Green `rgb(120, 200, 120)` at font size 10
 - `>= 1000` -> "{X.X}km/s", else "{X.0}m/s"
 
+#### Scenario: Per-stage burn time
+- Green `rgb(120, 200, 120)` at font size 10, displayed as "Burn: {duration}"
+- Uses `format_duration()` (e.g., "1m 30s")
+- Only shown when burn time > 0
+
 #### Scenario: Selected part highlighting
 - When a flight part is selected (clicked in the viewport), its corresponding staging entry SHALL be highlighted in light blue `rgb(128, 179, 255)`
 - Selection is matched by comparing `selected_flight_part` cache index → `part_index` against each staging entry's `part_index`
@@ -186,7 +191,11 @@ When vessel has stages, an egui right panel named "flight_staging_panel" with de
 - Stage headers are drag sources for reordering
 - Parts within stages are drag sources for moving between stages
 - "+" buttons between stages insert empty stages
-- "X" button deletes stage
+
+#### Scenario: Empty stage deletion
+- Empty stages (containing no parts) SHALL show a "✕" button in the stage header row
+- Clicking it removes the stage via the staging reorder mechanism
+- Non-empty stages SHALL NOT show a delete button
 
 ## Flight Part Info
 

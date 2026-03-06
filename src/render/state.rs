@@ -131,6 +131,7 @@ pub struct RenderState {
     pub vessel_total_stages: Option<usize>,   // Total stages
     pub vessel_stages: Vec<Vec<super::types::StagedPartInfo>>,  // Full stage data for UI
     pub vessel_stage_delta_vs: Vec<f64>,  // Per-stage delta-v (m/s, vacuum)
+    pub vessel_stage_burn_times: Vec<f64>,  // Per-stage burn time at 100% thrust (seconds)
     pub staging_reorder: Option<Vec<Vec<usize>>>,  // Request to reorder stages (part indices)
     pub ship_soi_surface_gravity: f64,     // m/s², for TWR
     pub ship_g_force: f64,                 // Felt acceleration in g's (thrust + drag, not gravity)
@@ -499,6 +500,7 @@ impl RenderState {
             vessel_total_stages: None,
             vessel_stages: Vec::new(),
             vessel_stage_delta_vs: Vec::new(),
+            vessel_stage_burn_times: Vec::new(),
             staging_reorder: None,
             ship_soi_surface_gravity: 9.81,
             ship_g_force: 0.0,
@@ -712,6 +714,7 @@ impl RenderState {
         let current_autopilot = self.autopilot_target;
         let vessel_stages = self.vessel_stages.clone();
         let vessel_stage_delta_vs = self.vessel_stage_delta_vs.clone();
+        let vessel_stage_burn_times = self.vessel_stage_burn_times.clone();
 
         let mut new_warp_index = current_warp_index;
         let mut pause_action = PauseAction::None;
@@ -1365,8 +1368,8 @@ impl RenderState {
 
                         egui::ScrollArea::vertical().show(ui, |ui| {
                             let mut insert_stage_at: Option<usize> = None;
-                            let mut move_stage_to: Option<(usize, usize)> = None;
                             let mut delete_stage_at: Option<usize> = None;
+                            let mut move_stage_to: Option<(usize, usize)> = None;
                             let mut drop_action: Option<(FlightStageDrag, usize)> = None;
 
                             // Helper: "+" gap that doubles as a drop zone for stage reordering
@@ -1394,6 +1397,7 @@ impl RenderState {
 
                                 let frame = egui::Frame::group(ui.style());
                                 let (_, dropped_payload) = ui.dnd_drop_zone::<FlightStageDrag, ()>(frame, |ui| {
+                                    ui.set_width(ui.available_width());
                                     ui.horizontal(|ui| {
                                         let activated = vessel_current_stage.map_or(false, |c| stage_idx < c);
                                         let label_color = if activated {
@@ -1403,7 +1407,7 @@ impl RenderState {
                                         };
                                         let stage_drag_id = egui::Id::new(("flight_staging_stage", stage_idx));
                                         ui.dnd_drag_source(stage_drag_id, FlightStageDrag::Stage(stage_idx), |ui| {
-                                            ui.label(egui::RichText::new(format!("Stage {}", stage_idx + 1)).color(label_color));
+                                            ui.label(egui::RichText::new(format!("{}", stage_idx + 1)).color(label_color));
                                         });
                                         // Per-stage Δv
                                         let stage_dv = vessel_stage_delta_vs.get(stage_idx).copied().unwrap_or(0.0);
@@ -1416,11 +1420,18 @@ impl RenderState {
                                             ui.label(egui::RichText::new(dv_str)
                                                 .size(10.0).color(egui::Color32::from_rgb(120, 200, 120)));
                                         }
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if ui.small_button("\u{2715}").on_hover_text("Delete stage").clicked() {
+                                        // Per-stage burn time
+                                        let burn_time = vessel_stage_burn_times.get(stage_idx).copied().unwrap_or(0.0);
+                                        if burn_time > 0.0 {
+                                            ui.label(egui::RichText::new(format_duration(burn_time))
+                                                .size(10.0).color(egui::Color32::from_rgb(120, 200, 120)));
+                                        }
+                                        // Delete button for empty stages
+                                        if vessel_stages[stage_idx].is_empty() {
+                                            if ui.small_button("\u{2715}").on_hover_text("Delete empty stage").clicked() {
                                                 delete_stage_at = Some(stage_idx);
                                             }
-                                        });
+                                        }
                                     });
 
                                     if vessel_stages[stage_idx].is_empty() {
@@ -1454,7 +1465,7 @@ impl RenderState {
                             plus_gap(ui, 0, &mut insert_stage_at, &mut move_stage_to);
 
                             // Build new stages if any action occurred
-                            if move_stage_to.is_some() || insert_stage_at.is_some() || delete_stage_at.is_some() || drop_action.is_some() {
+                            if move_stage_to.is_some() || delete_stage_at.is_some() || insert_stage_at.is_some() || drop_action.is_some() {
                                 let mut new_stages: Vec<Vec<usize>> = vessel_stages.iter()
                                     .map(|stage| stage.iter().map(|p| p.part_index).collect())
                                     .collect();
@@ -1469,12 +1480,12 @@ impl RenderState {
                                         };
                                         new_stages.insert(insert_at, stage);
                                     }
-                                } else if let Some(idx) = insert_stage_at {
-                                    new_stages.insert(idx, Vec::new());
                                 } else if let Some(idx) = delete_stage_at {
-                                    if idx < new_stages.len() {
+                                    if idx < new_stages.len() && new_stages[idx].is_empty() {
                                         new_stages.remove(idx);
                                     }
+                                } else if let Some(idx) = insert_stage_at {
+                                    new_stages.insert(idx, Vec::new());
                                 } else if let Some((drag, target_idx)) = drop_action {
                                     match drag {
                                         FlightStageDrag::Part(part_idx) => {
@@ -2723,6 +2734,7 @@ impl RenderState {
             self.vessel_total_stages = s.total_stages;
             self.vessel_stages = s.stages.clone().unwrap_or_default();
             self.vessel_stage_delta_vs = s.stage_delta_vs.clone().unwrap_or_default();
+            self.vessel_stage_burn_times = s.stage_burn_times.clone().unwrap_or_default();
             self.ship_soi_surface_gravity = s.soi_surface_gravity;
             self.ship_g_force = s.g_force;
             self.ship_temperature = s.temperature;
