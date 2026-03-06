@@ -12,7 +12,13 @@ The active vessel's `ship` and `vessel` fields remain directly on `FlightState` 
 Each vessel has a unique `VesselId` (u64). `FlightState` tracks `active_vessel_id`, `active_vessel_name`, and `next_vessel_id` (monotonically increasing counter).
 
 ### Requirement: Inactive vessel storage
-Inactive vessels are stored in `FlightState.inactive_vessels: Vec<TrackedVessel>`. Each `TrackedVessel` contains: `id`, `name`, `ship: Ship`, `vessel: Option<FlightVessel>`, `maneuver_nodes: Vec<ManeuverNode>`.
+Inactive vessels are stored in `FlightState.inactive_vessels: Vec<TrackedVessel>`. Each `TrackedVessel` contains: `id`, `name`, `ship: Ship`, `vessel: Option<FlightVessel>`, `maneuver_nodes: Vec<ManeuverNode>`, `is_debris: bool`.
+
+### Requirement: Debris classification
+Vessels are classified as debris (`is_debris = true`) when they have no non-destroyed, non-decoupled part with `can_control = true` (checked via `FlightVessel::has_control()`). Fairing halves are always classified as debris. The active vessel (player-controlled) is never classified as debris when shelved. Debris classification persists across save/load via `SavedVessel.is_debris` (with `#[serde(default)]` for backward compatibility with old saves).
+
+### Requirement: Debris auto-cleanup
+Debris vessels are automatically deleted when they are more than 2000m from ALL controllable vessels (active vessel + non-debris inactive vessels), or when they are in a different SOI from all controllable vessels. This cleanup runs every frame in flight mode via `FlightState::cleanup_distant_debris()`, called from `render_flight_frame()` in main.rs after inactive vessel propagation.
 
 ## Debris Creation
 
@@ -34,6 +40,7 @@ After `extract_decoupled_parts()` clones decoupled parts into a debris vessel, t
 - All engines disabled
 - Put on rails immediately after creation
 - Position offset by the decoupled parts' center of mass relative to the active vessel
+- `is_debris` set based on `has_control()` (decoupled stages without pods are debris; stages with command pods are controllable)
 
 ### Requirement: Ejection force
 When a decoupler fires, its `ejection_force` (kN, from `DecouplerData`) is applied as a separation impulse to the debris vessel. The impulse direction is determined by the debris COM offset from the parent vessel: the offset is rotated from local to world coordinates and normalized. This naturally pushes stack-decoupled debris downward (COM offset is below the vessel center) and radial-decoupled debris sideways (COM offset is to the side). If the COM offset magnitude is less than 0.01, the fallback direction is opposite the vessel heading. The velocity change is `dv = (force_N * 0.1s) / mass_kg`, applied to the debris ship's `rel_velocity` before it goes on rails. Thermal breakup debris receives no ejection force (0 kN).

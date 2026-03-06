@@ -46,6 +46,10 @@ When a pod has built-in RCS (`def.rcs.is_some()`), after rendering the pod sprit
 
 When a sprite plume animation exists for an engine's propellant type (kerolox/methalox/hydrolox), the plume SHALL be rendered as a textured quad instead of procedural triangles. The animation cycles through 4 frames at ~10fps using wall-clock time (independent of time warp). Plume width = nozzle width, plume height = `nozzle_width * 2.5 * throttle`. Brightness tint scales with throttle (`0.5 + 0.5 * throttle`).
 
+### Requirement: Plume nozzle position
+
+The plume nozzle Y position SHALL be the bottom of the flight hitbox (top-aligned within the editor hitbox): `y + editor_half_h - flight_hitbox_height_m`. This aligns the plume origin with the visible nozzle tip rather than the sprite quad bottom (which includes transparent padding).
+
 ### Requirement: Procedural plume fallback
 
 Engines without sprite plumes SHALL fall back to the procedural two-triangle plume (red outer, yellow inner).

@@ -14,6 +14,12 @@ pub struct SpriteRect {
     pub v_min: f32,
     pub u_max: f32,
     pub v_max: f32,
+    /// Original image pixel width (for aspect ratio preservation)
+    #[serde(default)]
+    pub pixel_width: u32,
+    /// Original image pixel height (for aspect ratio preservation)
+    #[serde(default)]
+    pub pixel_height: u32,
 }
 
 /// 4-frame plume animation
@@ -157,6 +163,12 @@ fn is_cache_fresh(sprite_dir: &Path) -> bool {
 fn load_from_cache() -> Option<(Vec<u8>, SpriteAtlasMetadata)> {
     let ron_data = std::fs::read_to_string(CACHE_ATLAS_RON).ok()?;
     let metadata: SpriteAtlasMetadata = ron::from_str(&ron_data).ok()?;
+
+    // Invalidate cache if SpriteRect is missing pixel dimensions (old format)
+    if metadata.parts.values().any(|r| r.pixel_width == 0) {
+        log::info!("Cache missing sprite pixel dimensions, rebuilding");
+        return None;
+    }
 
     let img = image::open(CACHE_ATLAS_PNG).ok()?.into_rgba8();
     let (w, h) = img.dimensions();
@@ -325,6 +337,8 @@ fn build_sprite_atlas(
             v_min: p.y as f32 / ah,
             u_max: (p.x + p.width) as f32 / aw,
             v_max: (p.y + p.height) as f32 / ah,
+            pixel_width: p.width,
+            pixel_height: p.height,
         };
 
         if p.kind.starts_with("plume:") {
@@ -343,7 +357,7 @@ fn build_sprite_atlas(
     for (propellant, mut frames) in plume_frames {
         frames.sort_by_key(|(idx, _)| *idx);
         if frames.len() >= 4 {
-            let dummy = SpriteRect { u_min: 0.0, v_min: 0.0, u_max: 0.0, v_max: 0.0 };
+            let dummy = SpriteRect { u_min: 0.0, v_min: 0.0, u_max: 0.0, v_max: 0.0, pixel_width: 0, pixel_height: 0 };
             let mut anim_frames = [dummy.clone(), dummy.clone(), dummy.clone(), dummy];
             for (idx, rect) in frames.into_iter().take(4) {
                 anim_frames[idx] = rect;

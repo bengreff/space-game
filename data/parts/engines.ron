@@ -21,7 +21,7 @@
             hitbox_width: Some(1),
             hitbox_height: Some(2),
             flight_hitbox_width: Some(0.87),
-            flight_hitbox_height: Some(1.44),
+            flight_hitbox_height: Some(1.27),
             engine: Some((
                 thrust_vac: 30.0,
                 thrust_asl: 24.0,
@@ -50,7 +50,7 @@
             hitbox_width: Some(1),
             hitbox_height: Some(2),
             flight_hitbox_width: Some(0.87),
-            flight_hitbox_height: Some(1.46),
+            flight_hitbox_height: Some(1.29),
             engine: Some((
                 thrust_vac: 56.0,
                 thrust_asl: 44.0,
@@ -79,7 +79,7 @@
             hitbox_width: Some(1),
             hitbox_height: Some(1),
             flight_hitbox_width: Some(0.72),
-            flight_hitbox_height: Some(1.0),
+            flight_hitbox_height: Some(0.72),
             engine: Some((
                 thrust_vac: 16.0,
                 thrust_asl: 10.0,
@@ -112,7 +112,7 @@
             hitbox_width: Some(3),
             hitbox_height: Some(4),
             flight_hitbox_width: Some(2.61),
-            flight_hitbox_height: Some(3.76),
+            flight_hitbox_height: Some(3.29),
             engine: Some((
                 thrust_vac: 850.0,
                 thrust_asl: 750.0,
@@ -141,7 +141,7 @@
             hitbox_width: Some(3),
             hitbox_height: Some(3),
             flight_hitbox_width: Some(1.71),
-            flight_hitbox_height: Some(2.57),
+            flight_hitbox_height: Some(2.21),
             engine: Some((
                 thrust_vac: 700.0,
                 thrust_asl: 600.0,
@@ -170,7 +170,7 @@
             hitbox_width: Some(3),
             hitbox_height: Some(3),
             flight_hitbox_width: Some(2.11),
-            flight_hitbox_height: Some(2.89),
+            flight_hitbox_height: Some(2.04),
             engine: Some((
                 thrust_vac: 90.0,
                 thrust_asl: 50.0,
@@ -197,9 +197,9 @@
             grid_height: 3.7,
             top_width: Some(0.6),
             hitbox_width: Some(3),
-            hitbox_height: Some(3),
+            hitbox_height: Some(4),
             flight_hitbox_width: Some(2.91),
-            flight_hitbox_height: Some(3.0),
+            flight_hitbox_height: Some(3.63),
             engine: Some((
                 thrust_vac: 180.0,
                 thrust_asl: 110.0,
@@ -226,9 +226,9 @@
             grid_height: 3.9,
             top_width: Some(1.6),
             hitbox_width: Some(3),
-            hitbox_height: Some(3),
+            hitbox_height: Some(4),
             flight_hitbox_width: Some(2.41),
-            flight_hitbox_height: Some(2.99),
+            flight_hitbox_height: Some(3.13),
             engine: Some((
                 thrust_vac: 1100.0,
                 thrust_asl: 950.0,
@@ -261,7 +261,7 @@
             hitbox_width: Some(5),
             hitbox_height: Some(6),
             flight_hitbox_width: Some(4.0),
-            flight_hitbox_height: Some(5.87),
+            flight_hitbox_height: Some(5.88),
             engine: Some((
                 thrust_vac: 2200.0,
                 thrust_asl: 1900.0,
@@ -290,7 +290,7 @@
             hitbox_width: Some(5),
             hitbox_height: Some(6),
             flight_hitbox_width: Some(4.61),
-            flight_hitbox_height: Some(6.0),
+            flight_hitbox_height: Some(5.53),
             engine: Some((
                 thrust_vac: 1400.0,
                 thrust_asl: 1100.0,
@@ -319,7 +319,7 @@
             hitbox_width: Some(5),
             hitbox_height: Some(4),
             flight_hitbox_width: Some(3.78),
-            flight_hitbox_height: Some(3.49),
+            flight_hitbox_height: Some(3.32),
             engine: Some((
                 thrust_vac: 2800.0,
                 thrust_asl: 2400.0,
@@ -349,7 +349,7 @@
             hitbox_width: Some(3),
             hitbox_height: Some(5),
             flight_hitbox_width: Some(3.0),
-            flight_hitbox_height: Some(4.79),
+            flight_hitbox_height: Some(4.81),
             engine: Some((
                 thrust_vac: 1500.0,
                 thrust_asl: 1200.0,
@@ -382,7 +382,7 @@
             hitbox_width: Some(9),
             hitbox_height: Some(11),
             flight_hitbox_width: Some(8.0),
-            flight_hitbox_height: Some(10.91),
+            flight_hitbox_height: Some(10.94),
             engine: Some((
                 thrust_vac: 7500.0,
                 thrust_asl: 6700.0,
@@ -411,7 +411,7 @@
             hitbox_width: Some(9),
             hitbox_height: Some(11),
             flight_hitbox_width: Some(8.0),
-            flight_hitbox_height: Some(10.62),
+            flight_hitbox_height: Some(10.64),
             engine: Some((
                 thrust_vac: 3500.0,
                 thrust_asl: 2800.0,
@@ -440,7 +440,7 @@
             hitbox_width: Some(7),
             hitbox_height: Some(8),
             flight_hitbox_width: Some(5.96),
-            flight_hitbox_height: Some(8.0),
+            flight_hitbox_height: Some(7.95),
             engine: Some((
                 thrust_vac: 5000.0,
                 thrust_asl: 4300.0,
@@ -469,7 +469,7 @@
             hitbox_width: Some(9),
             hitbox_height: Some(11),
             flight_hitbox_width: Some(8.0),
-            flight_hitbox_height: Some(10.62),
+            flight_hitbox_height: Some(10.64),
             engine: Some((
                 thrust_vac: 4500.0,
                 thrust_asl: 3200.0,

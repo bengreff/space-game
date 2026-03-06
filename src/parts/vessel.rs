@@ -41,6 +41,8 @@ pub struct FlightPart {
     pub local_position: [f64; 2],  // Relative to vessel center of mass
     pub rotation: f64,
     pub hitbox_half_extents: [f64; 2],
+    #[serde(default)]
+    pub hitbox_y_offset: f64,  // Offset from local_position to hitbox center (engines: top-aligned)
 
     // Resources currently in this part
     pub resources: HashMap<String, f64>,
@@ -101,6 +103,16 @@ pub struct FlightPart {
 }
 
 impl FlightVessel {
+    /// Returns true if the vessel has any non-destroyed, non-decoupled part that provides control.
+    pub fn has_control(&self, part_defs: &PartDefinitions) -> bool {
+        self.parts.iter().any(|p| {
+            !p.destroyed && !p.decoupled &&
+            part_defs.get(&p.definition_id)
+                .and_then(|d| d.pod.as_ref())
+                .map_or(false, |pod| pod.can_control)
+        })
+    }
+
     /// Create a flight vessel from a blueprint
     pub fn from_blueprint(
         blueprint: &VesselBlueprint,
@@ -174,6 +186,12 @@ impl FlightVessel {
                 local_position: bp_part.position,
                 rotation: bp_part.rotation,
                 hitbox_half_extents: [def.flight_hitbox_width_m() / 2.0, def.flight_hitbox_height_m() / 2.0],
+                hitbox_y_offset: if def.engine.is_some() {
+                    // Engines are top-aligned: shift hitbox up so top aligns with editor hitbox top
+                    (def.hitbox_height() - def.flight_hitbox_height_m()) / 2.0
+                } else {
+                    0.0
+                },
                 resources,
                 max_resources,
                 engine_active: false,
@@ -1220,8 +1238,9 @@ impl FlightVessel {
             } else {
                 part.hitbox_half_extents[1]
             };
-            let top = part.local_position[1] + half_h;
-            let bottom = part.local_position[1] - half_h;
+            let center_y = part.local_position[1] + part.hitbox_y_offset;
+            let top = center_y + half_h;
+            let bottom = center_y - half_h;
             max_extent = max_extent.max(top.abs()).max(bottom.abs());
         }
         max_extent.max(1.0)
@@ -1235,7 +1254,7 @@ impl FlightVessel {
             if part.destroyed || part.decoupled {
                 continue;
             }
-            let bottom = part.local_position[1] - part.hitbox_half_extents[1];
+            let bottom = part.local_position[1] + part.hitbox_y_offset - part.hitbox_half_extents[1];
             min_y = min_y.min(bottom);
         }
         -min_y
@@ -1270,14 +1289,15 @@ impl FlightVessel {
                 continue;
             }
 
-            // Check 4 corners of the hitbox
+            // Check 4 corners of the hitbox (offset by hitbox_y_offset for top-aligned parts)
             let hx = part.hitbox_half_extents[0];
             let hy = part.hitbox_half_extents[1];
+            let center_y = part.local_position[1] + part.hitbox_y_offset;
             let corners = [
-                [part.local_position[0] - hx, part.local_position[1] - hy],
-                [part.local_position[0] + hx, part.local_position[1] - hy],
-                [part.local_position[0] + hx, part.local_position[1] + hy],
-                [part.local_position[0] - hx, part.local_position[1] + hy],
+                [part.local_position[0] - hx, center_y - hy],
+                [part.local_position[0] + hx, center_y - hy],
+                [part.local_position[0] + hx, center_y + hy],
+                [part.local_position[0] - hx, center_y + hy],
             ];
 
             for corner in &corners {
@@ -2600,6 +2620,7 @@ impl FlightVessel {
                         // Decouple parts beside the fairing. A part qualifies if its
                         // center Y is in the adapter zone and it's off the center axis
                         // but within reach of the fairing edge.
+                        let min_half_w = dec_half_w.min(tank_half_w);
                         let max_half_w = dec_half_w.max(tank_half_w);
                         let margin = crate::parts::GRID_SQUARE_SIZE;
                         for j in 0..self.parts.len() {
@@ -2610,8 +2631,8 @@ impl FlightVessel {
                             let jx = self.parts[j].local_position[0];
                             if jy < ring_top - 0.01 || jy > adapter_top + 0.01 { continue; }
                             let dx = (jx - dec_x).abs();
-                            // Off center axis, but close enough to be on the fairing
-                            if dx > 0.1 && dx < max_half_w + margin {
+                            // In the adapter overhang zone (outside the narrower stack width)
+                            if dx > min_half_w - 0.01 && dx < max_half_w + margin {
                                 self.parts[j].decoupled = true;
                             }
                         }
@@ -2735,6 +2756,7 @@ pub fn create_default_vessel(
             local_position: [0.0, 0.0],
             rotation: 0.0,
             hitbox_half_extents: [5.0, 5.0],
+            hitbox_y_offset: 0.0,
             resources: HashMap::new(),
             max_resources: HashMap::new(),
             engine_active: true,

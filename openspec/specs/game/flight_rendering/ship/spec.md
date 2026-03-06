@@ -145,6 +145,10 @@ The ship's orbit line SHALL only be visible when `ship_pixels < 5.0` (map view).
 
 Predicted trajectories from maneuver nodes SHALL be drawn as green lines `[0.0, 1.0, 0.0, alpha]` where alpha = 0.9 (first segment), 0.6 (subsequent). Line width = `0.0015 / camera.zoom`.
 
+### Requirement: Camera-relative orbit precision
+
+All orbit line rendering (ship orbits, predicted trajectories, background vessel orbits, body orbits) SHALL subtract the camera position from the parent body position FIRST (`pcam = parent - camera`), then compute orbit geometry relative to `pcam`. This prevents f64 precision loss at galaxy-scale coordinates (~1e11). Vertex positions are already camera-relative and SHALL NOT subtract camera again. Ap/Pe markers and closest approach markers follow the same pattern.
+
 ## Apoapsis and Periapsis Markers
 
 ### Requirement: Ap/Pe markers on orbit lines

@@ -27,12 +27,12 @@ The tracking station provides a solar system observatory view. It renders all ce
 - Scrollable list of all vessels
 - Each entry shows:
   - Color indicator circle (8px, vessel color)
-  - Vessel name (white)
+  - Vessel name (white for controllable, grey `(140, 140, 140)` for debris)
   - SOI body name in gray below the name
-  - "Fly" button on the right side
+  - "Fly" button on the right side (hidden for debris vessels)
   - "X" delete button (red) to remove the vessel
 - Clicking a vessel name focuses the camera on that vessel and continuously tracks it as it moves (stops body tracking). Panning the camera breaks vessel tracking.
-- Clicking "Fly" activates that vessel (pulls from `inactive_vessels` via `activate_vessel()`) and enters flight mode, resetting time warp to 1x
+- Clicking "Fly" activates that vessel (pulls from `inactive_vessels` via `activate_vessel()`) and enters flight mode, resetting time warp to 1x. Debris vessels cannot be flown.
 - Clicking "X" deletes the vessel permanently. If the camera was tracking the deleted vessel, it refocuses on Earth.
 
 ### Body Info Panel

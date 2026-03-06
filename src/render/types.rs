@@ -382,6 +382,7 @@ pub struct TrackingVesselData {
     pub orbit: Option<OrbitRenderData>,
     pub parts: Option<Vec<ShipPartRenderData>>,
     pub rotation: f64,
+    pub is_debris: bool,
 }
 
 /// Action returned from the tracking station UI

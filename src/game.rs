@@ -40,6 +40,7 @@ pub struct TrackedVessel {
     pub ship: Ship,
     pub vessel: Option<FlightVessel>,
     pub maneuver_nodes: Vec<ManeuverNode>,
+    pub is_debris: bool,
 }
 
 /// Flight-specific state
@@ -98,6 +99,7 @@ impl FlightState {
         target_id: VesselId,
         current_maneuver_nodes: Vec<ManeuverNode>,
         solar_system: &SolarSystem,
+        part_defs: &PartDefinitions,
     ) -> Result<Vec<ManeuverNode>, String> {
         // Find target in inactive vessels
         let target_pos = self.inactive_vessels.iter()
@@ -110,12 +112,15 @@ impl FlightState {
         let mut saved_ship = self.ship.clone();
         saved_ship.enter_rails_mode(solar_system);
 
+        let is_debris = self.vessel.as_ref()
+            .map_or(false, |v| !v.has_control(part_defs));
         self.inactive_vessels.push(TrackedVessel {
             id: self.active_vessel_id,
             name: self.active_vessel_name.clone(),
             ship: saved_ship,
             vessel: self.vessel.take(),
             maneuver_nodes: current_maneuver_nodes,
+            is_debris,
         });
 
         // Load target as active
@@ -146,6 +151,7 @@ impl FlightState {
             ship: saved_ship,
             vessel: self.vessel.clone(),
             maneuver_nodes: current_maneuver_nodes,
+            is_debris: false, // Active vessel always has control
         });
     }
 
@@ -182,6 +188,7 @@ impl FlightState {
         com_offset: [f64; 2],
         ejection_force_kn: f64,
         solar_system: &SolarSystem,
+        part_defs: &PartDefinitions,
     ) {
         // Local-to-world rotation for part positions (heading - PI/2, matches rendering)
         let local_rot = self.ship.rotation - std::f64::consts::FRAC_PI_2;
@@ -229,15 +236,17 @@ impl FlightState {
         let id = self.next_vessel_id;
         self.next_vessel_id += 1;
 
+        let is_debris = !debris_vessel.has_control(part_defs);
         self.inactive_vessels.push(TrackedVessel {
             id,
             name: name.clone(),
             ship: debris_ship,
             vessel: Some(debris_vessel),
             maneuver_nodes: Vec::new(),
+            is_debris,
         });
 
-        log::info!("Created debris vessel: {} (id={})", name, id);
+        log::info!("Created {} vessel: {} (id={})", if is_debris { "debris" } else { "tracked" }, name, id);
     }
 
     /// Create a fairing half debris vessel with a fixed perpendicular velocity.
@@ -284,6 +293,56 @@ impl FlightState {
             ship: debris_ship,
             vessel: Some(debris_vessel),
             maneuver_nodes: Vec::new(),
+            is_debris: true, // Fairing halves are always debris
+        });
+    }
+
+    /// Remove debris vessels that are far from all controllable vessels.
+    /// Debris is deleted when >2km from every controllable vessel (or in a different SOI).
+    pub fn cleanup_distant_debris(&mut self) {
+        const CLEANUP_DISTANCE: f64 = 2000.0; // meters
+
+        // Gather positions/SOIs of all controllable vessels:
+        // 1. Active vessel (always controllable)
+        let active_pos = self.ship.rel_position;
+        let active_soi = self.ship.soi_body;
+
+        // 2. Non-debris inactive vessels
+        let controllable: Vec<([f64; 2], usize)> = self.inactive_vessels.iter()
+            .filter(|v| !v.is_debris)
+            .map(|v| (v.ship.rel_position, v.ship.soi_body))
+            .collect();
+
+        self.inactive_vessels.retain(|v| {
+            if !v.is_debris {
+                return true; // Keep non-debris
+            }
+
+            let debris_pos = v.ship.rel_position;
+            let debris_soi = v.ship.soi_body;
+
+            // Check distance to active vessel
+            if debris_soi == active_soi {
+                let dx = debris_pos[0] - active_pos[0];
+                let dy = debris_pos[1] - active_pos[1];
+                if (dx * dx + dy * dy).sqrt() <= CLEANUP_DISTANCE {
+                    return true; // Close to active vessel, keep
+                }
+            }
+
+            // Check distance to non-debris inactive vessels
+            for &(ctrl_pos, ctrl_soi) in &controllable {
+                if debris_soi == ctrl_soi {
+                    let dx = debris_pos[0] - ctrl_pos[0];
+                    let dy = debris_pos[1] - ctrl_pos[1];
+                    if (dx * dx + dy * dy).sqrt() <= CLEANUP_DISTANCE {
+                        return true; // Close to a controllable vessel, keep
+                    }
+                }
+            }
+
+            log::info!("Auto-deleted distant debris: {} (id={})", v.name, v.id);
+            false // Too far from all controllable vessels, delete
         });
     }
 
@@ -434,6 +493,16 @@ impl Game {
     pub fn launch_from_editor(&mut self) -> Result<(), String> {
         // Build blueprint from editor state
         let blueprint = self.editor.to_blueprint(&self.part_definitions)?;
+
+        // Check that the vessel has at least one controllable part (pod/probe core)
+        let has_control = blueprint.parts.iter().any(|p| {
+            self.part_definitions.get(&p.definition_id)
+                .and_then(|d| d.pod.as_ref())
+                .map_or(false, |pod| pod.can_control)
+        });
+        if !has_control {
+            return Err("Vessel has no controllable part (add a pod or probe core)".to_string());
+        }
 
         // Get spawn position (on launchpad)
         let earth_idx = LAUNCHPAD_BODY_INDEX;

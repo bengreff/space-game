@@ -362,7 +362,9 @@ All part editor hitbox widths SHALL be odd numbers. Odd widths snap parts to gri
 
 ### Requirement: Flight hitbox fields
 
-`PartDefinition` SHALL support optional `flight_hitbox_width: Option<f64>` and `flight_hitbox_height: Option<f64>` fields (serde-defaulting to `None`). When set, these define the flight collision box and sprite rendering size. When not set, they default to the editor hitbox dimensions. Values are in grid squares and can be fractional to allow precise collision boundaries matching the actual engine art.
+`PartDefinition` SHALL support optional `flight_hitbox_width: Option<f64>` and `flight_hitbox_height: Option<f64>` fields (serde-defaulting to `None`). When set, these define the flight collision box dimensions. When not set, they default to the editor hitbox dimensions. Values are in grid squares and can be fractional to allow precise collision boundaries matching the visible sprite content.
+
+For engines, `flight_hitbox_height` represents the visible content height (excluding transparent sprite padding), NOT the sprite quad height. The sprite quad height is computed from the image's natural aspect ratio (`flight_hitbox_width * pixel_height / pixel_width`) to avoid distortion. This decouples collision from rendering.
 
 Accessor methods:
 - `flight_hitbox_grid_width()` / `flight_hitbox_grid_height()` → `f64` (grid squares, can be fractional)
@@ -370,11 +372,27 @@ Accessor methods:
 
 ### Requirement: Engine sprite alignment in editor
 
-Engine sprites SHALL be centered horizontally within the editor hitbox and snapped to the top of the editor hitbox height. The y_offset for sprite rendering is `(editor_half_h - sprite_half_h)`, which is zero when heights match and positive (shifting upward) when the sprite is shorter than the editor hitbox.
+Engine sprites SHALL be centered horizontally within the editor hitbox and snapped to the top of the editor hitbox height. The sprite quad width uses `flight_hitbox_width` and the height is computed from the sprite image's pixel aspect ratio (`flight_hitbox_width * pixel_height / pixel_width`) to preserve the natural proportions. The y_offset for sprite rendering is `(editor_half_h - sprite_half_h)`, which is zero when heights match and positive (shifting upward) when the sprite is shorter than the editor hitbox. `SpriteRect` stores `pixel_width` and `pixel_height` fields for this purpose.
 
 ### Requirement: Flight hitbox in collision
 
 `FlightPart.hitbox_half_extents` SHALL be set from `flight_hitbox_width_m()` and `flight_hitbox_height_m()`, not the editor hitbox. This ensures collision detection uses the tighter flight hitbox matching the visible sprite, not the wider editor placement hitbox.
+
+### Requirement: Hitbox Y offset for top-aligned parts
+
+`FlightPart.hitbox_y_offset` (f64, serde-default 0.0) SHALL store the vertical offset from `local_position` to the flight hitbox center. For engines (top-aligned sprites): `hitbox_y_offset = (def.hitbox_height() - def.flight_hitbox_height_m()) / 2.0`. For all other parts: 0.0.
+
+This offset SHALL be applied in:
+- `bottom_extent()`: bottom = `local_position[1] + hitbox_y_offset - hitbox_half_extents[1]`
+- `bounding_half_height()`: center_y = `local_position[1] + hitbox_y_offset`
+- `check_terrain_collision()`: hitbox corner Y positions offset by `hitbox_y_offset`
+- Flight click detection (`click_local_y`): engines use `local_position[1] + hitbox_y_offset`
+
+This offset SHALL NOT be applied in `is_engine_covered()` / `is_engine_covered_simulated()`, which check editor-placement adjacency.
+
+### Requirement: Engine editor highlight matches flight hitbox
+
+In the editor, selection/hover/drag-invalid highlight overlays for engines SHALL use flight hitbox dimensions (`flight_hitbox_width_m` x `flight_hitbox_height_m`) positioned with the hitbox_y_offset, not the editor hitbox (`grid_width` x `grid_height`). This ensures the highlight rectangle matches the visible engine content.
 
 ## Fairing Build Mode
 

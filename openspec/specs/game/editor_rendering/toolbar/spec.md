@@ -10,6 +10,10 @@ The toolbar SHALL be a top panel containing: "Vehicle Editor" heading, separator
 
 The Launch button SHALL be enabled only when `can_launch()` returns true (root part exists and parts are non-empty). The launch button text SHALL be "Launch" (with rocket emoji prefix).
 
+### Requirement: Launch control validation
+
+Launching SHALL fail with an error if the vessel has no controllable part (no pod or probe core with `can_control: true`). The error message "Vessel has no controllable part (add a pod or probe core)" SHALL be displayed as a red alert banner at the top of the editor for 3 seconds.
+
 ### Requirement: Exit to Flight button
 
 The toolbar SHALL include an "Exit to Flight" button that returns to flight mode without launching a new vessel.

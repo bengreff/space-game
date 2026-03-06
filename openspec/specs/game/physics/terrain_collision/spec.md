@@ -21,10 +21,11 @@ After each flying physics update, the ship SHALL check for collisions with ALL s
 ### Requirement: Per-part terrain collision check
 
 When a `FlightVessel` is loaded and the ship is `Flying`, the system SHALL perform per-part terrain collision checks each frame:
-1. For each non-destroyed, non-decoupled part, check all 4 corners of its hitbox
-2. Transform corners from part-local space to world space using vessel position and rotation
-3. Check each corner against the body surface radius and launchpad geometry
-4. If any corner penetrates: land the vessel at the collision surface angle
+1. For each non-destroyed, non-decoupled part, compute the hitbox center Y as `local_position[1] + hitbox_y_offset` (where `hitbox_y_offset` accounts for top-aligned engines whose visible content is shorter than the editor hitbox)
+2. Check all 4 corners of the part's hitbox centered on `(local_position[0], center_y)`
+3. Transform corners from part-local space to world space using vessel position and rotation
+4. Check each corner against the body surface radius and launchpad geometry
+5. If any corner penetrates: land the vessel at the collision surface angle
 
 ### Requirement: Launchpad collision geometry
 

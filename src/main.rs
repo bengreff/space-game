@@ -1210,7 +1210,7 @@ fn render_flight_frame(
                                 let flight_half_h = if is_part_rotation_swapped(p.rotation) { p.hitbox_half_extents[0] } else { p.hitbox_half_extents[1] };
                                 p.local_position[1] + (editor_half_h - flight_half_h)
                             } else {
-                                p.local_position[1]
+                                p.local_position[1] + p.hitbox_y_offset
                             }
                         },
                         click_hitbox_half_h: {

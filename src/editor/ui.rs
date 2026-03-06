@@ -992,6 +992,23 @@ pub fn render_editor_ui(
             });
     }
 
+    // Alert message overlay (shown temporarily after errors)
+    if let Some(ref msg) = editor.alert_message {
+        egui::Area::new(egui::Id::new("editor_alert"))
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 60.0))
+            .show(ctx, |ui| {
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgba_unmultiplied(180, 40, 40, 230))
+                    .rounding(egui::Rounding::same(6.0))
+                    .inner_margin(egui::Margin::symmetric(16.0, 10.0))
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new(msg)
+                            .color(egui::Color32::WHITE)
+                            .size(14.0));
+                    });
+            });
+    }
+
     action
 }
 

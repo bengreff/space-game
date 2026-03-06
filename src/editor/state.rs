@@ -127,6 +127,10 @@ pub struct EditorState {
 
     // Fairing build mode
     pub fairing_build_mode: Option<FairingBuildState>,
+
+    // Alert message (shown temporarily after errors)
+    pub alert_message: Option<String>,
+    pub alert_timer: f64,
 }
 
 /// Tracks which camera movement keys are held
@@ -170,6 +174,8 @@ impl EditorState {
             drag_valid: true,
             twr_settings: TwrSettings::default(),
             fairing_build_mode: None,
+            alert_message: None,
+            alert_timer: 0.0,
         }
     }
 

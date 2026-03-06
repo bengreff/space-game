@@ -692,7 +692,7 @@ impl RenderState {
         let vessel_drag_kn = self.vessel_drag_kn;
         let vessel_delta_v = self.vessel_delta_v;
         let vessel_current_stage = self.vessel_current_stage;
-        let vessel_total_stages = self.vessel_total_stages;
+
         let ship_acceleration = self.ship_acceleration;
         let ship_below_landing_altitude = self.ship_below_landing_altitude;
         let ship_soi_surface_gravity = self.ship_soi_surface_gravity;
@@ -1725,17 +1725,6 @@ impl RenderState {
                         }
                     }
 
-                    // Stage indicator
-                    if let (Some(current), Some(total)) = (vessel_current_stage, vessel_total_stages) {
-                        if total > 0 {
-                            ui.add_space(10.0);
-                            ui.label(egui::RichText::new("STG").size(10.0).color(egui::Color32::GRAY));
-                            ui.label(egui::RichText::new(format!("{}/{}", current, total))
-                                .size(12.0)
-                                .strong()
-                                .color(egui::Color32::WHITE));
-                        }
-                    }
 
                     // XFER button anchored at bottom
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
@@ -3246,17 +3235,18 @@ impl RenderState {
 
                 // Draw closest approach marker (yellow dot)
                 if let Some((world_pos, dist)) = self.closest_approach_world_pos {
-                    let ca_x = world_pos[0];
-                    let ca_y = world_pos[1];
+                    // Subtract camera first for precision (both galaxy-scale)
+                    let ca_x = world_pos[0] - cam_x - off_x;
+                    let ca_y = world_pos[1] - cam_y - off_y;
                     let ca_color = [1.0, 1.0, 0.0, 0.9_f32];
 
                     let ca_base = all_vertices.len() as u32;
-                    all_vertices.push(Vertex::new([(ca_x - cam_x - off_x) as f32, (ca_y - cam_y - off_y) as f32], ca_color));
+                    all_vertices.push(Vertex::new([ca_x as f32, ca_y as f32], ca_color));
                     for i in 0..marker_segments {
                         let angle = (i as f64 / marker_segments as f64) * std::f64::consts::TAU;
                         all_vertices.push(Vertex::new([
-                            (ca_x + marker_radius * angle.cos() - cam_x - off_x) as f32,
-                            (ca_y + marker_radius * angle.sin() - cam_y - off_y) as f32,
+                            (ca_x + marker_radius * angle.cos()) as f32,
+                            (ca_y + marker_radius * angle.sin()) as f32,
                         ], ca_color));
                     }
                     for i in 0..marker_segments {
@@ -3264,7 +3254,7 @@ impl RenderState {
                         all_indices.push(ca_base + 1 + i);
                         all_indices.push(ca_base + 1 + (i + 1) % marker_segments);
                     }
-                    self.closest_approach_marker = Some(([ca_x - cam_x - off_x, ca_y - cam_y - off_y], dist));
+                    self.closest_approach_marker = Some(([ca_x, ca_y], dist));
                 }
             }
         }
@@ -3281,6 +3271,11 @@ impl RenderState {
                 // Green for first segment, dimmer for subsequent segments
                 let alpha = if seg_idx == 0 { 0.9 } else { 0.6 };
                 let seg_color = [0.0, 1.0, 0.0, alpha];
+
+                // Subtract camera from parent first for precision — both are galaxy-scale,
+                // their difference is solar-system-scale, so orbit geometry stays precise.
+                let pcam_x = segment.parent_x - cam_x - off_x;
+                let pcam_y = segment.parent_y - cam_y - off_y;
 
                 if e >= 1.0 {
                     // Hyperbolic orbit segment
@@ -3318,8 +3313,8 @@ impl RenderState {
                         }
 
                         let angle = ta + arg_peri;
-                        let px = segment.parent_x + r * angle.cos();
-                        let py = segment.parent_y + r * angle.sin();
+                        let px = pcam_x + r * angle.cos();
+                        let py = pcam_y + r * angle.sin();
                         points.push((px, py));
                     }
 
@@ -3341,10 +3336,10 @@ impl RenderState {
                         let nx_perp = -dy / len * line_width;
                         let ny_perp = dx / len * line_width;
 
-                        all_vertices.push(Vertex::new([(px + nx_perp - cam_x - off_x) as f32, (py + ny_perp - cam_y - off_y) as f32], seg_color));
-                        all_vertices.push(Vertex::new([(px - nx_perp - cam_x - off_x) as f32, (py - ny_perp - cam_y - off_y) as f32], seg_color));
-                        all_vertices.push(Vertex::new([(nx + nx_perp - cam_x - off_x) as f32, (ny + ny_perp - cam_y - off_y) as f32], seg_color));
-                        all_vertices.push(Vertex::new([(nx - nx_perp - cam_x - off_x) as f32, (ny - ny_perp - cam_y - off_y) as f32], seg_color));
+                        all_vertices.push(Vertex::new([(px + nx_perp) as f32, (py + ny_perp) as f32], seg_color));
+                        all_vertices.push(Vertex::new([(px - nx_perp) as f32, (py - ny_perp) as f32], seg_color));
+                        all_vertices.push(Vertex::new([(nx + nx_perp) as f32, (ny + ny_perp) as f32], seg_color));
+                        all_vertices.push(Vertex::new([(nx - nx_perp) as f32, (ny - ny_perp) as f32], seg_color));
 
                         all_indices.push(base_index);
                         all_indices.push(base_index + 2);
@@ -3365,20 +3360,20 @@ impl RenderState {
 
                     if pe_will_be_reached {
                         let pe_r = p / (1.0 + e);
-                        let pe_x = segment.parent_x + pe_r * arg_peri.cos();
-                        let pe_y = segment.parent_y + pe_r * arg_peri.sin();
+                        let pe_x = pcam_x + pe_r * arg_peri.cos();
+                        let pe_y = pcam_y + pe_r * arg_peri.sin();
                         let marker_radius = 0.006 / self.camera.zoom as f64;
                         let marker_segments = 12u32;
                         let marker_alpha = if seg_idx == 0 { 0.7f32 } else { 0.5f32 };
                         let pe_color = [0.2, 0.7, 0.9, marker_alpha];
 
                         let pe_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex::new([(pe_x - cam_x - off_x) as f32, (pe_y - cam_y - off_y) as f32], pe_color));
+                        all_vertices.push(Vertex::new([pe_x as f32, pe_y as f32], pe_color));
                         for j in 0..marker_segments {
                             let angle = (j as f64 / marker_segments as f64) * std::f64::consts::TAU;
                             all_vertices.push(Vertex::new([
-                                    (pe_x + marker_radius * angle.cos() - cam_x - off_x) as f32,
-                                    (pe_y + marker_radius * angle.sin() - cam_y - off_y) as f32,
+                                    (pe_x + marker_radius * angle.cos()) as f32,
+                                    (pe_y + marker_radius * angle.sin()) as f32,
                                 ], pe_color));
                         }
                         for j in 0..marker_segments {
@@ -3390,14 +3385,14 @@ impl RenderState {
                         // Store for UI hover display
                         let pe_distance = pe_r / segment.render_scale;
                         let pe_altitude = pe_distance - segment.parent_body_radius;
-                        self.pe_markers.push(([pe_x - cam_x - off_x, pe_y - cam_y - off_y], pe_altitude));
+                        self.pe_markers.push(([pe_x, pe_y], pe_altitude));
                     }
                 } else {
                     // Elliptical orbit segment
                     let b = a * (1.0 - e * e).sqrt();
                     let c = a * e;
-                    let center_x = segment.parent_x - c * arg_peri.cos();
-                    let center_y = segment.parent_y - c * arg_peri.sin();
+                    let center_x = pcam_x - c * arg_peri.cos();
+                    let center_y = pcam_y - c * arg_peri.sin();
 
                     let start_ta = segment.start_true_anomaly;
                     let start_ea = (start_ta.sin() * (1.0 - e * e).sqrt()).atan2(e + start_ta.cos());
@@ -3444,10 +3439,10 @@ impl RenderState {
                                 let nx_perp = -dy / len * line_width;
                                 let ny_perp = dx / len * line_width;
 
-                                all_vertices.push(Vertex::new([(prev_x + nx_perp - cam_x - off_x) as f32, (prev_y + ny_perp - cam_y - off_y) as f32], seg_color));
-                                all_vertices.push(Vertex::new([(prev_x - nx_perp - cam_x - off_x) as f32, (prev_y - ny_perp - cam_y - off_y) as f32], seg_color));
-                                all_vertices.push(Vertex::new([(px + nx_perp - cam_x - off_x) as f32, (py + ny_perp - cam_y - off_y) as f32], seg_color));
-                                all_vertices.push(Vertex::new([(px - nx_perp - cam_x - off_x) as f32, (py - ny_perp - cam_y - off_y) as f32], seg_color));
+                                all_vertices.push(Vertex::new([(prev_x + nx_perp) as f32, (prev_y + ny_perp) as f32], seg_color));
+                                all_vertices.push(Vertex::new([(prev_x - nx_perp) as f32, (prev_y - ny_perp) as f32], seg_color));
+                                all_vertices.push(Vertex::new([(px + nx_perp) as f32, (py + ny_perp) as f32], seg_color));
+                                all_vertices.push(Vertex::new([(px - nx_perp) as f32, (py - ny_perp) as f32], seg_color));
 
                                 all_indices.push(base_index);
                                 all_indices.push(base_index + 2);
@@ -3496,17 +3491,17 @@ impl RenderState {
                     // Periapsis (ta = 0) - cyan
                     if show_pe {
                         let pe_r = a * (1.0 - e);
-                        let pe_x = segment.parent_x + pe_r * arg_peri.cos();
-                        let pe_y = segment.parent_y + pe_r * arg_peri.sin();
+                        let pe_x = pcam_x + pe_r * arg_peri.cos();
+                        let pe_y = pcam_y + pe_r * arg_peri.sin();
                         let pe_color = [0.2, 0.7, 0.9, marker_alpha];
 
                         let pe_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex::new([(pe_x - cam_x - off_x) as f32, (pe_y - cam_y - off_y) as f32], pe_color));
+                        all_vertices.push(Vertex::new([pe_x as f32, pe_y as f32], pe_color));
                         for j in 0..marker_segments {
                             let angle = (j as f64 / marker_segments as f64) * std::f64::consts::TAU;
                             all_vertices.push(Vertex::new([
-                                    (pe_x + marker_radius * angle.cos() - cam_x - off_x) as f32,
-                                    (pe_y + marker_radius * angle.sin() - cam_y - off_y) as f32,
+                                    (pe_x + marker_radius * angle.cos()) as f32,
+                                    (pe_y + marker_radius * angle.sin()) as f32,
                                 ], pe_color));
                         }
                         for j in 0..marker_segments {
@@ -3518,24 +3513,24 @@ impl RenderState {
                         // Store for UI hover display
                         let pe_distance = a * (1.0 - e) / segment.render_scale;
                         let pe_altitude = pe_distance - segment.parent_body_radius;
-                        self.pe_markers.push(([pe_x - cam_x - off_x, pe_y - cam_y - off_y], pe_altitude));
+                        self.pe_markers.push(([pe_x, pe_y], pe_altitude));
                     }
 
                     // Apoapsis (ta = π) - orange
                     if show_ap {
                         let ap_r = a * (1.0 + e);
                         let ap_angle = arg_peri + std::f64::consts::PI;
-                        let ap_x = segment.parent_x + ap_r * ap_angle.cos();
-                        let ap_y = segment.parent_y + ap_r * ap_angle.sin();
+                        let ap_x = pcam_x + ap_r * ap_angle.cos();
+                        let ap_y = pcam_y + ap_r * ap_angle.sin();
                         let ap_color = [0.9, 0.5, 0.1, marker_alpha];
 
                         let ap_base = all_vertices.len() as u32;
-                        all_vertices.push(Vertex::new([(ap_x - cam_x - off_x) as f32, (ap_y - cam_y - off_y) as f32], ap_color));
+                        all_vertices.push(Vertex::new([ap_x as f32, ap_y as f32], ap_color));
                         for j in 0..marker_segments {
                             let angle = (j as f64 / marker_segments as f64) * std::f64::consts::TAU;
                             all_vertices.push(Vertex::new([
-                                    (ap_x + marker_radius * angle.cos() - cam_x - off_x) as f32,
-                                    (ap_y + marker_radius * angle.sin() - cam_y - off_y) as f32,
+                                    (ap_x + marker_radius * angle.cos()) as f32,
+                                    (ap_y + marker_radius * angle.sin()) as f32,
                                 ], ap_color));
                         }
                         for j in 0..marker_segments {
@@ -3547,7 +3542,7 @@ impl RenderState {
                         // Store for UI hover display
                         let ap_distance = a * (1.0 + e) / segment.render_scale;
                         let ap_altitude = ap_distance - segment.parent_body_radius;
-                        self.ap_markers.push(([ap_x - cam_x - off_x, ap_y - cam_y - off_y], ap_altitude));
+                        self.ap_markers.push(([ap_x, ap_y], ap_altitude));
                     }
                 }
             }
@@ -5608,6 +5603,10 @@ impl RenderState {
                                             egui::RichText::new(&vessel.name)
                                                 .color(egui::Color32::from_rgb(100, 255, 100))
                                                 .size(13.0)
+                                        } else if vessel.is_debris {
+                                            egui::RichText::new(&vessel.name)
+                                                .color(egui::Color32::from_rgb(140, 140, 140))
+                                                .size(13.0)
                                         } else {
                                             egui::RichText::new(&vessel.name)
                                                 .color(egui::Color32::WHITE)
@@ -5622,8 +5621,10 @@ impl RenderState {
                                     });
 
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.small_button("Fly").clicked() {
-                                            ts_action = TrackingStationAction::FlyVessel(vessel.id);
+                                        if !vessel.is_debris {
+                                            if ui.small_button("Fly").clicked() {
+                                                ts_action = TrackingStationAction::FlyVessel(vessel.id);
+                                            }
                                         }
                                         let delete_btn = egui::Button::new(
                                             egui::RichText::new("X").color(egui::Color32::from_rgb(200, 80, 80))

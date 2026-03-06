@@ -29,6 +29,8 @@ pub struct SavedVessel {
     pub ship: Ship,
     pub vessel: Option<FlightVessel>,
     pub maneuver_nodes: Vec<ManeuverNode>,
+    #[serde(default)]
+    pub is_debris: bool,
 }
 
 /// Metadata about a save file (for the load game UI)
@@ -69,6 +71,7 @@ impl SaveGame {
             ship: active_ship,
             vessel: game.flight.vessel.clone(),
             maneuver_nodes: active_maneuver_nodes.to_vec(),
+            is_debris: false,
         });
 
         // Save all inactive vessels
@@ -79,6 +82,7 @@ impl SaveGame {
                 ship: tracked.ship.clone(),
                 vessel: tracked.vessel.clone(),
                 maneuver_nodes: tracked.maneuver_nodes.clone(),
+                is_debris: tracked.is_debris,
             });
         }
 
@@ -378,6 +382,7 @@ impl SaveGame {
                 ship: sv.ship,
                 vessel: sv.vessel,
                 maneuver_nodes: sv.maneuver_nodes,
+                is_debris: sv.is_debris,
             })
             .collect();
 

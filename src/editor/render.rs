@@ -91,7 +91,7 @@ fn generate_solar_panel_partial(
     deploy_fraction: f64,
     alpha: f32,
 ) {
-    let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def);
+    let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def, Some(rect));
     let sp_x = x + sp_ox;
     let sp_y = y + sp_oy;
     let panel_bottom = sp_y - sp_hh;
@@ -141,16 +141,23 @@ fn generate_solar_panel_partial(
 
 /// Compute sprite quad placement: (half_w, half_h, x_offset, y_offset) for a given part.
 /// Accounts for per-category alignment rules so sprites line up with procedural renderers.
-fn sprite_placement(def: &PartDefinition) -> (f32, f32, f32, f32) {
+/// For engines, `sprite_rect` provides image pixel dimensions to compute the correct aspect ratio,
+/// decoupling the sprite quad size from `flight_hitbox_height` (which is used only for collision).
+fn sprite_placement(def: &PartDefinition, sprite_rect: Option<&crate::render::sprites::SpriteRect>) -> (f32, f32, f32, f32) {
     let hitbox_half_w = (def.hitbox_width() / 2.0) as f32;
     let hitbox_half_h = (def.hitbox_height() / 2.0) as f32;
     let visual_half_w = (def.width() / 2.0) as f32;
     let visual_half_h = (def.height() / 2.0) as f32;
 
-    // Engines: use flight hitbox for sprite size, centered in width, snapped to top of editor hitbox
+    // Engines: use flight hitbox width, compute height from sprite image aspect ratio
     if def.engine.is_some() {
         let sprite_half_w = (def.flight_hitbox_width_m() / 2.0) as f32;
-        let sprite_half_h = (def.flight_hitbox_height_m() / 2.0) as f32;
+        let sprite_half_h = match sprite_rect {
+            Some(rect) if rect.pixel_width > 0 => {
+                sprite_half_w * (rect.pixel_height as f32 / rect.pixel_width as f32)
+            }
+            _ => (def.flight_hitbox_height_m() / 2.0) as f32,
+        };
         let y_offset = hitbox_half_h - sprite_half_h;
         return (sprite_half_w, sprite_half_h, 0.0, y_offset);
     }
@@ -323,7 +330,7 @@ pub fn generate_part_vertices(
                     if def.solar_panel.is_some() && !part.deployed {
                         generate_solar_panel_partial(&mut vertices, rect, def, x, y, 0.0, 1.0);
                     } else {
-                        let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def);
+                        let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def, Some(rect));
                         let sp_x = x + sp_ox;
                         let sp_y = y + sp_oy;
                         generate_sprite_quad(&mut vertices, rect, sp_x, sp_y, sp_hw, sp_hh, [1.0, 1.0, 1.0, 1.0]);
@@ -343,12 +350,21 @@ pub fn generate_part_vertices(
                         } else {
                             [0.55, 0.55, 0.6, 0.2]
                         };
-                        vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
-                        vertices.push(Vertex::new([x + half_w, y - half_h], highlight_color));
-                        vertices.push(Vertex::new([x + half_w, y + half_h], highlight_color));
-                        vertices.push(Vertex::new([x - half_w, y - half_h], highlight_color));
-                        vertices.push(Vertex::new([x + half_w, y + half_h], highlight_color));
-                        vertices.push(Vertex::new([x - half_w, y + half_h], highlight_color));
+                        // For engines, use flight hitbox dimensions (matches visible content)
+                        let (hl_hw, hl_hh, hl_cy) = if def.engine.is_some() {
+                            let fhw = (def.flight_hitbox_width_m() / 2.0) as f32;
+                            let fhh = (def.flight_hitbox_height_m() / 2.0) as f32;
+                            let offset = ((def.hitbox_height() - def.flight_hitbox_height_m()) / 2.0) as f32;
+                            (fhw, fhh, y + offset)
+                        } else {
+                            (half_w, half_h, y)
+                        };
+                        vertices.push(Vertex::new([x - hl_hw, hl_cy - hl_hh], highlight_color));
+                        vertices.push(Vertex::new([x + hl_hw, hl_cy - hl_hh], highlight_color));
+                        vertices.push(Vertex::new([x + hl_hw, hl_cy + hl_hh], highlight_color));
+                        vertices.push(Vertex::new([x - hl_hw, hl_cy - hl_hh], highlight_color));
+                        vertices.push(Vertex::new([x + hl_hw, hl_cy + hl_hh], highlight_color));
+                        vertices.push(Vertex::new([x - hl_hw, hl_cy + hl_hh], highlight_color));
                     }
                     rotate_vertices_around(&mut vertices[vert_start..], x, y, part.rotation);
                     continue;
@@ -460,7 +476,7 @@ fn generate_single_ghost_vertices(
                 } else {
                     [0.9, 0.3, 0.3, 0.5]
                 };
-                let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def);
+                let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def, Some(rect));
                 let sp_x = x + sp_ox;
                 let sp_y = y + sp_oy;
                 generate_sprite_quad(vertices, rect, sp_x, sp_y, sp_hw, sp_hh, tint);
@@ -1465,9 +1481,10 @@ pub fn generate_engine_plume_vertices(
         return;
     }
 
-    // Nozzle position = bottom of the sprite (flight hitbox, top-aligned in editor hitbox)
-    let (_, sp_hh, _, sp_oy) = sprite_placement(def);
-    let nozzle_y = (y + sp_oy) - sp_hh;
+    // Nozzle position = bottom of flight hitbox (top-aligned within editor hitbox)
+    let editor_half_h = (def.hitbox_height() / 2.0) as f32;
+    let flight_h = def.flight_hitbox_height_m() as f32;
+    let nozzle_y = y + editor_half_h - flight_h;
     let nozzle_width = def.flight_hitbox_width_m() as f32;
     let half_nozzle = nozzle_width / 2.0;
 
@@ -1570,7 +1587,7 @@ pub fn generate_part_shape_vertices(
                     }
                 }
 
-                let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def);
+                let (sp_hw, sp_hh, sp_ox, sp_oy) = sprite_placement(def, Some(rect));
                 let sp_x = x + sp_ox;
                 let sp_y = y + sp_oy;
                 generate_sprite_quad(vertices, rect, sp_x, sp_y, sp_hw, sp_hh, [1.0, 1.0, 1.0, alpha]);
