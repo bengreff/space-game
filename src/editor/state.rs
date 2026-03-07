@@ -1329,7 +1329,7 @@ impl EditorState {
 
                 // Non-crossfeed decouplers are barriers: assigned to zone but don't propagate
                 let is_barrier = current_def.decoupler.is_some() && !current.crossfeed_enabled;
-                if is_barrier && current_id != start_id {
+                if is_barrier {
                     continue;
                 }
 

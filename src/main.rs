@@ -374,33 +374,34 @@ fn render_flight_frame(
 
     // --- Simulation (skipped when paused) ---
     let vessel_physics = if !game.paused {
-        // Auto-drop on-rails warp when approaching atmosphere/surface.
-        // Uses time-to-periapsis so it works even when the ship is ascending
-        // toward apoapsis — it looks ahead to when it will reach periapsis.
+        // Auto-drop on-rails warp when in atmosphere/surface or approaching it.
+        // Uses time_to_distance(landing_r) to find when the orbit will cross
+        // the landing altitude (atmosphere top or 1% radius for airless bodies).
         // Only when flying — landed ships can warp at any speed (update_landed is analytical).
-        if matches!(game.flight.ship.state, ShipState::Flying) {
-            let warp = WARP_LEVELS[game.warp_index];
-            if warp > RAILS_WARP_THRESHOLD {
-                let soi_body = &game.solar_system.bodies[game.flight.ship.soi_body];
-                let dist = (game.flight.ship.rel_position[0].powi(2)
-                          + game.flight.ship.rel_position[1].powi(2)).sqrt();
-                let altitude = dist - soi_body.radius;
-                let danger_altitude = soi_body.landing_altitude();
+        // Physics warp (10x and below) is unaffected — numerical integration handles it.
+        if matches!(game.flight.ship.state, ShipState::Flying)
+            && WARP_LEVELS[game.warp_index] > RAILS_WARP_THRESHOLD
+        {
+            let soi_body = &game.solar_system.bodies[game.flight.ship.soi_body];
+            let dist = (game.flight.ship.rel_position[0].powi(2)
+                      + game.flight.ship.rel_position[1].powi(2)).sqrt();
+            let altitude = dist - soi_body.radius;
+            let danger_altitude = soi_body.landing_altitude();
 
-                if altitude < danger_altitude {
-                    // Already in landing zone — drop immediately
-                    game.warp_index = 0;
-                } else if game.flight.ship.periapsis_below_surface(&game.solar_system) {
-                    if let Some(ttp) = game.flight.ship.time_to_periapsis(&game.solar_system) {
-                        // Find the highest warp level where 3 frames won't overshoot periapsis
-                        const SAFE_FRAMES: f64 = 10.0;
-                        let max_safe_warp = ttp / (dt as f64 * SAFE_FRAMES);
-                        let safe_index = WARP_LEVELS.iter()
-                            .rposition(|&w| w <= max_safe_warp)
-                            .unwrap_or(0);
-                        if safe_index < game.warp_index {
-                            game.warp_index = safe_index;
-                        }
+            if altitude < danger_altitude {
+                // Already in landing zone — drop to 1x
+                game.warp_index = 0;
+            } else {
+                // Step down smoothly based on time to landing altitude
+                let landing_r = soi_body.radius + danger_altitude;
+                if let Some(ttd) = game.flight.ship.time_to_distance(&game.solar_system, landing_r) {
+                    const SAFE_FRAMES: f64 = 10.0;
+                    let max_safe_warp = ttd / (dt as f64 * SAFE_FRAMES);
+                    let safe_index = WARP_LEVELS.iter()
+                        .rposition(|&w| w <= max_safe_warp)
+                        .unwrap_or(0);
+                    if safe_index < game.warp_index {
+                        game.warp_index = safe_index;
                     }
                 }
             }
@@ -1065,7 +1066,7 @@ fn render_flight_frame(
         (dx * dx + dy * dy).sqrt()
     };
 
-    let (part_render_data, vessel_mass, vessel_fuel_frac, vessel_thrust, vessel_delta_v, vessel_stage_delta_vs, vessel_size) =
+    let (part_render_data, vessel_mass, vessel_fuel_frac, vessel_thrust, vessel_delta_v, vessel_stage_delta_vs, vessel_stage_burn_times, vessel_size) =
         if let Some(ref vessel) = game.flight.vessel {
             let parts: Vec<ShipPartRenderData> = vessel.parts.iter()
                 .enumerate()
@@ -1281,12 +1282,14 @@ fn render_flight_frame(
             };
 
             let size = vessel.bounding_half_height() * 2.0;
-            let stage_dvs = vessel.calculate_stage_delta_v(&game.part_definitions);
+            let stage_dv_burns = vessel.calculate_stage_delta_v(&game.part_definitions);
+            let stage_dvs: Vec<f64> = stage_dv_burns.iter().map(|(dv, _)| *dv).collect();
+            let stage_burn_times: Vec<f64> = stage_dv_burns.iter().map(|(_, bt)| *bt).collect();
             let dv: f64 = stage_dvs.iter().sum();
 
-            (Some(parts), Some(vessel.total_mass), Some(fuel_frac), Some(vessel.active_thrust_at_pressure(hud_atmo_pressure)), Some(dv), stage_dvs, size)
+            (Some(parts), Some(vessel.total_mass), Some(fuel_frac), Some(vessel.active_thrust_at_pressure(hud_atmo_pressure)), Some(dv), stage_dvs, stage_burn_times, size)
         } else {
-            (None, None, None, None, None, Vec::new(), SHIP_SIZE)
+            (None, None, None, None, None, Vec::new(), Vec::new(), SHIP_SIZE)
         };
 
     // Use hottest part temperature when vessel exists, otherwise ship temperature
@@ -1400,6 +1403,7 @@ fn render_flight_frame(
             if speed > 0.1 { [vx / speed, vy / speed] } else { [0.0, 0.0] }
         },
         stage_delta_vs: if vessel_stage_delta_vs.is_empty() { None } else { Some(vessel_stage_delta_vs) },
+        stage_burn_times: if vessel_stage_burn_times.is_empty() { None } else { Some(vessel_stage_burn_times) },
         stages: game.flight.vessel.as_ref().map(|v| {
             v.stages.iter().map(|stage| {
                 stage.iter().map(|&part_idx| {
@@ -2229,7 +2233,9 @@ fn render_editor_frame(
     let mut editor_pause_action = PauseAction::None;
     let paused = game.paused;
 
-    let stage_delta_vs = game.editor.calculate_stage_delta_v(&part_defs);
+    let stage_dv_burns = game.editor.calculate_stage_delta_v(&part_defs);
+    let stage_delta_vs: Vec<f64> = stage_dv_burns.iter().map(|(dv, _)| *dv).collect();
+    let stage_burn_times: Vec<f64> = stage_dv_burns.iter().map(|(_, bt)| *bt).collect();
 
     let result = render_state.render_editor(&vertices, |ctx| {
         action = render_editor_ui(
@@ -2240,6 +2246,7 @@ fn render_editor_frame(
             &stats,
             &bodies,
             &stage_delta_vs,
+            &stage_burn_times,
         );
 
         // Pause overlay on top of editor

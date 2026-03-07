@@ -290,6 +290,75 @@ impl Ship {
         Some(time)
     }
 
+    /// Time in seconds until the ship's orbit reaches a given distance from the SOI body center.
+    /// Returns None if the orbit never reaches that distance (periapsis >= target_distance),
+    /// if the ship is landed, or if no orbit can be computed.
+    /// Falls back to computing the orbit from state vectors if no cached orbit exists.
+    pub fn time_to_distance(&self, solar_system: &SolarSystem, target_distance: f64) -> Option<f64> {
+        use std::f64::consts::TAU;
+
+        // Get cached orbit, or compute one from state vectors (fixes first-frame-of-warp issue)
+        let ship_orbit = match self.cached_orbit.as_ref() {
+            Some(orbit) => orbit.clone(),
+            None => self.calculate_orbit_with_anomaly(solar_system)?,
+        };
+
+        let a = ship_orbit.orbit.semi_major_axis;
+        let e = ship_orbit.orbit.eccentricity;
+        if e >= 1.0 || a <= 0.0 {
+            return None; // only elliptical orbits
+        }
+
+        let periapsis = a * (1.0 - e);
+        if periapsis >= target_distance {
+            return None; // orbit never descends to target
+        }
+
+        // Semi-latus rectum
+        let p = a * (1.0 - e * e);
+
+        // True anomaly where r = target_distance
+        // r = p / (1 + e*cos(v))  =>  cos(v) = (p/r - 1) / e
+        let cos_v = (p / target_distance - 1.0) / e;
+        if cos_v.abs() > 1.0 {
+            return None;
+        }
+        let v_cross = cos_v.acos();
+
+        let parent = &solar_system.bodies[ship_orbit.parent_idx];
+        let parent_mass = parent.effective_mass_at(a);
+        let n = ship_orbit.orbit.mean_motion(parent_mass);
+        if n <= 0.0 {
+            return None;
+        }
+
+        let current_m = ship_orbit.mean_anomaly;
+
+        // Two crossing points: v_cross (ascending) and TAU - v_cross (descending)
+        let m_ascending = self.true_to_mean_anomaly(&ship_orbit.orbit, v_cross);
+        let m_descending = self.true_to_mean_anomaly(&ship_orbit.orbit, TAU - v_cross);
+
+        // Time to each crossing (same pattern as get_orbital_info)
+        let time_to_m = |target_m: f64| -> f64 {
+            let mut delta_m = target_m - current_m;
+            if ship_orbit.retrograde {
+                delta_m = -delta_m;
+            }
+            while delta_m < 0.0 {
+                delta_m += TAU;
+            }
+            while delta_m >= TAU {
+                delta_m -= TAU;
+            }
+            delta_m / n
+        };
+
+        let t1 = time_to_m(m_ascending);
+        let t2 = time_to_m(m_descending);
+
+        Some(t1.min(t2))
+    }
+
     /// Check if the ship is currently inside an atmosphere
     pub fn in_atmosphere(&self, solar_system: &SolarSystem) -> bool {
         let soi_body = &solar_system.bodies[self.soi_body];

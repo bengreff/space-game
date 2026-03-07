@@ -168,10 +168,10 @@ The ship SHALL enter on-rails mode when ALL of the following are true:
 When the ship is **flying** and the current warp level exceeds `RAILS_WARP_THRESHOLD`, warp SHALL be reduced using predictive logic to prevent the ship from phasing through the atmosphere during on-rails propagation:
 
 1. **Already in danger zone**: If altitude < `landing_altitude()`, drop warp to 1x immediately.
-2. **Approaching periapsis**: If the orbit's periapsis is below the body's surface (`periapsis_below_surface()`), compute time-to-periapsis from the cached orbital elements (mean anomaly distance to M=0). Find the highest warp level where `dt * warp * 10 <= time_to_periapsis` (10-frame safety buffer). If that level is lower than the current warp, clamp warp down to it. This works regardless of whether the ship is currently ascending or descending — it uses orbital mechanics to predict when periapsis will be reached.
-3. **Safe orbit**: If periapsis does not dip below surface, no warp drop is needed.
+2. **Approaching landing altitude**: Compute `landing_r = body.radius + body.landing_altitude()` and use `Ship::time_to_distance(landing_r)` to find the time until the orbit descends to that distance. Find the highest warp level where `dt * warp * 10 <= time_to_distance` (10-frame safety buffer). If that level is lower than the current warp, clamp warp down to it. This smoothly steps warp down as the ship approaches the atmosphere, reaching 1x by the time it arrives.
+3. **Safe orbit**: If `time_to_distance()` returns `None` (periapsis above landing altitude), no warp drop is needed.
 
-`Ship::time_to_periapsis()` computes time until mean anomaly reaches 0 (periapsis) using the cached orbit's mean anomaly and mean motion. Handles prograde and retrograde orbits. Returns `None` for hyperbolic orbits or when no cached orbit exists.
+`Ship::time_to_distance(target_distance)` computes time until the orbit reaches a given distance from the SOI body center. It uses the cached orbit if available, otherwise computes orbital elements from state vectors on-the-fly (preventing silent failure on the first frame of on-rails warp). It finds the two true anomalies where `r = target_distance` using the orbit equation, converts them to mean anomalies, and returns the minimum time to either crossing. Returns `None` for hyperbolic orbits or if periapsis >= target_distance.
 
 Landed ships are exempt — the `update_landed` function is analytical (pins ship to surface via `surface_angle * body_radius`) and works correctly at any timestep, so landed ships MAY use any warp level including on-rails speeds (100x+).
 
@@ -184,11 +184,11 @@ Landed ships are exempt — the `update_landed` function is analytical (pins shi
 - **THEN** warp SHALL be reset to 1x (warp index 0)
 
 #### Scenario: Approaching atmosphere at high warp (ascending or descending)
-- **WHEN** the ship is in `Flying` state, warp > RAILS_WARP_THRESHOLD, periapsis is below surface
-- **THEN** warp SHALL be clamped to the highest level where 10 frames of on-rails propagation won't overshoot periapsis, dropping directly to the correct safe level
+- **WHEN** the ship is in `Flying` state, warp > RAILS_WARP_THRESHOLD, orbit periapsis is below landing altitude
+- **THEN** warp SHALL be smoothly stepped down to the highest safe level where 10 frames won't overshoot the landing altitude crossing, ultimately reaching 1x as the ship nears the atmosphere
 
 #### Scenario: High orbit with safe periapsis at high warp
-- **WHEN** the ship is in `Flying` state, warp > RAILS_WARP_THRESHOLD, and periapsis is above the body's surface
+- **WHEN** the ship is in `Flying` state, warp > RAILS_WARP_THRESHOLD, and periapsis is above `body.radius + body.landing_altitude()`
 - **THEN** warp SHALL NOT be reset
 
 ### Requirement: On-rails mode propagation

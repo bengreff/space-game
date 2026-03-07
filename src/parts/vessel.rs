@@ -1477,7 +1477,7 @@ impl FlightVessel {
                         && !self.parts[idx].crossfeed_enabled
                 };
 
-                if is_barrier && idx != start {
+                if is_barrier {
                     // Barrier parts get visited (assigned a zone) but don't
                     // propagate to neighbors — they might be claimed by
                     // another zone's fill that starts from their other side.
@@ -1683,7 +1683,7 @@ impl FlightVessel {
                     def.map(|d| d.decoupler.is_some()).unwrap_or(false)
                         && !self.parts[idx].crossfeed_enabled
                 };
-                if is_barrier && idx != start { continue; }
+                if is_barrier { continue; }
                 for &neighbor in &connections[idx] {
                     if zones[neighbor] != usize::MAX { continue; }
                     zones[neighbor] = current_zone;
