@@ -12,6 +12,7 @@ The system SHALL predict a maximum of `MAX_PATCHED_CONICS = 2` SOI changes beyon
 
 Patched conic trajectories SHALL be cached and reused for `TRAJECTORY_CACHE_FRAMES = 30` frames (~0.5 seconds at 60fps). Cache SHALL be invalidated when:
 - Ship is thrusting (throttle > 0)
+- Ship is on-rails (position advances rapidly per frame; stale trajectory causes closest approach and other markers to rubber-band)
 - SOI body has changed since last calculation
 - Frame limit exceeded
 

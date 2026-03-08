@@ -49,15 +49,14 @@ Automated transfer planning: calculates delta-v and timing for orbital transfers
 - `hohmann_optimal_times()` - Default departure/arrival times for Lambert defaults
 - `hohmann_targets()` / `lambert_targets()` - Valid target listing
 
-## Auto-Selection from Navigation Target
-- When the planner opens with no transfer target selected, the active navigation target (`selected_target`) is checked
-- If `selected_target` is `Body(idx)` and appears in Hohmann targets, it is auto-selected with mode 0 (Hohmann)
-- If it appears in Lambert targets instead, it is auto-selected with mode 1 (Lambert)
-- Only fires when `transfer_selected_target` is `None` — never overrides a manual selection
+## Bidirectional Target Sync
+- **Nav → Planner**: When the navigation target (`selected_target`) is a body that appears in the planner's target list, the planner dropdown auto-selects it and switches mode (Hohmann or Lambert) accordingly
+- **Planner → Nav**: When the user selects a target from the planner dropdown, the navigation target is synced to match (`selected_target = Body(idx)`, `selected_target_name = name`)
+- This ensures clicking through Lambert targets in the dropdown also updates the closest approach marker, target arrow, and other nav-target-dependent features
 
 ## Data Flow
 1. `main.rs` updates target lists and computes transfers each frame (when planner open)
-2. If no transfer target is selected, auto-populates from navigation target (if applicable)
+2. Navigation target and planner target are kept in bidirectional sync
 3. Results stored as `TransferDisplay` on `RenderState` (pre-formatted for UI)
 4. UI reads `TransferDisplay` and shows results
 5. "Create Node" sets `transfer_node_request` on `RenderState`

@@ -4,7 +4,7 @@
 Players can select a celestial body or background vessel as a navigation target. Single-clicking a body or vessel shows a popup to set it as the active target. The target is displayed in the bottom bar with an autopilot mode to point toward it.
 
 ## Interaction
-- **Single-click** a body or vessel icon in flight view: shows a "Set as Target" popup centered below the object
+- **Single-click** a body or vessel icon in flight view: shows a popup centered below the object with either "Set as Target" (if not the current target) or "Unselect Target" (if already the current target)
 - **Double-click** is preserved: focuses camera on body or switches to vessel (unchanged)
 - Clicking empty space clears the popup and falls through to orbit click detection (maneuver nodes)
 
@@ -20,7 +20,7 @@ Players can select a celestial body or background vessel as a navigation target.
 - For vessels: centered horizontally below the vessel icon, offset 14pt
 - Uses `egui::Align2::CENTER_TOP` pivot so the popup is centered below the anchor point
 - Tracks the body/vessel as the camera moves (e.g., during ship tracking)
-- Dismissed when: target is set, user clicks elsewhere, double-click occurs, or target goes off-screen
+- Dismissed when: target is set/unset, user clicks elsewhere, double-click occurs, or target goes off-screen
 - All positions are in egui logical points (physical pixels / scale_factor) for HiDPI correctness
 - Flight mode has no camera drag — camera only moves by focusing on bodies (double-click) or tracking the ship
 
@@ -44,10 +44,10 @@ Players can select a celestial body or background vessel as a navigation target.
 - `src/main.rs` - Click handling, angle computation, autopilot wiring
 
 ## Transfer Planner Integration
-- When the transfer planner opens and no transfer target is selected, the navigation target auto-populates the planner dropdown
+- **Nav → Planner**: When the navigation target changes to a body that is a valid transfer target, the planner dropdown auto-selects it and switches mode (Hohmann or Lambert) accordingly
+- **Planner → Nav**: When the user selects a target from the planner dropdown, the navigation target (`selected_target`) is synced to match, keeping both systems in agreement
 - If the navigation target body appears in the Hohmann target list, it is selected and mode switches to Hohmann
 - If it appears in the Lambert target list instead, it is selected and mode switches to Lambert
-- Manual selection in the planner is never overridden — auto-select only fires when `transfer_selected_target` is `None`
 
 ## Data Flow
 1. Single-click detected in `handle_flight_mouse_input()` -> `target_popup` set on `RenderState`

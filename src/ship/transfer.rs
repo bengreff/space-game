@@ -528,9 +528,23 @@ pub fn compute_interplanetary(
     let omega_target = target_orbit.mean_motion(grandparent_mass);
     let required_phase = normalize_angle(PI - omega_target * hohmann_tof);
 
-    // Time to departure is simply departure_time - sim_time
-    // (the user/solver has already selected the departure time)
-    let time_to_window = (departure_time - sim_time).max(0.0);
+    // Time to departure — if departure_time is in the past, advance by
+    // synodic period(s) to the next window with the same geometry.
+    let raw_dt = departure_time - sim_time;
+    let time_to_window = if raw_dt >= 0.0 {
+        raw_dt
+    } else {
+        let omega_dep = departure_orbit.mean_motion(grandparent_mass);
+        let omega_tgt = target_orbit.mean_motion(grandparent_mass);
+        let synodic_rate = (omega_dep - omega_tgt).abs();
+        if synodic_rate > 1e-15 {
+            let synodic_period = TAU / synodic_rate;
+            let periods_behind = (-raw_dt / synodic_period).ceil();
+            raw_dt + periods_behind * synodic_period
+        } else {
+            0.0
+        }
+    };
 
     Some(InterplanetaryResult {
         ejection_delta_v: ejection_dv,
@@ -596,6 +610,139 @@ pub fn hohmann_optimal_times(
     let arrival_time = departure_time + transfer_time;
 
     Some((departure_time, arrival_time))
+}
+
+/// Compute a porkchop plot grid of Lambert transfer delta-v values.
+/// Horizontal axis: departure time over one synodic period (full transfer window cycle).
+/// Vertical axis: transfer time from tof_min to tof_max (log scale).
+/// Takes Copy params so it can be called from a background thread.
+pub fn compute_porkchop_grid(
+    departure_orbit: Orbit,
+    target_orbit: Orbit,
+    grandparent_mass: f64,
+    planet_mass: f64,
+    sim_time: f64,
+    parking_radius: f64,
+    target_idx: usize,
+) -> Option<crate::render::PorkchopGrid> {
+    use crate::render::{PorkchopGrid, PorkchopPoint};
+
+    let mu_sun = G * grandparent_mass;
+    let mu_planet = G * planet_mass;
+
+    // Departure axis: one full synodic period (cycle of transfer windows).
+    // The synodic period is the time between successive identical phase angles,
+    // which is longer than either orbital period when the orbits are close.
+    let omega_dep = departure_orbit.mean_motion(grandparent_mass);
+    let omega_tgt = target_orbit.mean_motion(grandparent_mass);
+    let synodic_rate = (omega_dep - omega_tgt).abs();
+    let synodic_period = if synodic_rate > 1e-15 {
+        TAU / synodic_rate
+    } else {
+        // Degenerate case: same orbital period, fall back to departure period
+        TAU / omega_dep
+    };
+    let dep_start = sim_time;
+    let dep_end = sim_time + synodic_period;
+
+    // Hohmann TOF for transfer between the two orbits
+    let a_t = (departure_orbit.semi_major_axis + target_orbit.semi_major_axis) / 2.0;
+    let hohmann_tof = PI * (a_t.powi(3) / mu_sun).sqrt();
+
+    // Transfer time axis (log scale): hohmann_tof/100 to hohmann_tof*2
+    let tof_min = hohmann_tof / 100.0;
+    let tof_max = hohmann_tof * 2.0;
+
+    let cols: usize = 60;
+    let rows: usize = 50;
+
+    // Precompute per-column departure positions and velocities
+    // (same departure time for every row, avoids redundant Kepler solves)
+    let mut dep_positions: Vec<[f64; 2]> = Vec::with_capacity(cols);
+    let mut dep_velocities: Vec<[f64; 2]> = Vec::with_capacity(cols);
+    let mut dep_times: Vec<f64> = Vec::with_capacity(cols);
+    for col in 0..cols {
+        let dep_time = dep_start + (col as f64 / cols as f64) * (dep_end - dep_start);
+        dep_times.push(dep_time);
+        dep_positions.push(departure_orbit.position_at(dep_time, grandparent_mass));
+        let dep_ma = departure_orbit.mean_anomaly_at(dep_time, grandparent_mass);
+        dep_velocities.push(departure_orbit.velocity_from_mean_anomaly(dep_ma, grandparent_mass));
+    }
+
+    let v_parking = (mu_planet / parking_radius).sqrt();
+
+    let mut points: Vec<Option<PorkchopPoint>> = Vec::with_capacity(cols * rows);
+    let mut min_dv = f64::MAX;
+    let mut max_dv = 0.0_f64;
+    let mut best_idx: Option<usize> = None;
+
+    let log_ratio = (tof_max / tof_min).ln();
+
+    for row in 0..rows {
+        // Log-spaced TOF: tof = tof_min * exp(row/rows * ln(tof_max/tof_min))
+        let t = row as f64 / rows as f64;
+        let tof = tof_min * (t * log_ratio).exp();
+
+        for col in 0..cols {
+            let idx = row * cols + col;
+
+            // Use precomputed departure position; only target position needs Kepler solve
+            let r1 = dep_positions[col];
+            let r2 = target_orbit.position_at(dep_times[col] + tof, grandparent_mass);
+
+            // Solve Lambert
+            let point = solve_lambert_2d(r1, r2, tof, mu_sun, true).and_then(|lambert| {
+                let planet_vel = dep_velocities[col];
+
+                // V-infinity = Lambert departure velocity - planet velocity
+                let v_inf_x = lambert.v1[0] - planet_vel[0];
+                let v_inf_y = lambert.v1[1] - planet_vel[1];
+                let v_inf_sq = v_inf_x * v_inf_x + v_inf_y * v_inf_y;
+
+                // Ejection delta-v from parking orbit using vis-viva
+                let v_ejection = (v_inf_sq + 2.0 * mu_planet / parking_radius).sqrt();
+                let ejection_dv = v_ejection - v_parking;
+
+                if !ejection_dv.is_finite() || ejection_dv < 0.0 {
+                    return None;
+                }
+
+                Some(PorkchopPoint {
+                    ejection_dv,
+                    dep_time: dep_times[col],
+                    tof,
+                })
+            });
+
+            if let Some(ref p) = point {
+                if p.ejection_dv < min_dv {
+                    min_dv = p.ejection_dv;
+                    best_idx = Some(idx);
+                }
+                if p.ejection_dv > max_dv {
+                    max_dv = p.ejection_dv;
+                }
+            }
+
+            points.push(point);
+        }
+    }
+
+    // No clamping — log-scale coloring handles the full range
+
+    Some(PorkchopGrid {
+        points,
+        cols,
+        rows,
+        dep_start,
+        dep_end,
+        tof_min,
+        tof_max,
+        min_dv,
+        max_dv,
+        best_idx,
+        target_idx,
+    })
 }
 
 /// Normalize angle to [-PI, PI]

@@ -1461,6 +1461,67 @@ fn render_flight_frame(
     render_state.ship_body_center = [soi_pos_render[0] * SCALE, soi_pos_render[1] * SCALE];
     render_state.ship_rel_offset = [rel_render[0] * SCALE * BODY_SCALE, rel_render[1] * SCALE * BODY_SCALE];
 
+    // Calculate predicted trajectories for maneuver nodes (before vertex generation so current-frame data is used)
+    let mut predicted_trajectories: Vec<Vec<OrbitSegmentData>> = Vec::new();
+    for node in render_state.get_maneuver_nodes() {
+        if node.total_delta_v() < 0.001 {
+            continue;
+        }
+
+        let scale = node.render_scale;
+        let parent_idx = node.parent_idx;
+        let current_parent_pos = scaled_positions[parent_idx];
+        let current_parent_x = current_parent_pos[0] * SCALE;
+        let current_parent_y = current_parent_pos[1] * SCALE;
+
+        let world_pos = node.world_pos(current_parent_x, current_parent_y);
+        let velocity = node.velocity();
+
+        let rel_x = (world_pos[0] - current_parent_x) / scale;
+        let rel_y = (world_pos[1] - current_parent_y) / scale;
+        let pos = [rel_x, rel_y];
+
+        let prograde = node.prograde_unit();
+        let radial = node.radial_unit();
+
+        let new_vel = [
+            velocity[0] + node.delta_v.prograde * prograde[0] + node.delta_v.radial_out * radial[0],
+            velocity[1] + node.delta_v.prograde * prograde[1] + node.delta_v.radial_out * radial[1],
+        ];
+
+        if let Some(pred_traj) = game.flight.ship.calculate_predicted_trajectory(
+            pos, new_vel, parent_idx, &game.solar_system, node.epoch
+        ) {
+            let segments: Vec<OrbitSegmentData> = pred_traj.segments.iter().enumerate().map(|(i, seg)| {
+                let parent_pos = scaled_positions[seg.parent_idx];
+                let parent_soi = game.solar_system.bodies[seg.parent_idx].soi_radius;
+                let parent_mass = game.solar_system.bodies[seg.parent_idx].effective_mass_at(seg.orbit.semi_major_axis);
+                let alpha = if i == 0 { 0.7 } else { 0.5 };
+                OrbitSegmentData {
+                    parent_x: parent_pos[0] * SCALE,
+                    parent_y: parent_pos[1] * SCALE,
+                    semi_major_axis: seg.orbit.semi_major_axis * SCALE * BODY_SCALE,
+                    eccentricity: seg.orbit.eccentricity,
+                    argument_of_periapsis: seg.orbit.argument_of_periapsis,
+                    start_true_anomaly: seg.start_true_anomaly,
+                    end_true_anomaly: seg.end_true_anomaly,
+                    color: [0.2, 0.8, 0.2, alpha],
+                    is_first_segment: i == 0,
+                    retrograde: seg.retrograde,
+                    soi_radius: parent_soi * SCALE * BODY_SCALE,
+                    parent_body_radius: game.solar_system.bodies[seg.parent_idx].radius,
+                    parent_mass,
+                    parent_idx: seg.parent_idx,
+                    render_scale: SCALE * BODY_SCALE,
+                    start_time: seg.start_time,
+                    base_epoch: node.epoch,
+                }
+            }).collect();
+            predicted_trajectories.push(segments);
+        }
+    }
+    render_state.set_predicted_trajectories(predicted_trajectories);
+
     let accretion_discs = build_accretion_disc_data(game);
     let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
     render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions), &background_vessels, &accretion_discs, in_galaxy_view);
@@ -1647,67 +1708,6 @@ fn render_flight_frame(
         }
     }
 
-    // Calculate predicted trajectories for maneuver nodes
-    let mut predicted_trajectories: Vec<Vec<OrbitSegmentData>> = Vec::new();
-    for node in render_state.get_maneuver_nodes() {
-        if node.total_delta_v() < 0.001 {
-            continue;
-        }
-
-        let scale = node.render_scale;
-        let parent_idx = node.parent_idx;
-        let current_parent_pos = scaled_positions[parent_idx];
-        let current_parent_x = current_parent_pos[0] * SCALE;
-        let current_parent_y = current_parent_pos[1] * SCALE;
-
-        let world_pos = node.world_pos(current_parent_x, current_parent_y);
-        let velocity = node.velocity();
-
-        let rel_x = (world_pos[0] - current_parent_x) / scale;
-        let rel_y = (world_pos[1] - current_parent_y) / scale;
-        let pos = [rel_x, rel_y];
-
-        let prograde = node.prograde_unit();
-        let radial = node.radial_unit();
-
-        let new_vel = [
-            velocity[0] + node.delta_v.prograde * prograde[0] + node.delta_v.radial_out * radial[0],
-            velocity[1] + node.delta_v.prograde * prograde[1] + node.delta_v.radial_out * radial[1],
-        ];
-
-        if let Some(pred_traj) = game.flight.ship.calculate_predicted_trajectory(
-            pos, new_vel, parent_idx, &game.solar_system, node.epoch
-        ) {
-            let segments: Vec<OrbitSegmentData> = pred_traj.segments.iter().enumerate().map(|(i, seg)| {
-                let parent_pos = scaled_positions[seg.parent_idx];
-                let parent_soi = game.solar_system.bodies[seg.parent_idx].soi_radius;
-                let parent_mass = game.solar_system.bodies[seg.parent_idx].effective_mass_at(seg.orbit.semi_major_axis);
-                let alpha = if i == 0 { 0.7 } else { 0.5 };
-                OrbitSegmentData {
-                    parent_x: parent_pos[0] * SCALE,
-                    parent_y: parent_pos[1] * SCALE,
-                    semi_major_axis: seg.orbit.semi_major_axis * SCALE * BODY_SCALE,
-                    eccentricity: seg.orbit.eccentricity,
-                    argument_of_periapsis: seg.orbit.argument_of_periapsis,
-                    start_true_anomaly: seg.start_true_anomaly,
-                    end_true_anomaly: seg.end_true_anomaly,
-                    color: [0.2, 0.8, 0.2, alpha],
-                    is_first_segment: i == 0,
-                    retrograde: seg.retrograde,
-                    soi_radius: parent_soi * SCALE * BODY_SCALE,
-                    parent_body_radius: game.solar_system.bodies[seg.parent_idx].radius,
-                    parent_mass,
-                    parent_idx: seg.parent_idx,
-                    render_scale: SCALE * BODY_SCALE,
-                    start_time: seg.start_time,
-                    base_epoch: node.epoch,
-                }
-            }).collect();
-            predicted_trajectories.push(segments);
-        }
-    }
-    render_state.set_predicted_trajectories(predicted_trajectories);
-
     // --- Transfer planner computation ---
     if render_state.transfer_planner_open {
         use sunscatter::ship::transfer;
@@ -1717,9 +1717,9 @@ fn render_flight_frame(
         render_state.transfer_hohmann_targets = transfer::hohmann_targets(soi, &game.solar_system.bodies);
         render_state.transfer_interplanetary_targets = transfer::lambert_targets(soi, &game.solar_system.bodies);
 
-        // Auto-select navigation target in planner if no target chosen yet
-        if render_state.transfer_selected_target.is_none() {
-            if let Some(SelectedTarget::Body(idx)) = render_state.selected_target {
+        // Auto-select navigation target in planner (syncs whenever nav target is valid)
+        if let Some(SelectedTarget::Body(idx)) = render_state.selected_target {
+            if render_state.transfer_selected_target != Some(idx) {
                 if render_state.transfer_hohmann_targets.iter().any(|(i, _)| *i == idx) {
                     render_state.transfer_selected_target = Some(idx);
                     render_state.transfer_planner_mode = 0;
@@ -1739,6 +1739,21 @@ fn render_flight_frame(
         if let Some(sel) = render_state.transfer_selected_target {
             if !targets.iter().any(|(i, _)| *i == sel) {
                 render_state.transfer_selected_target = None;
+            }
+        }
+
+        // Poll for completed porkchop grid computation (background thread)
+        if render_state.porkchop_computing {
+            let received = render_state.porkchop_receiver.as_ref()
+                .and_then(|rx| rx.try_recv().ok());
+            if let Some(grid) = received {
+                if render_state.porkchop_last_target == Some(grid.target_idx) {
+                    render_state.porkchop_selected = grid.best_idx;
+                    render_state.porkchop_hovered = None;
+                    render_state.porkchop_grid = Some(grid);
+                }
+                render_state.porkchop_computing = false;
+                render_state.porkchop_receiver = None;
             }
         }
 
@@ -1778,40 +1793,89 @@ fn render_flight_frame(
                     None
                 }
             } else {
-                // Lambert mode
-                let defaults = transfer::hohmann_optimal_times(
-                    soi, target_idx, game.solar_system.time, &game.solar_system.bodies,
-                );
-                if let Some((default_dep, default_arr)) = defaults {
-                    let dep_time = default_dep + render_state.transfer_departure_offset;
-                    let arr_time = default_arr + render_state.transfer_arrival_offset;
-                    transfer::compute_interplanetary(
-                        &ship_orbit.orbit,
-                        ship_orbit.retrograde,
-                        ship_orbit.mean_anomaly,
-                        soi,
-                        target_idx,
-                        dep_time,
-                        arr_time,
-                        game.solar_system.time,
-                        &game.solar_system.bodies,
-                    ).map(|ip| {
-                        let target_name = game.solar_system.bodies[target_idx].name.clone();
-                        transfer::TransferDisplay {
-                            mode: 1,
-                            target_name,
-                            departure_dv: ip.ejection_delta_v,
-                            arrival_dv: ip.arrival_v_infinity,
-                            transfer_time: ip.transfer_time,
-                            current_phase_angle: ip.current_phase_angle.to_degrees(),
-                            required_phase_angle: ip.required_phase_angle.to_degrees(),
-                            time_to_window: ip.time_to_window,
-                            departure_position_angle: ip.departure_position_angle,
-                            prograde_dv: ip.ejection_delta_v,
-                            radial_dv: 0.0,
-                            valid: true,
+                // Lambert mode — porkchop plot
+                // Spawn background grid computation when target changes or grid is missing
+                let need_grid = render_state.porkchop_grid.is_none()
+                    || render_state.porkchop_last_target != Some(target_idx)
+                    || render_state.porkchop_grid.as_ref()
+                        .map_or(false, |g| {
+                            // Regenerate when >10% of the departure window has elapsed,
+                            // keeping the x-axis columns in the near future.
+                            let threshold = g.dep_start + (g.dep_end - g.dep_start) * 0.1;
+                            game.solar_system.time > threshold
+                        });
+                if need_grid && !render_state.porkchop_computing {
+                    let bodies = &game.solar_system.bodies;
+                    if let (Some(dep_orbit), Some(parent_idx)) =
+                        (bodies[soi].orbit, bodies[soi].parent)
+                    {
+                        let tgt_orbit = bodies[target_idx].orbit.unwrap();
+                        let grandparent_mass = bodies[parent_idx].mass;
+                        let planet_mass = bodies[soi].mass;
+                        let parking_radius = ship_orbit.orbit.semi_major_axis;
+                        let sim_time_now = game.solar_system.time;
+                        let target = target_idx;
+
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        render_state.porkchop_receiver = Some(rx);
+                        render_state.porkchop_computing = true;
+                        render_state.porkchop_last_target = Some(target_idx);
+                        render_state.porkchop_grid = None;
+                        render_state.porkchop_selected = None;
+                        render_state.porkchop_hovered = None;
+
+                        std::thread::spawn(move || {
+                            if let Some(grid) = transfer::compute_porkchop_grid(
+                                dep_orbit, tgt_orbit, grandparent_mass, planet_mass,
+                                sim_time_now, parking_radius, target,
+                            ) {
+                                let _ = tx.send(grid);
+                            }
+                        });
+                    }
+                }
+
+                // Use selected/hovered/best point for full interplanetary computation
+                if let Some(ref grid) = render_state.porkchop_grid {
+                    let active_idx = render_state.porkchop_hovered
+                        .or(render_state.porkchop_selected)
+                        .or(grid.best_idx);
+                    if let Some(idx) = active_idx {
+                        if let Some(ref pt) = grid.points[idx] {
+                            let arr_time = pt.dep_time + pt.tof;
+                            transfer::compute_interplanetary(
+                                &ship_orbit.orbit,
+                                ship_orbit.retrograde,
+                                ship_orbit.mean_anomaly,
+                                soi,
+                                target_idx,
+                                pt.dep_time,
+                                arr_time,
+                                game.solar_system.time,
+                                &game.solar_system.bodies,
+                            ).map(|ip| {
+                                let target_name = game.solar_system.bodies[target_idx].name.clone();
+                                transfer::TransferDisplay {
+                                    mode: 1,
+                                    target_name,
+                                    departure_dv: ip.ejection_delta_v,
+                                    arrival_dv: ip.arrival_v_infinity,
+                                    transfer_time: ip.transfer_time,
+                                    current_phase_angle: ip.current_phase_angle.to_degrees(),
+                                    required_phase_angle: ip.required_phase_angle.to_degrees(),
+                                    time_to_window: ip.time_to_window,
+                                    departure_position_angle: ip.departure_position_angle,
+                                    prograde_dv: ip.ejection_delta_v,
+                                    radial_dv: 0.0,
+                                    valid: true,
+                                }
+                            })
+                        } else {
+                            None
                         }
-                    })
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }

@@ -20,6 +20,7 @@ impl Ship {
         // 3. Enough frames have passed
         let frames_since_calc = self.frame_counter.saturating_sub(self.trajectory_calc_frame);
         let cache_valid = self.throttle == 0.0
+            && !self.on_rails
             && self.soi_body == self.trajectory_soi_body
             && frames_since_calc < TRAJECTORY_CACHE_FRAMES
             && self.cached_trajectory.is_some();

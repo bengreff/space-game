@@ -195,8 +195,12 @@ pub struct RenderState {
     pub transfer_planner_open: bool,
     pub transfer_planner_mode: u8,              // 0 = Hohmann, 1 = Lambert
     pub transfer_selected_target: Option<usize>,
-    pub transfer_departure_offset: f64,         // seconds, Lambert mode
-    pub transfer_arrival_offset: f64,           // seconds, Lambert mode
+    pub porkchop_grid: Option<super::types::PorkchopGrid>,
+    pub porkchop_selected: Option<usize>,   // locked selection (click)
+    pub porkchop_hovered: Option<usize>,    // transient hover
+    pub porkchop_last_target: Option<usize>, // to detect target changes
+    pub porkchop_receiver: Option<std::sync::mpsc::Receiver<super::types::PorkchopGrid>>,
+    pub porkchop_computing: bool,
     pub transfer_display: Option<crate::ship::transfer::TransferDisplay>,
     pub transfer_hohmann_targets: Vec<(usize, String)>,
     pub transfer_interplanetary_targets: Vec<(usize, String)>,
@@ -553,8 +557,12 @@ impl RenderState {
             transfer_planner_open: false,
             transfer_planner_mode: 0,
             transfer_selected_target: None,
-            transfer_departure_offset: 0.0,
-            transfer_arrival_offset: 0.0,
+            porkchop_grid: None,
+            porkchop_selected: None,
+            porkchop_hovered: None,
+            porkchop_last_target: None,
+            porkchop_receiver: None,
+            porkchop_computing: false,
             transfer_display: None,
             transfer_hohmann_targets: Vec::new(),
             transfer_interplanetary_targets: Vec::new(),
@@ -1092,7 +1100,7 @@ impl RenderState {
 
             // Draw Apoapsis and Periapsis labels
             let marker_painter = ctx.layer_painter(egui::LayerId::new(
-                egui::Order::Foreground,
+                egui::Order::Middle,
                 egui::Id::new("orbit_marker_labels"),
             ));
 
@@ -1320,10 +1328,19 @@ impl RenderState {
                         .show(ctx, |ui| {
                             egui::Frame::popup(ui.style()).show(ui, |ui| {
                                 ui.label(egui::RichText::new(&popup_name).strong());
-                                if ui.button("Set as Target").clicked() {
-                                    self.selected_target = Some(popup_target);
-                                    self.selected_target_name = popup_name.clone();
-                                    self.target_popup = None;
+                                let is_current_target = self.selected_target == Some(popup_target);
+                                if is_current_target {
+                                    if ui.button("Unselect Target").clicked() {
+                                        self.selected_target = None;
+                                        self.selected_target_name.clear();
+                                        self.target_popup = None;
+                                    }
+                                } else {
+                                    if ui.button("Set as Target").clicked() {
+                                        self.selected_target = Some(popup_target);
+                                        self.selected_target_name = popup_name.clone();
+                                        self.target_popup = None;
+                                    }
                                 }
                             });
                         });
@@ -2144,7 +2161,7 @@ impl RenderState {
                 let mut close_planner = false;
                 egui::Area::new(egui::Id::new("transfer_planner"))
                     .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                    .order(egui::Order::Middle)
+                    .order(egui::Order::Foreground)
                     .show(ctx, |ui| {
                         egui::Frame::none()
                             .fill(egui::Color32::from_rgba_unmultiplied(20, 20, 35, 240))
@@ -2193,9 +2210,13 @@ impl RenderState {
                                                 let selected = self.transfer_selected_target == Some(*idx);
                                                 if ui.selectable_label(selected, name).clicked() {
                                                     self.transfer_selected_target = Some(*idx);
-                                                    // Reset Lambert offsets when changing target
-                                                    self.transfer_departure_offset = 0.0;
-                                                    self.transfer_arrival_offset = 0.0;
+                                                    // Sync nav target to match planner selection
+                                                    self.selected_target = Some(super::types::SelectedTarget::Body(*idx));
+                                                    self.selected_target_name = name.clone();
+                                                    // Reset porkchop selection when changing target
+                                                    self.porkchop_grid = None;
+                                                    self.porkchop_selected = None;
+                                                    self.porkchop_hovered = None;
                                                 }
                                             }
                                         });
@@ -2203,19 +2224,154 @@ impl RenderState {
 
                                 ui.add_space(6.0);
 
-                                // Lambert mode sliders
+                                // Porkchop plot (Lambert mode)
                                 if self.transfer_planner_mode == 1 {
-                                    ui.label(egui::RichText::new("Departure offset").size(10.0).color(egui::Color32::GRAY));
-                                    ui.add(egui::Slider::new(&mut self.transfer_departure_offset, -6.3e7..=6.3e7)
-                                        .text("s")
-                                        .logarithmic(true)
-                                        .clamp_to_range(true));
-                                    ui.label(egui::RichText::new("Transfer time offset").size(10.0).color(egui::Color32::GRAY));
-                                    ui.add(egui::Slider::new(&mut self.transfer_arrival_offset, -6.3e7..=6.3e7)
-                                        .text("s")
-                                        .logarithmic(true)
-                                        .clamp_to_range(true));
-                                    ui.add_space(4.0);
+                                    if let Some(ref grid) = self.porkchop_grid {
+                                        let plot_width = 280.0_f32;
+                                        let plot_height = 200.0_f32;
+                                        let (response, painter) = ui.allocate_painter(
+                                            egui::vec2(plot_width, plot_height),
+                                            egui::Sense::click_and_drag(),
+                                        );
+                                        let rect = response.rect;
+
+                                        // Paint background
+                                        painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 30));
+
+                                        // Cell dimensions
+                                        let cell_w = plot_width / grid.cols as f32;
+                                        let cell_h = plot_height / grid.rows as f32;
+                                        let log_dv_min = grid.min_dv.ln();
+                                        let log_dv_max = grid.max_dv.ln();
+                                        let log_dv_range = (log_dv_max - log_dv_min).max(0.01);
+
+                                        // Paint grid cells with log-scale multi-stop color gradient
+                                        for row in 0..grid.rows {
+                                            for col in 0..grid.cols {
+                                                let idx = row * grid.cols + col;
+                                                if let Some(ref pt) = grid.points[idx] {
+                                                    // Log-scale normalization
+                                                    let norm = ((pt.ejection_dv.ln() - log_dv_min) / log_dv_range).clamp(0.0, 1.0);
+                                                    let color = porkchop_color(norm as f32);
+                                                    let x = rect.left() + col as f32 * cell_w;
+                                                    let y = rect.top() + row as f32 * cell_h;
+                                                    painter.rect_filled(
+                                                        egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(cell_w, cell_h)),
+                                                        0.0,
+                                                        color,
+                                                    );
+                                                }
+                                            }
+                                        }
+
+                                        // Determine hovered cell
+                                        let mut new_hovered = None;
+                                        if let Some(hover_pos) = response.hover_pos() {
+                                            let rel_x = (hover_pos.x - rect.left()) / plot_width;
+                                            let rel_y = (hover_pos.y - rect.top()) / plot_height;
+                                            if (0.0..1.0).contains(&rel_x) && (0.0..1.0).contains(&rel_y) {
+                                                let col = (rel_x * grid.cols as f32) as usize;
+                                                let row = (rel_y * grid.rows as f32) as usize;
+                                                let col = col.min(grid.cols - 1);
+                                                let row = row.min(grid.rows - 1);
+                                                let idx = row * grid.cols + col;
+                                                if grid.points[idx].is_some() {
+                                                    new_hovered = Some(idx);
+                                                } else {
+                                                    // Snap to nearest valid cell (search radius 3)
+                                                    let mut best_idx = None;
+                                                    let mut best_dist_sq = u32::MAX;
+                                                    for dr in -3i32..=3 {
+                                                        for dc in -3i32..=3 {
+                                                            let nr = row as i32 + dr;
+                                                            let nc = col as i32 + dc;
+                                                            if nr >= 0 && nr < grid.rows as i32 && nc >= 0 && nc < grid.cols as i32 {
+                                                                let ni = nr as usize * grid.cols + nc as usize;
+                                                                if grid.points[ni].is_some() {
+                                                                    let dist_sq = (dr * dr + dc * dc) as u32;
+                                                                    if dist_sq < best_dist_sq {
+                                                                        best_dist_sq = dist_sq;
+                                                                        best_idx = Some(ni);
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    new_hovered = best_idx;
+                                                }
+                                            }
+                                        }
+                                        self.porkchop_hovered = new_hovered;
+
+                                        // Click to lock selection
+                                        if response.clicked() {
+                                            if let Some(hovered) = self.porkchop_hovered {
+                                                self.porkchop_selected = Some(hovered);
+                                            }
+                                        }
+
+                                        // Draw highlight on active point (selected or hovered)
+                                        let active_idx = self.porkchop_hovered.or(self.porkchop_selected).or(grid.best_idx);
+                                        if let Some(idx) = active_idx {
+                                            let row = idx / grid.cols;
+                                            let col = idx % grid.cols;
+                                            let x = rect.left() + col as f32 * cell_w;
+                                            let y = rect.top() + row as f32 * cell_h;
+                                            let highlight_rect = egui::Rect::from_min_size(
+                                                egui::pos2(x, y),
+                                                egui::vec2(cell_w, cell_h),
+                                            );
+                                            painter.rect_stroke(highlight_rect, 0.0, egui::Stroke::new(2.0, egui::Color32::WHITE));
+                                        }
+
+                                        // Draw best point marker
+                                        if let Some(best) = grid.best_idx {
+                                            let row = best / grid.cols;
+                                            let col = best % grid.cols;
+                                            let cx = rect.left() + (col as f32 + 0.5) * cell_w;
+                                            let cy = rect.top() + (row as f32 + 0.5) * cell_h;
+                                            painter.circle_stroke(egui::pos2(cx, cy), 4.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
+                                        }
+
+                                        // Axis labels
+                                        let dep_range_days = (grid.dep_end - grid.dep_start) / 86400.0;
+                                        // Bottom: departure time labels
+                                        for i in 0..=4 {
+                                            let frac = i as f32 / 4.0;
+                                            let day = frac as f64 * dep_range_days;
+                                            let x = rect.left() + frac * plot_width;
+                                            painter.text(
+                                                egui::pos2(x, rect.bottom() + 2.0),
+                                                egui::Align2::CENTER_TOP,
+                                                format!("{:.0}d", day),
+                                                egui::FontId::proportional(8.0),
+                                                egui::Color32::from_rgb(150, 150, 150),
+                                            );
+                                        }
+                                        // Left: transfer time labels (log scale)
+                                        let log_ratio = (grid.tof_max / grid.tof_min).ln();
+                                        for i in 0..=4 {
+                                            let frac = i as f32 / 4.0;
+                                            let tof = grid.tof_min * (frac as f64 * log_ratio).exp();
+                                            let label = if tof >= 86400.0 * 365.25 {
+                                                format!("{:.1}y", tof / (86400.0 * 365.25))
+                                            } else {
+                                                format!("{:.0}d", tof / 86400.0)
+                                            };
+                                            let y = rect.top() + frac * plot_height;
+                                            painter.text(
+                                                egui::pos2(rect.left() - 2.0, y),
+                                                egui::Align2::RIGHT_CENTER,
+                                                label,
+                                                egui::FontId::proportional(8.0),
+                                                egui::Color32::from_rgb(150, 150, 150),
+                                            );
+                                        }
+
+                                        ui.add_space(14.0); // Space for bottom axis labels
+                                    } else if self.porkchop_computing {
+                                        ui.label(egui::RichText::new("Computing...").size(10.0).color(egui::Color32::GRAY));
+                                    }
                                 }
 
                                 // Display results
@@ -2272,7 +2428,13 @@ impl RenderState {
                                             ui.label(egui::RichText::new(format!("{:.1}", display.current_phase_angle)).size(11.0).color(phase_color));
                                             ui.label(egui::RichText::new(format!("/ {:.1}", display.required_phase_angle)).size(11.0).color(egui::Color32::GRAY));
                                         });
-                                        if display.time_to_window > 60.0 {
+                                        if display.mode == 1 {
+                                            // Lambert: always show time to departure node
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new("Time to node:").size(11.0).color(egui::Color32::GRAY));
+                                                ui.label(egui::RichText::new(fmt_time(display.time_to_window)).size(11.0).color(egui::Color32::WHITE));
+                                            });
+                                        } else if display.time_to_window > 60.0 {
                                             ui.horizontal(|ui| {
                                                 ui.label(egui::RichText::new("Window in:").size(11.0).color(egui::Color32::GRAY));
                                                 ui.label(egui::RichText::new(fmt_time(display.time_to_window)).size(11.0).color(egui::Color32::WHITE));
@@ -5834,6 +5996,38 @@ impl RenderState {
 
         Ok((new_warp_index, pause_action, ts_action))
     }
+}
+
+/// Multi-stop color gradient for porkchop plot.
+/// norm: 0.0 (best/lowest dv) to 1.0 (worst/highest dv), already log-scaled.
+/// Green → yellow-green → yellow → orange → red
+fn porkchop_color(norm: f32) -> egui::Color32 {
+    // 5-stop gradient: green, yellow-green, yellow, orange, red
+    const STOPS: [(f32, [u8; 3]); 5] = [
+        (0.00, [30, 200, 50]),   // green
+        (0.25, [120, 210, 40]),  // yellow-green
+        (0.50, [220, 210, 30]),  // yellow
+        (0.75, [230, 130, 20]),  // orange
+        (1.00, [210, 40, 30]),   // red
+    ];
+
+    let t = norm.clamp(0.0, 1.0);
+
+    // Find the two stops to interpolate between
+    let mut i = 0;
+    while i < STOPS.len() - 2 && t > STOPS[i + 1].0 {
+        i += 1;
+    }
+
+    let (t0, c0) = STOPS[i];
+    let (t1, c1) = STOPS[i + 1];
+    let frac = if (t1 - t0).abs() < 1e-6 { 0.0 } else { (t - t0) / (t1 - t0) };
+
+    egui::Color32::from_rgb(
+        (c0[0] as f32 + (c1[0] as f32 - c0[0] as f32) * frac) as u8,
+        (c0[1] as f32 + (c1[1] as f32 - c0[1] as f32) * frac) as u8,
+        (c0[2] as f32 + (c1[2] as f32 - c0[2] as f32) * frac) as u8,
+    )
 }
 
 /// Blackbody glow color for a given temperature.
