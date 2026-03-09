@@ -389,6 +389,8 @@ pub struct Game {
     pub blueprints: BlueprintRegistry,
     /// Current save game name (None when on title screen / no game loaded)
     pub save_name: Option<String>,
+    /// Whether a launch save exists for the current flight (enables "Revert to Launch")
+    pub has_launch_save: bool,
     /// Title screen UI state
     pub title_screen: TitleScreenUiState,
 }
@@ -429,6 +431,7 @@ impl Game {
             part_definitions,
             blueprints,
             save_name: None,
+            has_launch_save: false,
             title_screen: TitleScreenUiState::default(),
         }
     }
@@ -460,6 +463,7 @@ impl Game {
     pub fn enter_main_menu(&mut self) {
         self.mode = GameMode::MainMenu;
         self.paused = false;
+        self.has_launch_save = false;
         log::info!("Entered main menu");
     }
 
@@ -467,6 +471,7 @@ impl Game {
     pub fn enter_editor(&mut self) {
         self.mode = GameMode::Editor;
         self.paused = false;
+        self.has_launch_save = false;
         log::info!("Entered editor mode");
     }
 

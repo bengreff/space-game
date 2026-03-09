@@ -119,6 +119,7 @@ pub struct RenderState {
     // Vessel stats for HUD
     pub vessel_total_mass: Option<f64>,    // tonnes
     pub vessel_fuel_fraction: Option<f64>, // 0.0-1.0
+    pub vessel_monoprop_fraction: Option<f64>, // 0.0-1.0
     pub vessel_power_generation: Option<f64>,  // Watts
     pub vessel_power_consumption: Option<f64>, // Watts
     pub vessel_electricity_fraction: Option<f64>, // 0.0-1.0
@@ -492,6 +493,7 @@ impl RenderState {
             ship_current_true_anomaly: 0.0,
             vessel_total_mass: None,
             vessel_fuel_fraction: None,
+            vessel_monoprop_fraction: None,
             vessel_power_generation: None,
             vessel_power_consumption: None,
             vessel_electricity_fraction: None,
@@ -665,6 +667,7 @@ impl RenderState {
         date_str: &str,
         can_exit_flight: bool,
         can_recover: bool,
+        has_launch_save: bool,
         quicksaves: &[crate::save::QuicksaveInfo],
     ) -> Result<(usize, PauseAction), wgpu::SurfaceError> {
         // Update camera buffer before rendering
@@ -693,6 +696,7 @@ impl RenderState {
         let ship_time_to_intercept = self.ship_time_to_intercept;
         let vessel_total_mass = self.vessel_total_mass;
         let vessel_fuel_fraction = self.vessel_fuel_fraction;
+        let vessel_monoprop_fraction = self.vessel_monoprop_fraction;
         let vessel_electricity_fraction = self.vessel_electricity_fraction;
         let vessel_electricity_stored = self.vessel_electricity_stored;
         let vessel_electricity_max = self.vessel_electricity_max;
@@ -1588,10 +1592,71 @@ impl RenderState {
 
                         // Border
                         painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+
+                        // Heat bar (shown when temperature > 350K)
+                        if ship_temperature > 350.0 {
+                            ui.add_space(15.0);
+                            ui.label(egui::RichText::new("HEAT").size(10.0).color(egui::Color32::GRAY));
+                            ui.add_space(3.0);
+
+                            ui.label(egui::RichText::new(format!("{}K", ship_temperature as i32))
+                                .size(11.0)
+                                .color(egui::Color32::WHITE));
+                            ui.add_space(3.0);
+
+                            let heat_bar_height = 80.0;
+                            let heat_bar_width = 20.0;
+                            let (heat_rect, _) = ui.allocate_exact_size(
+                                egui::vec2(heat_bar_width, heat_bar_height),
+                                egui::Sense::hover()
+                            );
+
+                            let heat_painter = ui.painter();
+                            heat_painter.rect_filled(heat_rect, 2.0, egui::Color32::from_rgb(40, 40, 50));
+
+                            let heat_fill = heat_bar_height * ship_heat_fraction;
+                            let heat_fill_rect = egui::Rect::from_min_size(
+                                egui::pos2(heat_rect.min.x, heat_rect.max.y - heat_fill),
+                                egui::vec2(heat_bar_width, heat_fill)
+                            );
+                            let heat_color = if ship_heat_fraction < 0.33 {
+                                egui::Color32::from_rgb(220, 200, 80)  // yellow
+                            } else if ship_heat_fraction < 0.66 {
+                                egui::Color32::from_rgb(220, 140, 40)  // orange
+                            } else {
+                                egui::Color32::from_rgb(220, 60, 60)   // red
+                            };
+                            heat_painter.rect_filled(heat_fill_rect, 2.0, heat_color);
+                            heat_painter.rect_stroke(heat_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+
+                            // Show the critical part (highest heat_fraction)
+                            if let Some(hottest) = flight_parts_cache.iter()
+                                .max_by(|a, b| a.heat_fraction.partial_cmp(&b.heat_fraction).unwrap_or(std::cmp::Ordering::Equal))
+                            {
+                                if hottest.heat_fraction > 0.01 {
+                                    ui.add_space(5.0);
+                                    let crit_color = if hottest.heat_fraction < 0.33 {
+                                        egui::Color32::from_rgb(220, 200, 80)
+                                    } else if hottest.heat_fraction < 0.66 {
+                                        egui::Color32::from_rgb(220, 140, 40)
+                                    } else {
+                                        egui::Color32::from_rgb(220, 60, 60)
+                                    };
+                                    // Truncate name to fit the narrow panel
+                                    let name = if hottest.name.len() > 8 {
+                                        &hottest.name[..8]
+                                    } else {
+                                        &hottest.name
+                                    };
+                                    ui.label(egui::RichText::new(name)
+                                        .size(8.0).color(crit_color));
+                                }
+                            }
+                        }
                     });
                 });
 
-            // Left panel - fuel, electricity, heat, stage, XFER, debug
+            // Left panel - fuel, electricity, stage, XFER, debug
             egui::SidePanel::left("status_panel")
                 .exact_width(50.0)
                 .frame(egui::Frame::none().fill(egui::Color32::from_rgba_unmultiplied(20, 20, 30, 200)))
@@ -1632,6 +1697,44 @@ impl RenderState {
                         };
                         fuel_painter.rect_filled(fuel_fill_rect, 2.0, fuel_color);
                         fuel_painter.rect_stroke(fuel_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
+                    }
+
+                    // Monopropellant bar (if vessel has monoprop capacity)
+                    if let Some(mono_frac) = vessel_monoprop_fraction {
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new("MONO").size(10.0).color(egui::Color32::GRAY));
+                        ui.add_space(3.0);
+
+                        let mono_pct = (mono_frac * 100.0) as i32;
+                        ui.label(egui::RichText::new(format!("{}%", mono_pct))
+                            .size(11.0)
+                            .color(egui::Color32::WHITE));
+                        ui.add_space(3.0);
+
+                        let mono_bar_height = 80.0;
+                        let bar_width = 20.0;
+                        let (mono_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(bar_width, mono_bar_height),
+                            egui::Sense::hover()
+                        );
+
+                        let mono_painter = ui.painter();
+                        mono_painter.rect_filled(mono_rect, 2.0, egui::Color32::from_rgb(40, 40, 50));
+
+                        let mono_fill = mono_bar_height * mono_frac as f32;
+                        let mono_fill_rect = egui::Rect::from_min_size(
+                            egui::pos2(mono_rect.min.x, mono_rect.max.y - mono_fill),
+                            egui::vec2(bar_width, mono_fill)
+                        );
+                        let mono_color = if mono_frac > 0.3 {
+                            egui::Color32::from_rgb(80, 200, 200)  // cyan
+                        } else if mono_frac > 0.1 {
+                            egui::Color32::from_rgb(220, 180, 80)  // yellow
+                        } else {
+                            egui::Color32::from_rgb(220, 80, 80)   // red
+                        };
+                        mono_painter.rect_filled(mono_fill_rect, 2.0, mono_color);
+                        mono_painter.rect_stroke(mono_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
                     }
 
                     // Electricity bar (if vessel has batteries)
@@ -1688,67 +1791,6 @@ impl RenderState {
                                 ui.label(egui::RichText::new(format_duration(seconds))
                                     .size(9.0)
                                     .color(egui::Color32::from_rgb(220, 180, 40)));
-                            }
-                        }
-                    }
-
-                    // Heat bar (shown when temperature > 350K)
-                    if ship_temperature > 350.0 {
-                        ui.add_space(10.0);
-                        ui.label(egui::RichText::new("HEAT").size(10.0).color(egui::Color32::GRAY));
-                        ui.add_space(3.0);
-
-                        ui.label(egui::RichText::new(format!("{}K", ship_temperature as i32))
-                            .size(11.0)
-                            .color(egui::Color32::WHITE));
-                        ui.add_space(3.0);
-
-                        let heat_bar_height = 80.0;
-                        let bar_width = 20.0;
-                        let (heat_rect, _) = ui.allocate_exact_size(
-                            egui::vec2(bar_width, heat_bar_height),
-                            egui::Sense::hover()
-                        );
-
-                        let heat_painter = ui.painter();
-                        heat_painter.rect_filled(heat_rect, 2.0, egui::Color32::from_rgb(40, 40, 50));
-
-                        let heat_fill = heat_bar_height * ship_heat_fraction;
-                        let heat_fill_rect = egui::Rect::from_min_size(
-                            egui::pos2(heat_rect.min.x, heat_rect.max.y - heat_fill),
-                            egui::vec2(bar_width, heat_fill)
-                        );
-                        let heat_color = if ship_heat_fraction < 0.33 {
-                            egui::Color32::from_rgb(220, 200, 80)  // yellow
-                        } else if ship_heat_fraction < 0.66 {
-                            egui::Color32::from_rgb(220, 140, 40)  // orange
-                        } else {
-                            egui::Color32::from_rgb(220, 60, 60)   // red
-                        };
-                        heat_painter.rect_filled(heat_fill_rect, 2.0, heat_color);
-                        heat_painter.rect_stroke(heat_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::GRAY));
-
-                        // Show the critical part (highest heat_fraction)
-                        if let Some(hottest) = flight_parts_cache.iter()
-                            .max_by(|a, b| a.heat_fraction.partial_cmp(&b.heat_fraction).unwrap_or(std::cmp::Ordering::Equal))
-                        {
-                            if hottest.heat_fraction > 0.01 {
-                                ui.add_space(5.0);
-                                let crit_color = if hottest.heat_fraction < 0.33 {
-                                    egui::Color32::from_rgb(220, 200, 80)
-                                } else if hottest.heat_fraction < 0.66 {
-                                    egui::Color32::from_rgb(220, 140, 40)
-                                } else {
-                                    egui::Color32::from_rgb(220, 60, 60)
-                                };
-                                // Truncate name to fit the narrow panel
-                                let name = if hottest.name.len() > 8 {
-                                    &hottest.name[..8]
-                                } else {
-                                    &hottest.name
-                                };
-                                ui.label(egui::RichText::new(name)
-                                    .size(8.0).color(crit_color));
                             }
                         }
                     }
@@ -2540,6 +2582,15 @@ impl RenderState {
                                                 self.show_quicksave_list = true;
                                             }
                                         }
+                                        if has_launch_save {
+                                            ui.add_space(8.0);
+                                            let revert_btn = egui::Button::new(
+                                                egui::RichText::new("Revert to Launch").size(18.0)
+                                            ).fill(egui::Color32::from_rgb(180, 120, 40));
+                                            if ui.add(revert_btn).clicked() {
+                                                pause_action = PauseAction::RevertToLaunch;
+                                            }
+                                        }
                                         if can_recover {
                                             ui.add_space(8.0);
                                             let recover_btn = egui::Button::new(
@@ -2884,6 +2935,7 @@ impl RenderState {
             self.ship_current_true_anomaly = s.current_true_anomaly;
             self.vessel_total_mass = s.total_mass;
             self.vessel_fuel_fraction = s.fuel_fraction;
+            self.vessel_monoprop_fraction = s.monoprop_fraction;
             self.vessel_power_generation = s.power_generation;
             self.vessel_power_consumption = s.power_consumption;
             self.vessel_electricity_fraction = s.electricity_fraction;

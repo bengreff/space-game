@@ -65,6 +65,7 @@ pub struct FlightPart {
 
     // RCS state (if this is an RCS thruster)
     pub rcs_thrust: f64,         // kN (0 if not an RCS part)
+    pub rcs_torque_multiplier: f64, // Multiplier for rotational torque (default 1.0)
     pub rcs_isp: f64,            // seconds
     pub rcs_mass_flow_rate: f64, // kg/s at full thrust
 
@@ -206,6 +207,7 @@ impl FlightVessel {
                 gimbal_angle: 0.0,
                 gimbal_range_rad: 0.0,
                 rcs_thrust: 0.0,
+                rcs_torque_multiplier: 1.0,
                 rcs_isp: 0.0,
                 rcs_mass_flow_rate: 0.0,
                 destroyed: false,
@@ -253,6 +255,7 @@ impl FlightVessel {
             // Set RCS data if this is an RCS thruster
             if let Some(ref rcs) = def.rcs {
                 flight_part.rcs_thrust = rcs.thrust;
+                flight_part.rcs_torque_multiplier = rcs.torque_multiplier.unwrap_or(1.0);
                 flight_part.rcs_isp = rcs.isp;
                 let g0 = 9.80665;
                 flight_part.rcs_mass_flow_rate = if rcs.isp > 0.0 {
@@ -619,7 +622,7 @@ impl FlightVessel {
             let lever_arm = (part.local_position[0].powi(2) + part.local_position[1].powi(2))
                 .sqrt()
                 .max(0.25);
-            torque += part.rcs_thrust * lever_arm;
+            torque += part.rcs_thrust * part.rcs_torque_multiplier * lever_arm;
         }
 
         torque
@@ -745,7 +748,7 @@ impl FlightVessel {
             let lever_arm = (part.local_position[0].powi(2) + part.local_position[1].powi(2))
                 .sqrt()
                 .max(0.25);
-            total_torque += part.rcs_thrust * lever_arm;
+            total_torque += part.rcs_thrust * part.rcs_torque_multiplier * lever_arm;
 
             // Fuel consumption: mass_flow_rate * dt
             let consumption = part.rcs_mass_flow_rate * dt;
@@ -997,6 +1000,24 @@ impl FlightVessel {
             }
         }
         total
+    }
+
+    /// Get total monopropellant (current_kg, max_kg) across all non-decoupled parts
+    pub fn total_monopropellant(&self) -> (f64, f64) {
+        let mut current = 0.0;
+        let mut max = 0.0;
+        for part in &self.parts {
+            if part.destroyed || part.decoupled {
+                continue;
+            }
+            if let Some(&amount) = part.resources.get("monopropellant") {
+                current += amount;
+            }
+            if let Some(&amount) = part.max_resources.get("monopropellant") {
+                max += amount;
+            }
+        }
+        (current, max)
     }
 
     /// Get fuel accessible to currently active engines (current_kg, max_kg).
@@ -2889,6 +2910,7 @@ pub fn create_default_vessel(
             gimbal_angle: 0.0,
             gimbal_range_rad: 0.0,
             rcs_thrust: 0.0,
+            rcs_torque_multiplier: 1.0,
             rcs_isp: 0.0,
             rcs_mass_flow_rate: 0.0,
             destroyed: false,

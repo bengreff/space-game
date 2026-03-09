@@ -177,6 +177,7 @@ pub struct ShipRenderData {
     pub parts: Option<Vec<ShipPartRenderData>>,
     pub total_mass: Option<f64>,     // tonnes
     pub fuel_fraction: Option<f64>,  // 0.0-1.0
+    pub monoprop_fraction: Option<f64>,  // 0.0-1.0
     pub thrust_kn: Option<f64>,
     pub drag_kn: f64,                // kN, aerodynamic drag force
     pub delta_v: Option<f64>,        // m/s, Tsiolkovsky
@@ -193,6 +194,7 @@ pub struct ShipRenderData {
     pub total_stages: Option<usize>,   // Total number of stages
     pub stages: Option<Vec<Vec<StagedPartInfo>>>,  // Full stage data for UI
     pub stage_delta_vs: Option<Vec<f64>>,  // Per-stage delta-v (m/s, vacuum)
+    pub stage_burn_times: Option<Vec<f64>>,  // Per-stage burn time at 100% thrust (seconds)
     // Thermal state
     pub temperature: f64,       // Kelvin
     pub heat_fraction: f32,     // 0.0-1.0 normalized for visual effects
@@ -424,6 +426,28 @@ pub struct BodyInfoData {
     pub orbit_period_s: Option<f64>,
 }
 
+/// A single point in the porkchop plot grid
+pub struct PorkchopPoint {
+    pub ejection_dv: f64,     // total departure delta-v (m/s)
+    pub dep_time: f64,        // absolute departure time
+    pub tof: f64,             // time of flight (seconds)
+}
+
+/// 2D grid of Lambert transfer delta-v values for the porkchop plot
+pub struct PorkchopGrid {
+    pub points: Vec<Option<PorkchopPoint>>,  // cols * rows, None = invalid
+    pub cols: usize,
+    pub rows: usize,
+    pub dep_start: f64,       // departure range start (sim_time when computed)
+    pub dep_end: f64,         // departure range end
+    pub tof_min: f64,         // shortest transfer time
+    pub tof_max: f64,         // longest transfer time
+    pub min_dv: f64,          // for color scaling
+    pub max_dv: f64,          // for color scaling
+    pub best_idx: Option<usize>,  // index of lowest-dv valid point
+    pub target_idx: usize,    // which target this was computed for
+}
+
 /// Popup shown when single-clicking a body or vessel
 pub struct TargetPopup {
     pub target: SelectedTarget,
@@ -439,6 +463,7 @@ pub enum PauseAction {
     RecoverVessel,
     Quicksave,
     LoadQuicksave(String),
+    RevertToLaunch,
 }
 
 /// Action returned from the title screen UI

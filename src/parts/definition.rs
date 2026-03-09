@@ -327,6 +327,9 @@ pub struct RcsData {
     pub isp: f64,     // Specific impulse (seconds)
     #[serde(default)]
     pub is_mirrored: bool,  // true = left-mount (nozzles point right/up/down)
+    /// Multiplier for rotational torque (thrust stays the same for translation)
+    #[serde(default)]
+    pub torque_multiplier: Option<f64>,
 }
 
 /// A part definition loaded from RON files

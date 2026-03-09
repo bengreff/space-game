@@ -18,6 +18,7 @@
             rcs: Some((
                 thrust: 0.5,
                 isp: 240.0,
+                torque_multiplier: Some(3.0),
             )),
             resources: {},
         ),
@@ -39,6 +40,7 @@
                 thrust: 0.5,
                 isp: 240.0,
                 is_mirrored: true,
+                torque_multiplier: Some(3.0),
             )),
             resources: {},
         ),
@@ -59,6 +61,7 @@
             rcs: Some((
                 thrust: 2.0,
                 isp: 250.0,
+                torque_multiplier: Some(2.5),
             )),
             resources: {},
         ),
@@ -80,6 +83,7 @@
                 thrust: 2.0,
                 isp: 250.0,
                 is_mirrored: true,
+                torque_multiplier: Some(2.5),
             )),
             resources: {},
         ),

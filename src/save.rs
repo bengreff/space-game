@@ -10,6 +10,17 @@ use crate::ship::Ship;
 const SAVE_DIR: &str = "data/saves";
 const SAVE_VERSION: u32 = 1;
 
+/// Write a file atomically: write to a temp file in the same directory, then rename.
+/// Rename is atomic on all platforms, so a crash mid-write can never corrupt the target.
+fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
+    let tmp_path = path.with_extension("ron.tmp");
+    fs::write(&tmp_path, content)
+        .map_err(|e| format!("Failed to write temp file {:?}: {}", tmp_path, e))?;
+    fs::rename(&tmp_path, path)
+        .map_err(|e| format!("Failed to rename {:?} -> {:?}: {}", tmp_path, path, e))?;
+    Ok(())
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct SaveGame {
     pub version: u32,
@@ -119,8 +130,7 @@ impl SaveGame {
         let content = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
             .map_err(|e| format!("Failed to serialize save game: {}", e))?;
 
-        fs::write(&path, content)
-            .map_err(|e| format!("Failed to write save file: {}", e))?;
+        atomic_write(&path, &content)?;
 
         log::info!("Saved game '{}' to {:?}", self.name, path);
         Ok(())
@@ -143,11 +153,52 @@ impl SaveGame {
         let content = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
             .map_err(|e| format!("Failed to serialize quicksave: {}", e))?;
 
-        fs::write(&path, content)
-            .map_err(|e| format!("Failed to write quicksave: {}", e))?;
+        atomic_write(&path, &content)?;
 
         log::info!("Quicksaved '{}' as quicksave_{}", self.name, next_index);
         Ok(next_index)
+    }
+
+    /// Write a launch save to `data/saves/{name}/launch.ron`.
+    /// Overwrites any existing launch save.
+    pub fn write_launch_save(&self) -> Result<(), String> {
+        let save_id = sanitize_save_name(&self.name);
+        let dir = PathBuf::from(SAVE_DIR).join(&save_id);
+        if !dir.exists() {
+            fs::create_dir_all(&dir)
+                .map_err(|e| format!("Failed to create save directory: {}", e))?;
+        }
+
+        let path = dir.join("launch.ron");
+        let content = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
+            .map_err(|e| format!("Failed to serialize launch save: {}", e))?;
+
+        atomic_write(&path, &content)?;
+
+        log::info!("Saved launch state for '{}'", self.name);
+        Ok(())
+    }
+
+    /// Load a launch save from `data/saves/{save_name}/launch.ron`.
+    pub fn load_launch_save(save_name: &str) -> Result<Self, String> {
+        let save_id = sanitize_save_name(save_name);
+        let path = PathBuf::from(SAVE_DIR).join(&save_id).join("launch.ron");
+
+        let content = fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read launch save: {}", e))?;
+
+        let save: SaveGame = ron::from_str(&content)
+            .map_err(|e| format!("Failed to parse launch save: {}", e))?;
+
+        if save.version != SAVE_VERSION {
+            return Err(format!(
+                "Save version mismatch: expected {}, got {}",
+                SAVE_VERSION, save.version
+            ));
+        }
+
+        log::info!("Loaded launch save for '{}'", save.name);
+        Ok(save)
     }
 
     /// Load a save game from `data/saves/{save_id}/save.ron`.
@@ -239,16 +290,26 @@ impl SaveGame {
                         .and_then(|m| m.modified())
                         .unwrap_or(std::time::UNIX_EPOCH);
 
-                    if let Ok(content) = fs::read_to_string(&save_path) {
-                        if let Ok(save) = ron::from_str::<SaveGame>(&content) {
-                            seen_ids.insert(save_id.clone());
-                            saves.push(SaveFileInfo {
-                                name: save.name,
-                                save_id,
-                                vessel_count: save.vessels.len(),
-                                simulation_time: save.simulation_time,
-                                modified,
-                            });
+                    match fs::read_to_string(&save_path) {
+                        Ok(content) => {
+                            match ron::from_str::<SaveGame>(&content) {
+                                Ok(save) => {
+                                    seen_ids.insert(save_id.clone());
+                                    saves.push(SaveFileInfo {
+                                        name: save.name,
+                                        save_id,
+                                        vessel_count: save.vessels.len(),
+                                        simulation_time: save.simulation_time,
+                                        modified,
+                                    });
+                                }
+                                Err(e) => {
+                                    log::error!("Save file {:?} is corrupted and cannot be loaded: {}", save_path, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to read save file {:?}: {}", save_path, e);
                         }
                     }
                 }
@@ -272,15 +333,25 @@ impl SaveGame {
                     .and_then(|m| m.modified())
                     .unwrap_or(std::time::UNIX_EPOCH);
 
-                if let Ok(content) = fs::read_to_string(&path) {
-                    if let Ok(save) = ron::from_str::<SaveGame>(&content) {
-                        saves.push(SaveFileInfo {
-                            name: save.name,
-                            save_id,
-                            vessel_count: save.vessels.len(),
-                            simulation_time: save.simulation_time,
-                            modified,
-                        });
+                match fs::read_to_string(&path) {
+                    Ok(content) => {
+                        match ron::from_str::<SaveGame>(&content) {
+                            Ok(save) => {
+                                saves.push(SaveFileInfo {
+                                    name: save.name,
+                                    save_id,
+                                    vessel_count: save.vessels.len(),
+                                    simulation_time: save.simulation_time,
+                                    modified,
+                                });
+                            }
+                            Err(e) => {
+                                log::error!("Save file {:?} is corrupted and cannot be loaded: {}", path, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to read save file {:?}: {}", path, e);
                     }
                 }
             }

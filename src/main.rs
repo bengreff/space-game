@@ -827,6 +827,18 @@ fn render_flight_frame(
         [0.0, 0.0]
     };
 
+    // Suppress RCS plumes when vessel has no monopropellant
+    let (rcs_direction_for_render, rcs_translate_for_render) = if let Some(ref vessel) = game.flight.vessel {
+        let (mono_current, _) = vessel.total_monopropellant();
+        if mono_current < 0.001 {
+            (0.0, [0.0, 0.0])
+        } else {
+            (rcs_direction_for_render, rcs_translate_for_render)
+        }
+    } else {
+        (rcs_direction_for_render, rcs_translate_for_render)
+    };
+
     // --- Rendering (always runs) ---
 
     // Compute atmospheric pressure fraction for HUD thrust display
@@ -1377,6 +1389,10 @@ fn render_flight_frame(
         parts: part_render_data,
         total_mass: vessel_mass,
         fuel_fraction: vessel_fuel_frac,
+        monoprop_fraction: game.flight.vessel.as_ref().and_then(|v| {
+            let (current, max) = v.total_monopropellant();
+            if max > 0.0 { Some(current / max) } else { None }
+        }),
         power_generation: if game.flight.vessel.is_some() { Some(power_generation) } else { None },
         power_consumption: if game.flight.vessel.is_some() { Some(power_consumption) } else { None },
         electricity_fraction: game.flight.vessel.as_ref().and_then(|v| v.electricity_fraction()),
@@ -1996,7 +2012,7 @@ fn render_flight_frame(
     };
 
     let pre_render_warp_index = game.warp_index;
-    match render_state.render(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, can_exit_flight, can_recover, cached_quicksaves) {
+    match render_state.render(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, can_exit_flight, can_recover, game.has_launch_save, cached_quicksaves) {
         Ok((new_warp_index, pause_action)) => {
             game.warp_index = new_warp_index;
             // If user manually changed warp (clicked a button), cancel auto-warp
@@ -2038,6 +2054,20 @@ fn render_flight_frame(
                                 render_state.show_quicksave_list = false;
                             }
                             Err(e) => log::error!("Failed to load quicksave: {}", e),
+                        }
+                    }
+                }
+                PauseAction::RevertToLaunch => {
+                    if let Some(ref name) = game.save_name {
+                        match SaveGame::load_launch_save(name) {
+                            Ok(save) => {
+                                let active_nodes = save.restore_to_game(game);
+                                render_state.swap_maneuver_nodes(active_nodes);
+                                game.has_launch_save = true;
+                                game.paused = false;
+                                log::info!("Reverted to launch");
+                            }
+                            Err(e) => log::error!("Failed to revert to launch: {}", e),
                         }
                     }
                 }
@@ -2354,6 +2384,17 @@ fn render_editor_frame(
                         let zoom = target_fraction / vessel_world_size as f32;
                         render_state.camera.zoom = zoom;
                     }
+                    // Create launch save for "Revert to Launch"
+                    if let Some(ref name) = game.save_name {
+                        let save = SaveGame::from_game(game, &[], name);
+                        match save.write_launch_save() {
+                            Ok(()) => {
+                                game.has_launch_save = true;
+                                log::info!("Created launch save");
+                            }
+                            Err(e) => log::error!("Failed to create launch save: {}", e),
+                        }
+                    }
                     log::info!("Launched vessel");
                 }
                 Err(e) => {
@@ -2398,7 +2439,8 @@ fn render_editor_frame(
             game.enter_main_menu();
         }
         PauseAction::Resume | PauseAction::None | PauseAction::RecoverVessel
-        | PauseAction::Quicksave | PauseAction::LoadQuicksave(_) => {}
+        | PauseAction::Quicksave | PauseAction::LoadQuicksave(_)
+        | PauseAction::RevertToLaunch => {}
     }
 
     // Process any pending part deletions
@@ -3077,7 +3119,8 @@ fn render_tracking_station_frame(
                     game.enter_main_menu();
                 }
                 PauseAction::Resume | PauseAction::None | PauseAction::RecoverVessel
-                | PauseAction::Quicksave | PauseAction::LoadQuicksave(_) => {}
+                | PauseAction::Quicksave | PauseAction::LoadQuicksave(_)
+                | PauseAction::RevertToLaunch => {}
             }
             // Handle tracking station actions
             match ts_action {
