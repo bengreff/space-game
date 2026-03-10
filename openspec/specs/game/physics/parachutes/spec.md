@@ -55,11 +55,17 @@ Spent parachutes cannot be re-deployed.
 
 ### Requirement: Staging activation
 
-Parachutes SHALL be stageable like engines. When `activate_next_stage()` fires, any non-spent, non-deployed parachute in that stage SHALL have `parachute_deployed` set to `true`. This allows parachutes to be placed in staging groups and deployed automatically during the staging sequence.
+Parachutes SHALL be stageable parts. When placed in the editor, parachutes are automatically added to stage 0, the same as engines, decouplers, and fairings. Parachutes appear by name in the staging panel in both editor and flight.
+
+When `activate_next_stage()` fires, any non-spent, non-deployed parachute in that stage SHALL have `parachute_deployed` set to `true`, but only if the vessel is in atmosphere and not landed. If the vessel is in vacuum or landed, staged parachutes are skipped (not deployed, not spent).
+
+### Requirement: Manual cut
+
+A deployed parachute MAY be manually cut via a "Cut" button in the flight part info panel. Cutting SHALL immediately set `parachute_deployed = false`, `parachute_spent = true`, `parachute_deploy_fraction = 0.0`, and `parachute_fully_deployed = false`. The parachute becomes permanently spent and cannot be re-deployed.
 
 ### Requirement: Single-use lifecycle
 
-Parachute state progression SHALL be: Ready -> Deployed -> Spent. Once spent, a parachute cannot be re-deployed. The deploy button SHALL show "Spent" with a disabled state.
+Parachute state progression SHALL be: Ready -> Deployed -> Spent (via auto-retract or manual cut). Once spent, a parachute cannot be re-deployed. The deploy button SHALL show "Spent" with a disabled state.
 
 ## Drag Integration
 
@@ -89,7 +95,7 @@ When clicking a parachute part in flight, the info panel SHALL show:
 - "Deployed Width: X.X m"
 - **Ready state**: "Deploy" button, enabled only when `in_atmosphere && !is_landed`
   - Disabled hover text: "Cannot deploy in vacuum" or "Cannot deploy while landed"
-- **Deployed state**: "Status: Deployed" label
+- **Deployed state**: "Cut" button to manually cut the parachute (marks as spent)
 - **Spent state**: Disabled "Spent" button with hover text "Parachute already used"
 
 ### Requirement: Editor info panel

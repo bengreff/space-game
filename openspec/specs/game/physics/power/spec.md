@@ -60,11 +60,7 @@ Electricity uses dedicated fields on `FlightPart` (`electricity` / `max_electric
 | reactor_am_small | Large | 7x7 | 800 | 800 GW |
 | reactor_am_large | XL | 11x9 | 2500 | 2.5 TW |
 
-**Engine Alternators** (added to existing engines):
-- Tiny engines: 50 W
-- Small engines: 100 W
-- Medium engines: 150 W
-- Large engines: 200 W
+**Engine Alternators**: Chemical engines have `alternator_power: 0.0` (no power generation). Interstellar engines (fusion, antimatter) generate power when active via their `alternator_power` values.
 
 **Pod Power Draw** (added to existing pods):
 - Small Pod: 200 W

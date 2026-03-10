@@ -27,6 +27,7 @@ The `Ship` struct SHALL have a `temperature: f64` field (Kelvin) and a `heat_flu
 The system SHALL define the following constants:
 - `STEFAN_BOLTZMANN = 5.670374419e-8` W/(m^2*K^4)
 - `SUTTON_GRAVES_K = 1.7415e-4` (Sutton-Graves convective heating constant for N₂/O₂ atmosphere, used in both ship-level and per-part heating)
+- `SKIN_THERMAL_MASS_PER_METER = 10.0` kg/m — reference thermal mass per meter of exposed width, modeling the thin skin layer that absorbs convective heat
 - `default_heat_tolerance() = 1000.0` K (used as fallback for ship-level heat fraction display)
 - `AMBIENT_TEMPERATURE = 300.0` K
 
@@ -97,7 +98,7 @@ Fairing-shielded parts SHALL have their exposed area set to 0.0, receiving zero 
 
 ### Requirement: Per-part heat input (Sutton-Graves)
 
-Heat flux SHALL use the Sutton-Graves convective heating correlation: `q_flux = K * sqrt(ρ) * V³`, where `K = 1.7415e-4` (the Sutton-Graves constant for N₂/O₂ atmosphere). Total heat input per part: `q_in = SUTTON_GRAVES_K * sqrt(density) * airspeed^3 * exposed_area`, where `exposed_area = exposed_width * 0.5` (depth approximation using GRID_SQUARE_SIZE).
+Heat flux SHALL use the Sutton-Graves convective heating correlation: `q_flux = K * sqrt(ρ) * V³`, where `K = 1.7415e-4` (the Sutton-Graves constant for N₂/O₂ atmosphere). Total heat input per part: `q_in = SUTTON_GRAVES_K * sqrt(density) * airspeed^3 * exposed_width`. The exposed width is the part's perpendicular cross-section minus any occluded intervals (no depth factor).
 
 ### Requirement: Per-part radiative cooling (net radiation)
 
@@ -105,7 +106,7 @@ Heat output per part SHALL use the net radiation formula: `q_out = emissivity * 
 
 ### Requirement: Per-part temperature update
 
-Temperature update per part: `dT = (q_in - q_out) / (mass_kg * specific_heat) * dt`. Temperature SHALL be clamped to a minimum of 300.0 K.
+Temperature update per part: `dT = (q_in - q_out) / (thermal_mass_kg * specific_heat) * dt`, where `thermal_mass_kg = part_width * SKIN_THERMAL_MASS_PER_METER`. This uses width-proportional thermal mass (modeling the thin skin layer) instead of total part mass, so all exposed parts heat at approximately the same rate regardless of size. Temperature SHALL be clamped to a minimum of 300.0 K.
 
 ### Requirement: No-atmosphere cooling
 

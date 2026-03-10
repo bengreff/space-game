@@ -1040,13 +1040,31 @@ fn render_flight_frame(
                 let parent_soi = game.solar_system.bodies[seg.parent_idx].soi_radius;
                 let parent_mass = game.solar_system.bodies[seg.parent_idx].effective_mass_at(seg.orbit.semi_major_axis);
                 let alpha = if i == 0 { 0.7 } else { 0.4 };
+                // For the first segment, recompute true anomaly from the ship's
+                // current position each frame so the orbit line trims smoothly
+                // instead of jumping when the cached trajectory refreshes.
+                let start_true_anomaly = if i == 0 {
+                    let rx = game.flight.ship.rel_position[0];
+                    let ry = game.flight.ship.rel_position[1];
+                    let pos_angle = ry.atan2(rx);
+                    let mut ta = pos_angle - seg.orbit.argument_of_periapsis;
+                    if seg.orbit.eccentricity < 1.0 {
+                        ta = ta.rem_euclid(std::f64::consts::TAU);
+                    } else {
+                        while ta > std::f64::consts::PI { ta -= std::f64::consts::TAU; }
+                        while ta < -std::f64::consts::PI { ta += std::f64::consts::TAU; }
+                    }
+                    ta
+                } else {
+                    seg.start_true_anomaly
+                };
                 OrbitSegmentData {
                     parent_x: parent_pos[0] * SCALE,
                     parent_y: parent_pos[1] * SCALE,
                     semi_major_axis: seg.orbit.semi_major_axis * SCALE * BODY_SCALE,
                     eccentricity: seg.orbit.eccentricity,
                     argument_of_periapsis: seg.orbit.argument_of_periapsis,
-                    start_true_anomaly: seg.start_true_anomaly,
+                    start_true_anomaly,
                     end_true_anomaly: seg.end_true_anomaly,
                     color: [0.9, 0.2, 0.2, alpha],
                     is_first_segment: i == 0,
@@ -1576,6 +1594,8 @@ fn render_flight_frame(
     // Compute closest approach marker to navigation target
     render_state.closest_approach_world_pos = None;
     render_state.closest_approach_marker = None;
+    render_state.target_closest_approach_world_pos = None;
+    render_state.target_closest_approach_marker = None;
     if let (Some(target), Some(ref traj)) = (render_state.selected_target, &patched_traj_raw) {
         // Determine which SOI the target is in
         let target_soi_parent = match target {
@@ -1705,19 +1725,16 @@ fn render_flight_frame(
 
                 // Convert best point to render coordinates
                 if best_dist < f64::MAX {
-                    let best_ta = seg.start_true_anomaly + best_t * (end_ta - seg.start_true_anomaly);
-                    let denom = 1.0 + e * best_ta.cos();
-                    if denom > 0.001 {
-                        let r = p / denom;
-                        if r > 0.0 && r.is_finite() {
-                            let angle = best_ta + arg_peri;
-                            let rel_x = r * angle.cos();
-                            let rel_y = r * angle.sin();
-                            let parent_scaled = scaled_positions[seg.parent_idx];
-                            let world_x = parent_scaled[0] * SCALE + rel_x * SCALE * BODY_SCALE;
-                            let world_y = parent_scaled[1] * SCALE + rel_y * SCALE * BODY_SCALE;
-                            render_state.closest_approach_world_pos = Some(([world_x, world_y], best_dist));
-                        }
+                    if let Some((ship_pos, target_pos)) = compute_positions(best_t) {
+                        let parent_scaled = scaled_positions[seg.parent_idx];
+                        // Ship marker
+                        let world_x = parent_scaled[0] * SCALE + ship_pos[0] * SCALE * BODY_SCALE;
+                        let world_y = parent_scaled[1] * SCALE + ship_pos[1] * SCALE * BODY_SCALE;
+                        render_state.closest_approach_world_pos = Some(([world_x, world_y], best_dist));
+                        // Target marker
+                        let tgt_world_x = parent_scaled[0] * SCALE + target_pos[0] * SCALE * BODY_SCALE;
+                        let tgt_world_y = parent_scaled[1] * SCALE + target_pos[1] * SCALE * BODY_SCALE;
+                        render_state.target_closest_approach_world_pos = Some(([tgt_world_x, tgt_world_y], best_dist));
                     }
                 }
             }
@@ -2133,6 +2150,22 @@ fn render_flight_frame(
                 && !vessel.parts[part_idx].parachute_deployed
             {
                 vessel.parts[part_idx].parachute_deployed = true;
+            }
+        }
+    }
+
+    // Process parachute cut request from part info popup
+    if let Some(part_idx) = render_state.parachute_cut_request.take() {
+        if let Some(ref mut vessel) = game.flight.vessel {
+            if part_idx < vessel.parts.len()
+                && vessel.parts[part_idx].is_parachute
+                && vessel.parts[part_idx].parachute_deployed
+                && !vessel.parts[part_idx].parachute_spent
+            {
+                vessel.parts[part_idx].parachute_deployed = false;
+                vessel.parts[part_idx].parachute_spent = true;
+                vessel.parts[part_idx].parachute_deploy_fraction = 0.0;
+                vessel.parts[part_idx].parachute_fully_deployed = false;
             }
         }
     }
@@ -3458,8 +3491,10 @@ fn handle_flight_keyboard(
         match named_key {
             winit::keyboard::NamedKey::Space => {
                 if pressed {
+                    let in_atmo = game.flight.ship.in_atmosphere(&game.solar_system);
+                    let is_landed = matches!(game.flight.ship.state, ShipState::Landed { .. });
                     if let Some(ref mut vessel) = game.flight.vessel {
-                        vessel.activate_next_stage(&game.part_definitions);
+                        vessel.activate_next_stage(&game.part_definitions, in_atmo, is_landed);
                     }
                     handle_post_decouple(game);
                 }

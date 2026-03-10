@@ -122,3 +122,31 @@
 - [ ] Visual test: power shows 0W when retracted, ramps with deploy
 - [ ] Visual test: mirror panels sync deploy state
 - [ ] Visual test: click hitbox matches retracted panel size
+
+---
+
+# Porkchop Plot for Lambert Transfer Planner
+
+## Implementation
+- [x] Step 1: Add `PorkchopPoint` and `PorkchopGrid` structs to `src/render/types.rs`
+- [x] Step 2: Implement `compute_porkchop_grid()` in `src/ship/transfer.rs` (50x40 grid, log-scale TOF axis)
+- [x] Step 3: Replace Lambert sliders with painted 2D porkchop plot in `src/render/state.rs` (HSV color, hover/click interaction)
+- [x] Step 4: Wire up grid computation and selected-point evaluation in `src/main.rs`
+- [x] Step 5: Build verification — compiles clean
+- [x] Step 6: Spec update — `openspec/specs/game/orbits/transfer_planner/spec.md`
+
+## Files Changed
+- `src/render/types.rs` — `PorkchopPoint`, `PorkchopGrid` structs
+- `src/render/mod.rs` — re-export `PorkchopPoint`, `PorkchopGrid`
+- `src/ship/transfer.rs` — `compute_porkchop_grid()` function
+- `src/render/state.rs` — porkchop plot UI (replaces sliders), `hsv_to_rgb()` helper, new state fields
+- `src/main.rs` — grid computation on target change, selected-point evaluation via `compute_interplanetary()`
+
+## Verification
+- [x] `cargo build` — compiles clean
+- [ ] Visual test: porkchop plot renders with green-to-red gradient when Lambert target selected
+- [ ] Visual test: hover highlights cell and shows transfer info below
+- [ ] Visual test: click locks selection
+- [ ] Visual test: default selection is lowest-dv point (white circle marker)
+- [ ] Visual test: "Create Node" creates correct maneuver node
+- [ ] Visual test: changing target recomputes grid

@@ -157,12 +157,15 @@ pub struct RenderState {
     pub fairing_deploy_request: Option<usize>,  // part_index to deploy fairing
     pub solar_deploy_request: Option<(usize, bool)>,  // (part_index, deploy)
     pub parachute_deploy_request: Option<usize>,  // part_index to deploy parachute
+    pub parachute_cut_request: Option<usize>,     // part_index to cut deployed parachute
     pub ship_in_atmosphere: bool,  // Whether the active vessel is in atmosphere
     pub ship_is_landed: bool,      // Whether the active vessel is landed
     pub ap_markers: Vec<([f64; 2], f64)>, // Apoapsis markers: (world pos relative to camera, altitude)
     pub pe_markers: Vec<([f64; 2], f64)>, // Periapsis markers: (world pos relative to camera, altitude)
     pub closest_approach_world_pos: Option<([f64; 2], f64)>, // (render world pos, distance meters) - set by main.rs
     pub closest_approach_marker: Option<([f64; 2], f64)>, // (camera-relative pos, distance meters) - for egui hover
+    pub target_closest_approach_world_pos: Option<([f64; 2], f64)>, // Target's position at closest approach
+    pub target_closest_approach_marker: Option<([f64; 2], f64)>, // Camera-relative for egui hover
     // Simulation time (updated each frame from main.rs)
     pub simulation_time: f64,
     // Maneuver node state
@@ -529,12 +532,15 @@ impl RenderState {
             fairing_deploy_request: None,
             solar_deploy_request: None,
             parachute_deploy_request: None,
+            parachute_cut_request: None,
             ship_in_atmosphere: false,
             ship_is_landed: false,
             ap_markers: Vec::new(),
             pe_markers: Vec::new(),
             closest_approach_world_pos: None,
             closest_approach_marker: None,
+            target_closest_approach_world_pos: None,
+            target_closest_approach_marker: None,
             simulation_time: 0.0,
             pending_orbit_click: None,
             selected_maneuver_node: None,
@@ -744,6 +750,7 @@ impl RenderState {
         let mut fairing_deploy_req: Option<usize> = None;
         let mut solar_deploy_req: Option<(usize, bool)> = None;
         let mut parachute_deploy_req: Option<usize> = None;
+        let mut parachute_cut_req: Option<usize> = None;
         let ship_in_atmosphere = self.ship_in_atmosphere;
         let ship_is_landed = self.ship_is_landed;
         let mut staging_reorder_req: Option<Vec<Vec<usize>>> = None;
@@ -1217,6 +1224,34 @@ impl RenderState {
                     "CA",
                     egui::FontId::proportional(11.0),
                     egui::Color32::from_rgb(255, 255, 0), // Yellow
+                );
+
+                if is_hovered {
+                    marker_painter.text(
+                        egui::pos2(screen_x, screen_y + 14.0),
+                        egui::Align2::CENTER_TOP,
+                        &format!("Closest Approach: {}", format_altitude(*distance)),
+                        egui::FontId::proportional(10.0),
+                        egui::Color32::from_rgb(255, 255, 0),
+                    );
+                }
+            }
+
+            // Draw target closest approach marker label
+            if let Some((pos, distance)) = &self.target_closest_approach_marker {
+                let (screen_x, screen_y) = world_to_screen(*pos);
+                let marker_screen_pos = egui::pos2(screen_x, screen_y);
+
+                let is_hovered = mouse_pos.map_or(false, |mp| {
+                    (mp - marker_screen_pos).length() < hover_radius
+                });
+
+                marker_painter.text(
+                    egui::pos2(screen_x, screen_y - 12.0),
+                    egui::Align2::CENTER_BOTTOM,
+                    "CA",
+                    egui::FontId::proportional(11.0),
+                    egui::Color32::from_rgb(255, 255, 0),
                 );
 
                 if is_hovered {
@@ -2130,7 +2165,9 @@ impl RenderState {
                                     let btn = ui.add_enabled(false, egui::Button::new("Spent"));
                                     btn.on_disabled_hover_text("Parachute already used");
                                 } else if part.parachute_deployed {
-                                    ui.label("Status: Deployed");
+                                    if ui.button("Cut").clicked() {
+                                        parachute_cut_req = Some(part.part_index);
+                                    }
                                 } else {
                                     let can_deploy = ship_in_atmosphere && !ship_is_landed;
                                     let btn = ui.add_enabled(can_deploy, egui::Button::new("Deploy"));
@@ -2661,6 +2698,9 @@ impl RenderState {
         }
         if parachute_deploy_req.is_some() {
             self.parachute_deploy_request = parachute_deploy_req;
+        }
+        if parachute_cut_req.is_some() {
+            self.parachute_cut_request = parachute_cut_req;
         }
         // Store staging reorder request for main.rs to process
         if staging_reorder_req.is_some() {
@@ -3481,6 +3521,29 @@ impl RenderState {
                         all_indices.push(ca_base + 1 + (i + 1) % marker_segments);
                     }
                     self.closest_approach_marker = Some(([ca_x, ca_y], dist));
+                }
+
+                // Draw target closest approach marker (yellow dot at target's position)
+                if let Some((world_pos, dist)) = self.target_closest_approach_world_pos {
+                    let tca_x = world_pos[0] - cam_x - off_x;
+                    let tca_y = world_pos[1] - cam_y - off_y;
+                    let tca_color = [1.0, 1.0, 0.0, 0.9_f32];
+
+                    let tca_base = all_vertices.len() as u32;
+                    all_vertices.push(Vertex::new([tca_x as f32, tca_y as f32], tca_color));
+                    for i in 0..marker_segments {
+                        let angle = (i as f64 / marker_segments as f64) * std::f64::consts::TAU;
+                        all_vertices.push(Vertex::new([
+                            (tca_x + marker_radius * angle.cos()) as f32,
+                            (tca_y + marker_radius * angle.sin()) as f32,
+                        ], tca_color));
+                    }
+                    for i in 0..marker_segments {
+                        all_indices.push(tca_base);
+                        all_indices.push(tca_base + 1 + i);
+                        all_indices.push(tca_base + 1 + (i + 1) % marker_segments);
+                    }
+                    self.target_closest_approach_marker = Some(([tca_x, tca_y], dist));
                 }
             }
         }

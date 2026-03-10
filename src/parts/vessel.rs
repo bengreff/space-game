@@ -34,6 +34,8 @@ pub struct FlightVessel {
     pub last_decouple_force: f64,
 }
 
+fn default_rcs_torque_multiplier() -> f64 { 1.0 }
+
 /// A part in flight
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlightPart {
@@ -65,6 +67,7 @@ pub struct FlightPart {
 
     // RCS state (if this is an RCS thruster)
     pub rcs_thrust: f64,         // kN (0 if not an RCS part)
+    #[serde(default = "default_rcs_torque_multiplier")]
     pub rcs_torque_multiplier: f64, // Multiplier for rotational torque (default 1.0)
     pub rcs_isp: f64,            // seconds
     pub rcs_mass_flow_rate: f64, // kg/s at full thrust
@@ -1839,6 +1842,12 @@ impl FlightVessel {
     /// Sutton-Graves convective heating constant for N₂/O₂ atmosphere
     const SUTTON_GRAVES_K: f64 = 1.7415e-4;
 
+    /// Reference thermal mass per meter of exposed width (kg/m).
+    /// Models the thin skin layer that absorbs convective heat.
+    /// At orbital velocity reentry (~7800 m/s, 80km altitude), gives ~39 K/s
+    /// heating rate — destroying 1000K-tolerance parts in ~18 seconds.
+    const SKIN_THERMAL_MASS_PER_METER: f64 = 10.0;
+
     /// Update per-part temperatures from aerodynamic heating and radiative cooling.
     /// `airspeed_dir_local` is the unit vector of airspeed in vessel-local coordinates
     /// (i.e., already rotated by -vessel_rotation).
@@ -1861,9 +1870,9 @@ impl FlightVessel {
                 if part.temperature > 300.0 {
                     let surface_area = 2.0 * (def.width() + def.height());
                     let q_out = def.emissivity * Self::STEFAN_BOLTZMANN * (part.temperature.powi(4) - 300.0_f64.powi(4)) * surface_area;
-                    let mass_kg = (def.mass + part.resources.values().sum::<f64>() * 0.001) * 1000.0;
-                    if mass_kg > 0.0 {
-                        let d_temp = q_out / (mass_kg * def.specific_heat) * dt;
+                    let thermal_mass_kg = def.width() * Self::SKIN_THERMAL_MASS_PER_METER;
+                    if thermal_mass_kg > 0.0 {
+                        let d_temp = q_out / (thermal_mass_kg * def.specific_heat) * dt;
                         part.temperature = (part.temperature - d_temp).max(300.0);
                     }
                 }
@@ -2030,22 +2039,22 @@ impl FlightVessel {
                 None => continue,
             };
 
-            // Exposed area for heating (zero if fairing-shielded)
-            let exposed_area = if fairing_shielded.contains(&proj.idx) {
+            // Exposed width for heating (zero if fairing-shielded)
+            let exposed_w = if fairing_shielded.contains(&proj.idx) {
                 0.0
             } else {
-                exposed_width * 0.5 // depth approximation (GRID_SQUARE_SIZE)
+                exposed_width
             };
 
-            // Sutton-Graves heat input: q_in = K * sqrt(density) * airspeed^3 * exposed_area
-            let q_in = Self::SUTTON_GRAVES_K * density.sqrt() * airspeed.powi(3) * exposed_area;
+            // Sutton-Graves heat input: q_in = K * sqrt(density) * airspeed^3 * exposed_width
+            let q_in = Self::SUTTON_GRAVES_K * density.sqrt() * airspeed.powi(3) * exposed_w;
 
             // Radiative cooling (net radiation): q_out = emissivity * sigma * (T^4 - T_ambient^4) * surface_area
             let q_out = def.emissivity * Self::STEFAN_BOLTZMANN * (part.temperature.powi(4) - 300.0_f64.powi(4)) * proj.surface_area;
 
-            let mass_kg = (def.mass + part.resources.values().sum::<f64>() * 0.001) * 1000.0;
-            if mass_kg > 0.0 {
-                let d_temp = (q_in - q_out) / (mass_kg * def.specific_heat) * dt;
+            let thermal_mass_kg = def.width() * Self::SKIN_THERMAL_MASS_PER_METER;
+            if thermal_mass_kg > 0.0 {
+                let d_temp = (q_in - q_out) / (thermal_mass_kg * def.specific_heat) * dt;
                 self.parts[proj.idx].temperature = (self.parts[proj.idx].temperature + d_temp).max(300.0);
             }
 
@@ -2655,7 +2664,7 @@ impl FlightVessel {
     }
 
     /// Activate next stage (enables engines and fires decouplers in that stage)
-    pub fn activate_next_stage(&mut self, part_defs: &PartDefinitions) -> bool {
+    pub fn activate_next_stage(&mut self, part_defs: &PartDefinitions, in_atmosphere: bool, is_landed: bool) -> bool {
         if self.current_stage >= self.stages.len() {
             return false;
         }
@@ -2673,10 +2682,12 @@ impl FlightVessel {
                 self.parts[part_idx].engine_enabled = true;
             }
 
-            // Deploy parachutes in this stage
+            // Deploy parachutes in this stage (only if in atmosphere and not landed)
             if self.parts[part_idx].is_parachute
                 && !self.parts[part_idx].parachute_spent
                 && !self.parts[part_idx].parachute_deployed
+                && in_atmosphere
+                && !is_landed
             {
                 self.parts[part_idx].parachute_deployed = true;
             }

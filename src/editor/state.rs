@@ -665,7 +665,8 @@ impl EditorState {
         let is_engine = def.map(|d| d.engine.is_some()).unwrap_or(false);
         let is_decoupler = def.map(|d| d.decoupler.is_some()).unwrap_or(false);
         let is_fairing = def.map(|d| d.fairing.is_some()).unwrap_or(false);
-        let needs_staging = is_engine || is_decoupler || is_fairing;
+        let is_parachute = def.map(|d| d.parachute.is_some()).unwrap_or(false);
+        let needs_staging = is_engine || is_decoupler || is_fairing || is_parachute;
 
         let mut part = PlacedPart::new(id, def_id.clone(), position);
         part.rotation = self.ghost_rotation;

@@ -6,7 +6,7 @@ Trajectory prediction across SOI boundaries, SOI transition detection, and frame
 
 ### Requirement: Maximum patched conic segments
 
-The system SHALL predict a maximum of `MAX_PATCHED_CONICS = 2` SOI changes beyond the current orbit, producing up to 3 trajectory segments (e.g., Earth orbit → Sun transfer → Mars intercept, or Earth orbit → Moon flyby → Earth return).
+The system SHALL predict a maximum of `MAX_PATCHED_CONICS = 3` SOI changes beyond the current orbit, producing up to 4 trajectory segments (e.g., Earth orbit → Sun transfer → Mars intercept → Mars orbit, or Earth orbit → Moon flyby → Earth return → Moon re-encounter).
 
 ### Requirement: Trajectory caching
 
@@ -191,7 +191,8 @@ The closest approach point SHALL be found by:
 
 ### Requirement: Closest approach rendering
 
-The closest approach marker SHALL be:
-- A yellow (`[1.0, 1.0, 0.0, 0.9]`) filled circle using a 16-segment triangle fan, same size as Ap/Pe markers
-- Labeled "CA" in yellow text above the dot (11pt)
-- On hover (20px radius): display "Closest Approach: {distance}" below the dot using standard altitude formatting
+Two closest approach markers SHALL be displayed:
+1. **Ship marker**: Yellow (`[1.0, 1.0, 0.0, 0.9]`) filled circle at the ship's position at closest approach time
+2. **Target marker**: Yellow (`[1.0, 1.0, 0.0, 0.9]`) filled circle at the target's position at closest approach time
+
+Both markers use a 16-segment triangle fan, same size as Ap/Pe markers. Both are labeled "CA" in yellow text above the dot (11pt). On hover (20px radius): display "Closest Approach: {distance}" below the dot using standard altitude formatting. Both markers show the same distance value.

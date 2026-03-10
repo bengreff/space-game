@@ -138,6 +138,9 @@ The ship's orbit line SHALL only be visible when `ship_pixels < 5.0` (map view).
 #### Scenario: Elliptical orbit rendering
 - Parametrize using eccentric anomaly, segment count = `max(16, floor((|angle_span| / TAU) * 512))`
 
+#### Scenario: Smooth orbit trimming for first segment
+- The first segment's `start_true_anomaly` SHALL be recomputed each frame from the ship's current `rel_position` and the cached segment's `argument_of_periapsis`, rather than using the stale value from the cached trajectory. This ensures the orbit line trims smoothly as the ship moves, instead of jumping when the trajectory cache refreshes (every ~30 frames). True anomaly normalization SHALL match elliptical (`rem_euclid(TAU)`) vs hyperbolic (`(-PI, PI)` range) conventions.
+
 #### Scenario: Hyperbolic trajectory rendering
 - 1024 sample points, skip points within `HYPERBOLIC_SKIP_MARGIN = 0.005` rad of asymptote
 

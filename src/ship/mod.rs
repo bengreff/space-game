@@ -80,7 +80,7 @@ pub const AMBIENT_TEMPERATURE: f64 = 300.0;
 const SUTTON_GRAVES_K: f64 = 1.7415e-4;
 
 /// Maximum number of SOI changes to predict in patched conics
-pub const MAX_PATCHED_CONICS: usize = 2;
+pub const MAX_PATCHED_CONICS: usize = 3;
 
 /// Number of samples for SOI intersection detection
 pub(crate) const SOI_INTERSECTION_SAMPLES: usize = 200;
