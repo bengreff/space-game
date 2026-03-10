@@ -513,9 +513,17 @@ fn decode_sprites_parallel(
     let kind = kind.to_string();
     paths.into_par_iter()
         .filter_map(|(stem, path)| {
-            match image::open(&path) {
+            let mut reader = match image::ImageReader::open(&path) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("Failed to load sprite {}: {}", path.display(), e);
+                    return None;
+                }
+            };
+            reader.no_limits();
+            match reader.decode() {
                 Ok(img) => {
-                    let rgba = img.into_rgba8();
+                    let rgba: image::RgbaImage = img.into_rgba8();
                     let (w, h) = rgba.dimensions();
                     Some(SpriteEntry {
                         id: stem,
@@ -526,7 +534,7 @@ fn decode_sprites_parallel(
                     })
                 }
                 Err(e) => {
-                    log::warn!("Failed to load sprite {}: {}", path.display(), e);
+                    log::warn!("Failed to decode sprite {}: {}", path.display(), e);
                     None
                 }
             }
@@ -566,9 +574,17 @@ fn decode_plume_sprites_parallel(
 ) -> Vec<SpriteEntry> {
     paths.into_par_iter()
         .filter_map(|(stem, path, kind)| {
-            match image::open(&path) {
+            let mut reader = match image::ImageReader::open(&path) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("Failed to load plume sprite {}: {}", path.display(), e);
+                    return None;
+                }
+            };
+            reader.no_limits();
+            match reader.decode() {
                 Ok(img) => {
-                    let rgba = img.into_rgba8();
+                    let rgba: image::RgbaImage = img.into_rgba8();
                     let (w, h) = rgba.dimensions();
                     Some(SpriteEntry {
                         id: stem,
@@ -579,7 +595,7 @@ fn decode_plume_sprites_parallel(
                     })
                 }
                 Err(e) => {
-                    log::warn!("Failed to load plume sprite {}: {}", path.display(), e);
+                    log::warn!("Failed to decode plume sprite {}: {}", path.display(), e);
                     None
                 }
             }

@@ -59,6 +59,10 @@ pub struct FlightPart {
     pub engine_isp_asl: f64,
     pub is_throttleable: bool,
     pub propellant_type: Option<Propellant>,
+    #[serde(default)]
+    pub secondary_propellant_type: Option<Propellant>,
+    #[serde(default)]
+    pub secondary_fuel_fraction: f64, // fraction of mass flow that is secondary fuel
     pub mass_flow_rate: f64, // kg/s total (fuel+oxidizer) at full vacuum thrust
 
     // Gimbal state (if engine has gimbal)
@@ -206,6 +210,8 @@ impl FlightVessel {
                 engine_isp_asl: 0.0,
                 is_throttleable: true,
                 propellant_type: None,
+                secondary_propellant_type: None,
+                secondary_fuel_fraction: 0.0,
                 mass_flow_rate: 0.0,
                 gimbal_angle: 0.0,
                 gimbal_range_rad: 0.0,
@@ -245,6 +251,8 @@ impl FlightVessel {
                 flight_part.engine_isp_asl = engine.isp_asl;
                 flight_part.is_throttleable = engine.throttleable;
                 flight_part.propellant_type = Some(engine.propellant);
+                flight_part.secondary_propellant_type = engine.secondary_propellant;
+                flight_part.secondary_fuel_fraction = engine.secondary_fuel_fraction;
                 flight_part.gimbal_range_rad = engine.gimbal_range.to_radians();
                 // m_dot = F / (g0 * Isp), F in Newtons = kN * 1000
                 let g0 = 9.80665;
@@ -500,18 +508,32 @@ impl FlightVessel {
             };
 
             let engine_zone = zones[i];
-            let fuel_available: f64 = self.parts.iter()
-                .enumerate()
-                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == engine_zone)
-                .filter_map(|(_, p)| p.resources.get(fuel_name))
-                .sum();
-            let ox_available: f64 = self.parts.iter()
-                .enumerate()
-                .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == engine_zone)
-                .filter_map(|(_, p)| p.resources.get("oxygen"))
-                .sum();
+            let zone_resource = |name: &str| -> f64 {
+                self.parts.iter()
+                    .enumerate()
+                    .filter(|(j, p)| !p.destroyed && !p.decoupled && zones[*j] == engine_zone)
+                    .filter_map(|(_, p)| p.resources.get(name))
+                    .sum()
+            };
 
-            self.parts[i].engine_active = fuel_available > 0.001 && ox_available > 0.001;
+            let fuel_available = zone_resource(fuel_name);
+            let (ox_per_sq, _) = fuel_type.propellant_per_grid_square();
+            let needs_oxygen = ox_per_sq > 0.0;
+            let ox_ok = !needs_oxygen || zone_resource("oxygen") > 0.001;
+
+            // Check secondary propellant availability
+            let secondary_ok = match self.parts[i].secondary_propellant_type {
+                Some(sec) => {
+                    let sec_fuel_type = sec.fuel_type();
+                    match sec_fuel_type.fuel_resource_name() {
+                        Some(sec_name) => zone_resource(sec_name) > 0.001,
+                        None => false,
+                    }
+                }
+                None => true,
+            };
+
+            self.parts[i].engine_active = fuel_available > 0.001 && ox_ok && secondary_ok;
         }
     }
 
@@ -836,8 +858,16 @@ impl FlightVessel {
         let g0 = 9.80665;
 
         // Phase 1: Collect per-engine fuel demands
-        // (engine_index, fuel_resource_name, ox_needed_kg, fuel_needed_kg, engine_thrust_at_pressure, zone)
-        let mut engine_demands: Vec<(usize, &'static str, f64, f64, f64, usize)> = Vec::new();
+        struct EngineDemand {
+            fuel_name: &'static str,
+            ox_needed: f64,
+            fuel_needed: f64,
+            secondary_fuel_name: Option<&'static str>,
+            secondary_needed: f64,
+            thrust: f64,
+            zone: usize,
+        }
+        let mut engine_demands: Vec<EngineDemand> = Vec::new();
 
         for (i, part) in self.parts.iter().enumerate() {
             if !part.engine_active || part.destroyed || part.decoupled {
@@ -875,14 +905,30 @@ impl FlightVessel {
             let mass_flow = (engine_thrust * 1000.0) / (g0 * engine_isp);
             let total_consumption = mass_flow * self.throttle * dt;
 
-            engine_demands.push((
-                i,
+            // Split between primary and secondary propellant
+            let primary_fraction = 1.0 - part.secondary_fuel_fraction;
+            let primary_consumption = total_consumption * primary_fraction;
+
+            let (secondary_fuel_name, secondary_needed) = match part.secondary_propellant_type {
+                Some(sec) => {
+                    let sec_ft = sec.fuel_type();
+                    match sec_ft.fuel_resource_name() {
+                        Some(name) => (Some(name), total_consumption * part.secondary_fuel_fraction),
+                        None => (None, 0.0),
+                    }
+                }
+                None => (None, 0.0),
+            };
+
+            engine_demands.push(EngineDemand {
                 fuel_name,
-                total_consumption * ox_ratio,
-                total_consumption * fuel_ratio,
-                engine_thrust,
-                zones[i],
-            ));
+                ox_needed: primary_consumption * ox_ratio,
+                fuel_needed: primary_consumption * fuel_ratio,
+                secondary_fuel_name,
+                secondary_needed,
+                thrust: engine_thrust,
+                zone: zones[i],
+            });
         }
 
         if engine_demands.is_empty() {
@@ -894,10 +940,15 @@ impl FlightVessel {
         let mut zone_fuel_drains: HashMap<(usize, &str), f64> = HashMap::new();
         let mut total_thrust = 0.0;
 
-        for &(_, fuel_name, ox_needed, fuel_needed, engine_thrust, zone) in &engine_demands {
-            *zone_ox_drains.entry(zone).or_insert(0.0) += ox_needed;
-            *zone_fuel_drains.entry((zone, fuel_name)).or_insert(0.0) += fuel_needed;
-            total_thrust += engine_thrust * self.throttle;
+        for demand in &engine_demands {
+            if demand.ox_needed > 0.0 {
+                *zone_ox_drains.entry(demand.zone).or_insert(0.0) += demand.ox_needed;
+            }
+            *zone_fuel_drains.entry((demand.zone, demand.fuel_name)).or_insert(0.0) += demand.fuel_needed;
+            if let Some(sec_name) = demand.secondary_fuel_name {
+                *zone_fuel_drains.entry((demand.zone, sec_name)).or_insert(0.0) += demand.secondary_needed;
+            }
+            total_thrust += demand.thrust * self.throttle;
         }
 
         // Phase 3: Drain resources from tanks within each zone,
@@ -2917,6 +2968,8 @@ pub fn create_default_vessel(
             engine_isp_asl: 250.0,
             is_throttleable: true,
             propellant_type: None,
+            secondary_propellant_type: None,
+            secondary_fuel_fraction: 0.0,
             mass_flow_rate: 0.0,
             gimbal_angle: 0.0,
             gimbal_range_rad: 0.0,

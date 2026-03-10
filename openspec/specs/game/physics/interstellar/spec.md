@@ -22,6 +22,10 @@ Interstellar engine sprites SHALL be included in the sprite atlas (not excluded)
 
 `Propellant` enum SHALL include interstellar variants: `FusionFuel` (D+He3), `Antimatter`, `NuclearPulse` (Orion pulse units). Each maps to a corresponding `FuelType` variant.
 
+### Requirement: Dual propellant engines
+
+`EngineData` SHALL support optional `secondary_propellant: Option<Propellant>` and `secondary_fuel_fraction: f64` fields. The AM-Cat Fusion engine uses FusionFuel as primary propellant with Antimatter as secondary catalyst (0.24% of mass flow). The editor displays both propellant types (e.g. "D+He3 + Antimatter") and mass flow breakdown shows consumption of each.
+
 ### Requirement: Fuel types
 
 `FuelType` enum SHALL include interstellar variants with `propellant_per_grid_square()` values:
@@ -30,6 +34,14 @@ Interstellar engine sprites SHALL be included in the sprite atlas (not excluded)
 - `NuclearPulse`: (0.0, 500.0) — heavy fissile pulse units
 
 Fuel resource names: `fusion_fuel`, `antimatter`, `nuclear_pulse`.
+
+### Requirement: Fusion fuel in standard tanks
+
+`FuelType::all()` SHALL include `FusionFuel`, making D+He3 selectable in the editor fuel type picker for standard fuel tanks.
+
+### Requirement: Pure hydrogen tank capacity
+
+`PureHydrogen` tanks SHALL have capacity (0.0, 35.0) kg per grid square — higher than the LH2 portion of Hydrolox tanks (25 kg/sq) because the full tank volume is available for hydrogen with no LOX taking up space.
 
 ### Requirement: ReactorData
 
@@ -65,7 +77,7 @@ All interstellar engines are vacuum-only (`thrust_asl: 0`, `isp_asl: 0`), `shape
 
 | ID | Name | Grid | Mass (t) | Thrust (kN) | Isp (s) | Propellant |
 |----|------|------|----------|-------------|---------|------------|
-| engine_amcat_fusion | AM-Cat Fusion | 22x16 | 2000 | 4,000 | 3,059,148 | Antimatter |
+| engine_amcat_fusion | AM-Cat Fusion | 22x16 | 2000 | 4,000 | 3,059,148 | FusionFuel + Antimatter (0.24%) |
 | engine_am_torch | Antimatter Torch | 8x12 | 800 | 2,000 | 15,295,740 | Antimatter |
 | engine_gamma_conversion | Gamma Converter | 34x26 | 1800 | 1,300 | 26,002,758 | Antimatter |
 

@@ -171,7 +171,7 @@ The info panel SHALL display: name, description, size, mass (tonnes and kg), cos
 
 ### Requirement: Engine info
 
-For engines, the info panel SHALL display: propellant type, thrust (vacuum and sea level), specific impulse (vacuum and sea level), gimbal range (or "Fixed" if 0), throttleable status, and single-engine vacuum TWR on Earth.
+For engines, the info panel SHALL display: propellant type (including secondary propellant if present, e.g. "D+He3 + Antimatter"), thrust (vacuum and sea level), specific impulse (vacuum and sea level), per-component mass flow rates at vacuum (e.g. "LOX: 47.3 kg/s", "RP-1: 18.6 kg/s"), gimbal range (or "Fixed" if 0), throttleable status, and single-engine vacuum TWR on Earth. Mass flow rates are formatted as g/s for very small flows, kg/s for normal, t/s for huge.
 
 ### Requirement: Tank info for palette selection
 
@@ -179,7 +179,7 @@ For tanks selected in the palette, the info panel SHALL display: dry mass, grid 
 
 ### Requirement: Tank info for placed parts
 
-For placed tanks, the info panel SHALL additionally display: fuel type selector buttons, draggable fuel bars showing current and max amounts, Fill/Empty convenience buttons, and dry/propellant/total mass breakdown. Selecting a non-Empty fuel type SHALL automatically set `fill_fraction` to 1.0. Selecting Empty SHALL set `fill_fraction` to 0.0.
+For placed tanks, the info panel SHALL additionally display: fuel type selector buttons, draggable fuel bars showing current and max amounts, Fill/Empty convenience buttons, and dry/propellant/total mass breakdown. Selecting a non-Empty fuel type SHALL automatically set `fill_fraction` to 1.0. Selecting Empty SHALL set `fill_fraction` to 0.0. Available fuel types for standard tanks: Empty, LOX/RP-1, LOX/CH4, LOX/LH2, Monopropellant, LH2 (pure), Xenon, D+He3 (fusion fuel).
 
 ### Requirement: Draggable tank fill bars
 

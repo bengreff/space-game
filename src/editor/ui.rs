@@ -71,6 +71,21 @@ pub struct BodyInfo {
     pub surface_gravity: f64,
 }
 
+/// Format mass flow rate with appropriate units (g/s, kg/s, t/s)
+fn format_mass_flow(kg_s: f64) -> String {
+    if kg_s >= 1000.0 {
+        format!("{:.2} t/s", kg_s / 1000.0)
+    } else if kg_s >= 0.1 {
+        format!("{:.2} kg/s", kg_s)
+    } else if kg_s >= 0.001 {
+        format!("{:.2} g/s", kg_s * 1000.0)
+    } else if kg_s > 0.0 {
+        format!("{:.3} g/s", kg_s * 1000.0)
+    } else {
+        "0 kg/s".to_string()
+    }
+}
+
 /// Format delta-v for display
 fn format_delta_v(dv: f64) -> String {
     if dv >= 1000.0 {
@@ -548,7 +563,11 @@ pub fn render_editor_ui(
                             ui.separator();
                             ui.heading("Engine Stats");
 
-                            ui.label(format!("Propellant: {}", engine.propellant.display_name()));
+                            if let Some(secondary) = engine.secondary_propellant {
+                                ui.label(format!("Propellant: {} + {}", engine.propellant.display_name(), secondary.display_name()));
+                            } else {
+                                ui.label(format!("Propellant: {}", engine.propellant.display_name()));
+                            }
 
                             ui.label("Thrust:");
                             ui.indent("thrust_indent", |ui| {
@@ -560,6 +579,13 @@ pub fn render_editor_ui(
                             ui.indent("isp_indent", |ui| {
                                 ui.label(format!("Vacuum: {:.0} s", engine.isp_vac));
                                 ui.label(format!("Sea Level: {:.0} s", engine.isp_asl));
+                            });
+
+                            ui.label("Mass Flow (vacuum):");
+                            ui.indent("flow_indent", |ui| {
+                                for (name, rate) in engine.fuel_flows_display() {
+                                    ui.label(format!("{}: {}", name, format_mass_flow(rate)));
+                                }
                             });
 
                             ui.label("Gimbal:");
@@ -668,7 +694,11 @@ pub fn render_editor_ui(
                                 ui.separator();
                                 ui.heading("Engine Stats");
 
-                                ui.label(format!("Propellant: {}", engine.propellant.display_name()));
+                                if let Some(secondary) = engine.secondary_propellant {
+                                    ui.label(format!("Propellant: {} + {}", engine.propellant.display_name(), secondary.display_name()));
+                                } else {
+                                    ui.label(format!("Propellant: {}", engine.propellant.display_name()));
+                                }
 
                                 ui.label("Thrust:");
                                 ui.indent("placed_thrust_indent", |ui| {
@@ -680,6 +710,13 @@ pub fn render_editor_ui(
                                 ui.indent("placed_isp_indent", |ui| {
                                     ui.label(format!("Vacuum: {:.0} s", engine.isp_vac));
                                     ui.label(format!("Sea Level: {:.0} s", engine.isp_asl));
+                                });
+
+                                ui.label("Mass Flow (vacuum):");
+                                ui.indent("placed_flow_indent", |ui| {
+                                    for (name, rate) in engine.fuel_flows_display() {
+                                        ui.label(format!("{}: {}", name, format_mass_flow(rate)));
+                                    }
                                 });
 
                                 ui.label("Gimbal:");

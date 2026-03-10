@@ -11,7 +11,10 @@ Fuel is shared across all tanks within a fuel zone. Zones are computed by flood-
 Non-radial decouplers connect **downward** via normal welding hitbox overlap but connect **upward** only through their adapter target — the closest aligned (same center X, ±0.01 tolerance) tank or pod whose bottom edge is at or above the decoupler's ring top. Ring top = `center_y - hitbox_height/2 + visual_height`. A part is considered "above" if its **center Y** is above ring_top — even if its welding hitbox extends below ring_top, it does not connect to the decoupler. Parts above the ring that are not the adapter target (e.g., fairing bases) have no structural connection through the decoupler. This prevents non-tank/pod parts from bridging across a decoupler in the connectivity graph. Radial decouplers are exempt (they use normal welding hitbox in all directions).
 
 ### Requirement: Engine fuel consumption
-Engines consume fuel proportionally from all available tanks in their zone. Each engine computes its demand per-frame based on mass flow rate, throttle, and dt. Oxygen and fuel are drained separately. Engines without available fuel are deactivated.
+Engines consume fuel proportionally from all available tanks in their zone. Each engine computes its demand per-frame based on mass flow rate, throttle, and dt. Oxygen and fuel are drained separately. Engines without available fuel are deactivated. Oxygen is only required for propellant types that use it (Kerolox, Methalox, Hydrolox); propellants with zero oxidizer ratio (FusionFuel, Antimatter, Hydrogen, Xenon, NuclearPulse) skip the oxygen check.
+
+### Requirement: Dual propellant engines
+Engines MAY have a `secondary_propellant` and `secondary_fuel_fraction` (0.0-1.0). When present, the total mass flow is split: `(1 - fraction)` goes to the primary propellant and `fraction` goes to the secondary. Both fuels must be available in the engine's fuel zone for the engine to be active. The secondary fuel is drained from tanks containing that fuel type using the same zone and priority system as primary fuel. Example: AM-Cat Fusion uses D+He3 (primary, 99.76%) + Antimatter (secondary, 0.24%).
 
 ## Drain Priority (Asparagus/Onion Staging)
 

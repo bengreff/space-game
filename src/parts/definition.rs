@@ -158,6 +158,52 @@ pub struct EngineData {
     pub power_required: f64,    // Watts required to fire (electric propulsion)
     #[serde(default)]
     pub nozzle_offsets: Option<Vec<f64>>,  // X offsets in grid squares for multi-nozzle engines
+    #[serde(default)]
+    pub secondary_propellant: Option<Propellant>,  // Secondary fuel (e.g. antimatter catalyst)
+    #[serde(default)]
+    pub secondary_fuel_fraction: f64,  // Fraction of total mass flow that is secondary fuel (0.0-1.0)
+    #[serde(default)]
+    pub mass_flow_kg_s: Option<f64>,  // Total mass flow at vacuum full throttle (kg/s), auto-computed if absent
+}
+
+impl EngineData {
+    /// Total mass flow at vacuum full throttle (kg/s)
+    pub fn total_mass_flow_kg_s(&self) -> f64 {
+        self.mass_flow_kg_s.unwrap_or_else(|| {
+            if self.isp_vac > 0.0 {
+                (self.thrust_vac * 1000.0) / (9.80665 * self.isp_vac)
+            } else {
+                0.0
+            }
+        })
+    }
+
+    /// Per-component mass flow rates for display: Vec of (display_name, kg/s)
+    pub fn fuel_flows_display(&self) -> Vec<(&'static str, f64)> {
+        let total = self.total_mass_flow_kg_s();
+        let primary_fraction = 1.0 - self.secondary_fuel_fraction;
+        let primary_flow = total * primary_fraction;
+
+        let fuel_type = self.propellant.fuel_type();
+        let (ox_per_sq, fuel_per_sq) = fuel_type.propellant_per_grid_square();
+        let sum = ox_per_sq + fuel_per_sq;
+
+        let mut flows = Vec::new();
+        if sum > 0.0 {
+            if ox_per_sq > 0.0 {
+                flows.push(("LOX", primary_flow * ox_per_sq / sum));
+            }
+            flows.push((fuel_type.fuel_display_name(), primary_flow * fuel_per_sq / sum));
+        } else {
+            flows.push((self.propellant.display_name(), primary_flow));
+        }
+
+        if let Some(secondary) = self.secondary_propellant {
+            flows.push((secondary.display_name(), total * self.secondary_fuel_fraction));
+        }
+
+        flows
+    }
 }
 
 /// Fuel types for tanks
@@ -193,7 +239,7 @@ impl FuelType {
     }
 
     pub fn all() -> &'static [FuelType] {
-        &[FuelType::Empty, FuelType::Rp1, FuelType::Methane, FuelType::Hydrogen, FuelType::Monopropellant, FuelType::PureHydrogen, FuelType::Xenon]
+        &[FuelType::Empty, FuelType::Rp1, FuelType::Methane, FuelType::Hydrogen, FuelType::Monopropellant, FuelType::PureHydrogen, FuelType::Xenon, FuelType::FusionFuel]
     }
 
     /// Get propellant masses per grid square (in kg)
@@ -205,11 +251,27 @@ impl FuelType {
             FuelType::Methane => (270.0, 75.0),
             FuelType::Hydrogen => (155.0, 25.0),
             FuelType::Monopropellant => (0.0, 200.0),
-            FuelType::PureHydrogen => (0.0, 25.0),  // ~70 kg/m³, no oxidizer
+            FuelType::PureHydrogen => (0.0, 35.0),  // ~70 kg/m³, full tank volume (no LOX)
             FuelType::Xenon => (0.0, 400.0),  // ~1600 kg/m³, no oxidizer
             FuelType::FusionFuel => (0.0, 30.0),  // ~120 kg/m³ cryogenic D+He3
             FuelType::Antimatter => (0.0, 5.0),   // mostly containment mass
             FuelType::NuclearPulse => (0.0, 500.0), // heavy fissile pulse units
+        }
+    }
+
+    /// Get the fuel display name (non-oxidizer component)
+    pub fn fuel_display_name(&self) -> &'static str {
+        match self {
+            FuelType::Empty => "None",
+            FuelType::Rp1 => "RP-1",
+            FuelType::Methane => "CH4",
+            FuelType::Hydrogen => "LH2",
+            FuelType::Monopropellant => "Monopropellant",
+            FuelType::PureHydrogen => "LH2",
+            FuelType::Xenon => "Xenon",
+            FuelType::FusionFuel => "D+He3",
+            FuelType::Antimatter => "Antimatter",
+            FuelType::NuclearPulse => "Pulse Units",
         }
     }
 
