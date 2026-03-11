@@ -24,16 +24,21 @@ Each part is assigned a drain priority based on its reachability from the vessel
 ### Requirement: Priority-based draining
 Within each fuel zone, find the minimum priority among tanks that have fuel. Only drain from tanks at that minimum priority level (proportionally among those tanks). When those tanks are empty, the next priority level starts draining. This applies to both oxygen and fuel draining.
 
-### Requirement: Delta-v calculation respects drain priority
-The per-stage delta-v calculation uses the same drain priority system. Only fuel from minimum-priority tanks in engine zones counts as burnable fuel for the Tsiolkovsky equation. After computing a stage's delta-v, only the minimum-priority fuel is zeroed before simulating the next stage.
+### Requirement: Delta-v calculation respects drain priority and propellant types
+The per-stage delta-v calculation tracks fuel **per resource type** (oxygen, rp1, methane, hydrogen, fusion_fuel, antimatter, etc.) rather than as a single pool. Each engine's propellant type determines which resources it demands, using the same O/F ratios and secondary propellant fractions as runtime fuel consumption. An engine only contributes to delta-v if all its required resources are available in its zone. Phase time is `min(available / demand)` across all demanded resources — the first resource to run out limits the burn. Within each fuel zone, drain priority applies per-resource: only minimum-priority tanks for each resource contribute to availability, and after computing a stage's delta-v, resources are drained proportionally at the minimum priority level.
 
 ### Requirement: Asparagus staging behavior
 In a typical asparagus/onion configuration (center tank + radial crossfeed decouplers + side tanks), side tanks drain first while the center tank stays full. When the radial decouplers fire, the empty side tanks are jettisoned. The center tank then provides fuel for the remaining stages.
+
+## Save Compatibility
+
+### Requirement: FlightPart forward-compatible deserialization
+`FlightPart` uses struct-level `#[serde(default)]` so that save files created before new fields were added can still be loaded. A manual `Default` impl provides sensible zero/false/None values for all fields (except `rcs_torque_multiplier` which defaults to `1.0`). When adding new fields to `FlightPart`, add them to the `Default` impl — no per-field serde attributes are needed.
 
 ## Implementation
 - `compute_fuel_zones()`, `compute_drain_priorities()` in `src/parts/vessel.rs`
 - `compute_fuel_zones_simulated()`, `compute_drain_priorities_simulated()` for delta-v calculation
 - `apply_decoupler_adapter_connections()` post-processes adjacency for all connectivity functions
 - `consume_fuel()` Phase 3 uses priorities for proportional draining
-- `calculate_stage_delta_v()` steps 5 and 8 use priorities for burnable fuel computation
+- `calculate_stage_delta_v()` steps 6-11 use per-resource demand/availability with drain priorities (flight) or zone-wide availability (editor)
 - `compute_editor_fuel_zones()` in `src/editor/state.rs` pre-computes adapter targets for editor BFS

@@ -251,9 +251,9 @@ impl FuelType {
             FuelType::Methane => (270.0, 75.0),
             FuelType::Hydrogen => (155.0, 25.0),
             FuelType::Monopropellant => (0.0, 200.0),
-            FuelType::PureHydrogen => (0.0, 35.0),  // ~70 kg/m³, full tank volume (no LOX)
-            FuelType::Xenon => (0.0, 400.0),  // ~1600 kg/m³, no oxidizer
-            FuelType::FusionFuel => (0.0, 30.0),  // ~120 kg/m³ cryogenic D+He3
+            FuelType::PureHydrogen => (0.0, 140.0),  // ~70 kg/m³ LH2, no LOX (FF 80%)
+            FuelType::Xenon => (0.0, 315.0),  // supercritical, high-pressure COPV (FF 90%)
+            FuelType::FusionFuel => (0.0, 158.0),  // D+He3 mix ~79 kg/m³ (FF 82%)
             FuelType::Antimatter => (0.0, 5.0),   // mostly containment mass
             FuelType::NuclearPulse => (0.0, 500.0), // heavy fissile pulse units
         }

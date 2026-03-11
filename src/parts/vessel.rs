@@ -34,16 +34,16 @@ pub struct FlightVessel {
     pub last_decouple_force: f64,
 }
 
-fn default_rcs_torque_multiplier() -> f64 { 1.0 }
-
-/// A part in flight
+/// A part in flight.
+/// Uses struct-level `#[serde(default)]` so old saves missing new fields still load.
+/// When adding fields, ensure the `Default` impl below provides sensible values.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct FlightPart {
     pub definition_id: String,
     pub local_position: [f64; 2],  // Relative to vessel center of mass
     pub rotation: f64,
     pub hitbox_half_extents: [f64; 2],
-    #[serde(default)]
     pub hitbox_y_offset: f64,  // Offset from local_position to hitbox center (engines: top-aligned)
 
     // Resources currently in this part
@@ -59,9 +59,7 @@ pub struct FlightPart {
     pub engine_isp_asl: f64,
     pub is_throttleable: bool,
     pub propellant_type: Option<Propellant>,
-    #[serde(default)]
     pub secondary_propellant_type: Option<Propellant>,
-    #[serde(default)]
     pub secondary_fuel_fraction: f64, // fraction of mass flow that is secondary fuel
     pub mass_flow_rate: f64, // kg/s total (fuel+oxidizer) at full vacuum thrust
 
@@ -71,7 +69,6 @@ pub struct FlightPart {
 
     // RCS state (if this is an RCS thruster)
     pub rcs_thrust: f64,         // kN (0 if not an RCS part)
-    #[serde(default = "default_rcs_torque_multiplier")]
     pub rcs_torque_multiplier: f64, // Multiplier for rotational torque (default 1.0)
     pub rcs_isp: f64,            // seconds
     pub rcs_mass_flow_rate: f64, // kg/s at full thrust
@@ -106,8 +103,57 @@ pub struct FlightPart {
     pub parachute_spent: bool,          // used once, permanently disabled
     pub parachute_deploy_fraction: f64, // 0.0-1.0 animation
     pub parachute_deployed_width_m: f64, // meters (from ParachuteData)
-    #[serde(default)]
     pub parachute_fully_deployed: bool, // true when altitude <= 2000m (full drag)
+}
+
+impl Default for FlightPart {
+    fn default() -> Self {
+        Self {
+            definition_id: String::new(),
+            local_position: [0.0, 0.0],
+            rotation: 0.0,
+            hitbox_half_extents: [0.0, 0.0],
+            hitbox_y_offset: 0.0,
+            resources: HashMap::new(),
+            max_resources: HashMap::new(),
+            engine_active: false,
+            engine_enabled: false,
+            engine_thrust_vac: 0.0,
+            engine_thrust_asl: 0.0,
+            engine_isp_vac: 0.0,
+            engine_isp_asl: 0.0,
+            is_throttleable: false,
+            propellant_type: None,
+            secondary_propellant_type: None,
+            secondary_fuel_fraction: 0.0,
+            mass_flow_rate: 0.0,
+            gimbal_angle: 0.0,
+            gimbal_range_rad: 0.0,
+            rcs_thrust: 0.0,
+            rcs_torque_multiplier: 1.0,
+            rcs_isp: 0.0,
+            rcs_mass_flow_rate: 0.0,
+            destroyed: false,
+            decoupled: false,
+            crossfeed_enabled: false,
+            temperature: 0.0,
+            max_heat_tolerance: 0.0,
+            fairing_shape: None,
+            fairing_half: None,
+            electricity: 0.0,
+            max_electricity: 0.0,
+            is_solar_panel: false,
+            deploy_fraction: 0.0,
+            deploy_target: false,
+            mirror_partner: None,
+            is_parachute: false,
+            parachute_deployed: false,
+            parachute_spent: false,
+            parachute_deploy_fraction: 0.0,
+            parachute_deployed_width_m: 0.0,
+            parachute_fully_deployed: false,
+        }
+    }
 }
 
 impl FlightVessel {
@@ -2314,11 +2360,16 @@ impl FlightVessel {
         let mut decoupled: Vec<bool> = self.parts.iter().map(|p| p.destroyed || p.decoupled).collect();
         let mut engines_enabled: Vec<bool> = vec![false; n];
 
-        // Track remaining fuel per part (in tonnes)
-        let mut fuel_remaining: Vec<f64> = self.parts.iter()
+        // Track remaining resources per part (in kg, matching FlightPart.resources)
+        let mut resources_remaining: Vec<HashMap<String, f64>> = self.parts.iter()
             .map(|p| {
-                if p.destroyed || p.decoupled { return 0.0; }
-                p.resources.values().sum::<f64>() / 1000.0
+                if p.destroyed || p.decoupled {
+                    return HashMap::new();
+                }
+                p.resources.iter()
+                    .filter(|(_, &v)| v > 0.0)
+                    .map(|(k, &v)| (k.clone(), v))
+                    .collect()
             })
             .collect();
 
@@ -2425,79 +2476,122 @@ impl FlightVessel {
                 .map(|i| zones[i])
                 .collect();
 
-            // 6. Compute min drain priority per engine zone
-            let mut zone_min_priority: HashMap<usize, usize> = HashMap::new();
-            for i in 0..n {
-                if decoupled[i] || fuel_remaining[i] <= 0.0 { continue; }
-                if zones[i] != usize::MAX && engine_zones.contains(&zones[i]) {
-                    let entry = zone_min_priority.entry(zones[i]).or_insert(usize::MAX);
-                    *entry = (*entry).min(sim_priorities[i]);
-                }
-            }
-
-            // 7. Per-zone parallel burn parameters
+            // 6. Per-engine resource demands (kg/s) and thrust contributions
+            // Only count engines whose required resources are available in their zone
+            let mut zone_resource_demand: HashMap<(usize, &str), f64> = HashMap::new();
             let mut zone_thrust: HashMap<usize, f64> = HashMap::new();
             let mut zone_thrust_over_isp: HashMap<usize, f64> = HashMap::new();
-            let mut zone_fuel: HashMap<usize, f64> = HashMap::new();
 
             for i in 0..n {
-                if decoupled[i] { continue; }
-                // Engine contribution
-                if engines_enabled[i] && !self.is_engine_covered_simulated(i, part_defs, &decoupled)
-                    && zones[i] != usize::MAX && engine_zones.contains(&zones[i])
-                {
-                    let z = zones[i];
-                    *zone_thrust.entry(z).or_insert(0.0) += self.parts[i].engine_thrust_vac;
-                    if self.parts[i].engine_isp_vac > 0.0 {
-                        *zone_thrust_over_isp.entry(z).or_insert(0.0) +=
-                            self.parts[i].engine_thrust_vac / self.parts[i].engine_isp_vac;
+                if decoupled[i] || !engines_enabled[i] { continue; }
+                if zones[i] == usize::MAX || !engine_zones.contains(&zones[i]) { continue; }
+                if self.is_engine_covered_simulated(i, part_defs, &decoupled) { continue; }
+
+                let propellant = match self.parts[i].propellant_type {
+                    Some(p) => p,
+                    None => continue,
+                };
+                let fuel_type = propellant.fuel_type();
+                let fuel_name = match fuel_type.fuel_resource_name() {
+                    Some(name) => name,
+                    None => continue,
+                };
+                let (ox_per_sq, fuel_per_sq) = fuel_type.propellant_per_grid_square();
+                let total_per_sq = ox_per_sq + fuel_per_sq;
+                if total_per_sq <= 0.0 { continue; }
+
+                let mass_flow = self.parts[i].mass_flow_rate;
+                if mass_flow <= 0.0 { continue; }
+                let primary_fraction = 1.0 - self.parts[i].secondary_fuel_fraction;
+                let ox_ratio = ox_per_sq / total_per_sq;
+                let fuel_ratio = fuel_per_sq / total_per_sq;
+                let z = zones[i];
+
+                // Check if required resources exist in this zone
+                let has_fuel = (0..n).any(|j| !decoupled[j] && zones[j] == z
+                    && resources_remaining[j].get(fuel_name).copied().unwrap_or(0.0) > 0.0);
+                let has_ox = ox_ratio <= 0.0 || (0..n).any(|j| !decoupled[j] && zones[j] == z
+                    && resources_remaining[j].get("oxygen").copied().unwrap_or(0.0) > 0.0);
+                let has_secondary = match self.parts[i].secondary_propellant_type {
+                    Some(sec) => match sec.fuel_type().fuel_resource_name() {
+                        Some(sec_name) => (0..n).any(|j| !decoupled[j] && zones[j] == z
+                            && resources_remaining[j].get(sec_name).copied().unwrap_or(0.0) > 0.0),
+                        None => true,
+                    },
+                    None => true,
+                };
+                if !has_fuel || !has_ox || !has_secondary { continue; }
+
+                // Engine has fuel — add its demands and thrust
+                let primary_flow = mass_flow * primary_fraction;
+                if ox_ratio > 0.0 {
+                    *zone_resource_demand.entry((z, "oxygen")).or_insert(0.0) +=
+                        primary_flow * ox_ratio;
+                }
+                *zone_resource_demand.entry((z, fuel_name)).or_insert(0.0) +=
+                    primary_flow * fuel_ratio;
+
+                if let Some(sec) = self.parts[i].secondary_propellant_type {
+                    if let Some(sec_name) = sec.fuel_type().fuel_resource_name() {
+                        *zone_resource_demand.entry((z, sec_name)).or_insert(0.0) +=
+                            mass_flow * self.parts[i].secondary_fuel_fraction;
                     }
+                }
+
+                *zone_thrust.entry(z).or_insert(0.0) += self.parts[i].engine_thrust_vac;
+                if self.parts[i].engine_isp_vac > 0.0 {
+                    *zone_thrust_over_isp.entry(z).or_insert(0.0) +=
+                        self.parts[i].engine_thrust_vac / self.parts[i].engine_isp_vac;
                 }
             }
 
-            for i in 0..n {
-                if decoupled[i] || fuel_remaining[i] <= 0.0 { continue; }
-                if zones[i] != usize::MAX && engine_zones.contains(&zones[i]) {
-                    let zmp = zone_min_priority.get(&zones[i]).copied().unwrap_or(usize::MAX);
-                    if sim_priorities[i] == zmp {
-                        *zone_fuel.entry(zones[i]).or_insert(0.0) += fuel_remaining[i];
-                    }
-                }
+            // 7. Per-(zone, resource) min drain priority and availability
+            let mut zone_res_min_pri: HashMap<(usize, &str), usize> = HashMap::new();
+            let mut zone_res_available: HashMap<(usize, &str), f64> = HashMap::new();
+            for &(z, res) in zone_resource_demand.keys() {
+                let min_pri = (0..n)
+                    .filter(|&j| !decoupled[j] && zones[j] == z)
+                    .filter(|&j| resources_remaining[j].get(res).copied().unwrap_or(0.0) > 0.0)
+                    .map(|j| sim_priorities[j])
+                    .min()
+                    .unwrap_or(usize::MAX);
+
+                let available: f64 = (0..n)
+                    .filter(|&j| !decoupled[j] && zones[j] == z && sim_priorities[j] == min_pri)
+                    .filter_map(|j| resources_remaining[j].get(res))
+                    .sum();
+
+                zone_res_min_pri.insert((z, res), min_pri);
+                zone_res_available.insert((z, res), available);
             }
 
-            // 8. Find phase time (min burn time across zones)
+            // 8. Phase time = min(available / demand) across all demanded resources
             let mut phase_time = f64::MAX;
-            for (&z, _) in &zone_thrust {
-                let flow = zone_thrust_over_isp.get(&z).copied().unwrap_or(0.0) / g0;
-                let fuel = zone_fuel.get(&z).copied().unwrap_or(0.0);
-                if flow > 0.0 && fuel > 0.0 {
-                    phase_time = phase_time.min(fuel / flow);
+            for (&key, &demand) in &zone_resource_demand {
+                if demand <= 0.0 { continue; }
+                let available = zone_res_available.get(&key).copied().unwrap_or(0.0);
+                if available > 0.0 {
+                    phase_time = phase_time.min(available / demand);
+                } else {
+                    phase_time = 0.0;
+                    break;
                 }
             }
             if phase_time == f64::MAX { phase_time = 0.0; }
 
-            // 9. Compute per-zone fuel consumed and total
-            let mut total_consumed = 0.0;
-            let mut zone_consumed: HashMap<usize, f64> = HashMap::new();
-            for (&z, _) in &zone_thrust {
-                let flow = zone_thrust_over_isp.get(&z).copied().unwrap_or(0.0) / g0;
-                let fuel = zone_fuel.get(&z).copied().unwrap_or(0.0);
-                let consumed = if flow > 0.0 && fuel > 0.0 {
-                    (flow * phase_time).min(fuel)
-                } else {
-                    0.0
-                };
-                zone_consumed.insert(z, consumed);
-                total_consumed += consumed;
-            }
+            // 9. Total consumed mass (kg → tonnes)
+            let total_consumed_kg: f64 = zone_resource_demand.values()
+                .map(|&d| d * phase_time).sum();
+            let total_consumed = total_consumed_kg / 1000.0;
 
-            // Wet mass of all remaining parts
+            // Wet mass of all remaining parts (tonnes)
             let mut wet_mass = 0.0;
             for i in 0..n {
                 if decoupled[i] { continue; }
                 let base_mass = part_defs.get(&self.parts[i].definition_id)
                     .map(|d| d.mass).unwrap_or(0.0);
-                wet_mass += base_mass + fuel_remaining[i];
+                let fuel_mass = resources_remaining[i].values().sum::<f64>() / 1000.0;
+                wet_mass += base_mass + fuel_mass;
             }
 
             // Effective Isp (harmonic weighted mean across zones)
@@ -2518,27 +2612,32 @@ impl FlightVessel {
             };
             stage_dvs.push((dv, phase_time));
 
-            // 11. Update fuel_remaining proportionally within each zone
-            for (&z, &consumed) in &zone_consumed {
+            // 11. Drain resources proportionally per (zone, resource)
+            for (&(z, res), &demand) in &zone_resource_demand {
+                if demand <= 0.0 { continue; }
+                let consumed = demand * phase_time;
                 if consumed <= 0.0 { continue; }
-                let zf = zone_fuel.get(&z).copied().unwrap_or(0.0);
-                if zf <= 0.0 { continue; }
-                let zmp = zone_min_priority.get(&z).copied().unwrap_or(usize::MAX);
-                if consumed >= zf {
-                    // Zone emptied
-                    for i in 0..n {
-                        if !decoupled[i] && zones[i] == z && sim_priorities[i] == zmp {
-                            fuel_remaining[i] = 0.0;
+                let available = zone_res_available.get(&(z, res)).copied().unwrap_or(0.0);
+                if available <= 0.0 { continue; }
+                let min_pri = zone_res_min_pri.get(&(z, res)).copied().unwrap_or(usize::MAX);
+
+                if consumed >= available {
+                    // Resource depleted at this priority level
+                    for j in 0..n {
+                        if !decoupled[j] && zones[j] == z && sim_priorities[j] == min_pri {
+                            if let Some(val) = resources_remaining[j].get_mut(res) {
+                                *val = 0.0;
+                            }
                         }
                     }
                 } else {
-                    // Partial consumption — distribute proportionally
-                    for i in 0..n {
-                        if decoupled[i] || fuel_remaining[i] <= 0.0 { continue; }
-                        if zones[i] == z && sim_priorities[i] == zmp {
-                            let fraction = fuel_remaining[i] / zf;
-                            fuel_remaining[i] -= consumed * fraction;
-                            if fuel_remaining[i] < 0.0 { fuel_remaining[i] = 0.0; }
+                    // Partial drain — distribute proportionally
+                    let drain_frac = consumed / available;
+                    for j in 0..n {
+                        if decoupled[j] || zones[j] != z || sim_priorities[j] != min_pri { continue; }
+                        if let Some(val) = resources_remaining[j].get_mut(res) {
+                            *val -= *val * drain_frac;
+                            if *val < 0.001 { *val = 0.0; }
                         }
                     }
                 }

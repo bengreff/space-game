@@ -2,6 +2,7 @@
 // Six reactors across three technology tiers: Fission, Fusion, Antimatter.
 // Constant power output — no fuel consumption (like RTGs but much higher output).
 // Required for powering interstellar shields, radiators, and electric propulsion.
+// Masses are reactor-only — radiators are separate ship parts.
 
 (
     parts: [
@@ -14,7 +15,7 @@
             name: "Prometheus",
             description: "Heavy fission reactor for interstellar spacecraft. Gas-core design operates at extreme temperatures, converting nuclear heat to 500 megawatts of electrical power through MHD generators. Shadow-shielded to protect crew from neutron flux. The minimum power source for FRES shielding.",
             category: Electricity,
-            mass: 250.0,
+            mass: 125.0,
             cost: 500000,
             size: Medium,
             shape: Rectangle,
@@ -35,7 +36,7 @@
             name: "Vulcan",
             description: "Massive gas-core fission reactor producing 1.6 gigawatts. Rotating uranium plasma core achieves temperatures impossible in solid-core designs. Powers multiple FRES shield generators and heat-pipe radiator arrays simultaneously. The backbone of early interstellar power systems.",
             category: Electricity,
-            mass: 800.0,
+            mass: 400.0,
             cost: 1200000,
             size: Large,
             shape: Rectangle,
@@ -56,7 +57,7 @@
             name: "Stellarator",
             description: "Compact fusion power reactor using D+He3 fuel in a stellarator magnetic confinement geometry. Produces 10 gigawatts — enough to power a small interstellar vessel's shields, drives, and life support simultaneously. Negligible neutron flux from aneutronic fusion extends component lifetime.",
             category: Electricity,
-            mass: 400.0,
+            mass: 200.0,
             cost: 3000000,
             size: Large,
             shape: Rectangle,
@@ -77,7 +78,7 @@
             name: "Tokamak",
             description: "Heavy fusion power reactor with a high-field tokamak geometry. 30 gigawatts of clean power from D+He3 fuel — enough for the largest crewed interstellar vessels with full geodesic shielding and droplet radiator arrays. The fusion era's equivalent of a nuclear aircraft carrier's power plant.",
             category: Electricity,
-            mass: 1200.0,
+            mass: 600.0,
             cost: 8000000,
             size: XL,
             shape: Rectangle,
@@ -98,7 +99,7 @@
             name: "Penning Reactor",
             description: "Antimatter power reactor using Penning trap confinement. Controlled proton-antiproton annihilation produces 800 gigawatts via direct charged-pion energy conversion. Antimatter consumption is measured in micrograms per hour. Compact enough for corvette-class vessels but powerful enough to run geodesic shields at relativistic speeds.",
             category: Electricity,
-            mass: 800.0,
+            mass: 400.0,
             cost: 20000000,
             size: Large,
             shape: Rectangle,
@@ -119,7 +120,7 @@
             name: "Ixion Reactor",
             description: "The largest antimatter power reactor ever conceived. Multiple Penning trap arrays feed a cascade energy conversion system producing 2.5 terawatts — enough to power a capital ship's gamma-ray converter drive, geodesic shields, and phononic radiators simultaneously. At this power level, the reactor's own magnetic confinement field is visible as a faint blue glow.",
             category: Electricity,
-            mass: 2500.0,
+            mass: 1250.0,
             cost: 50000000,
             size: XL,
             shape: Rectangle,

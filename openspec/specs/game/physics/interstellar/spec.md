@@ -29,7 +29,7 @@ Interstellar engine sprites SHALL be included in the sprite atlas (not excluded)
 ### Requirement: Fuel types
 
 `FuelType` enum SHALL include interstellar variants with `propellant_per_grid_square()` values:
-- `FusionFuel`: (0.0, 30.0) — ~120 kg/m³ cryogenic D+He3, no oxidizer
+- `FusionFuel`: (0.0, 158.0) — D+He3 mix ~79 kg/m³ (40% D at 162 kg/m³, 60% He3 at 59 kg/m³), FF 82%
 - `Antimatter`: (0.0, 5.0) — mostly containment mass, milligrams of actual antimatter
 - `NuclearPulse`: (0.0, 500.0) — heavy fissile pulse units
 
@@ -41,7 +41,7 @@ Fuel resource names: `fusion_fuel`, `antimatter`, `nuclear_pulse`.
 
 ### Requirement: Pure hydrogen tank capacity
 
-`PureHydrogen` tanks SHALL have capacity (0.0, 35.0) kg per grid square — higher than the LH2 portion of Hydrolox tanks (25 kg/sq) because the full tank volume is available for hydrogen with no LOX taking up space.
+`PureHydrogen` tanks SHALL have capacity (0.0, 140.0) kg per grid square — FF 80%, a bit below the Hydrolox FF of 83.7%. Full tank volume available for hydrogen with no LOX.
 
 ### Requirement: ReactorData
 
