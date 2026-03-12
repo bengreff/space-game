@@ -136,11 +136,12 @@ When zoomed into a body (its circle extends beyond the viewport), orbit lines fr
 
 #### Scenario: Ship trajectory segment filtering by pixel threshold
 - **WHEN** any child body of a trajectory segment's parent body is large enough on screen that its orbit line is hidden by the pixel-threshold rule (>= 5px for planets, >= 100px for moons)
-- **THEN** that trajectory segment SHALL also be hidden
+- **AND** the segment's parent body is NOT the ship's current SOI body
+- **THEN** that trajectory segment SHALL be hidden
 - **AND** this applies to patched conic segments, maneuver prediction segments, and background vessel orbits
 - **AND** this filter operates independently of the view SOI filter (both must pass)
 
-This mirrors the body orbit pixel-threshold filter: when a body is big enough on screen that its orbit around parent P is hidden, the ship's orbit around parent P is also clutter and should be hidden.
+Segments at the ship's own SOI level are exempt — those hide via the ship_pixels < 5.0 check (ship view vs map view threshold) instead. This ensures the ship's current orbit disappears when the ship triangle disappears, while higher-level orbits disappear when the intervening body's orbit line disappears.
 
 #### Scenario: Background vessel orbit filtering by view SOI
 - **WHEN** a view SOI body is active

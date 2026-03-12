@@ -1165,9 +1165,12 @@ fn render_flight_frame(
                     // SOI-based filter
                     let soi_ok = view_soi_body.map_or(true, |soi|
                         is_in_soi_of(seg.parent_idx, soi, &game.solar_system.bodies));
-                    // Pixel-threshold filter: hide segments around parents where
-                    // child body orbits are already hidden (body is big on screen)
-                    let pixel_ok = !parent_has_zoomed_child[seg.parent_idx];
+                    // Pixel-threshold filter: hide higher-level segments when a
+                    // child body's orbit is hidden (body is big on screen).
+                    // Skip for the ship's own SOI body — that orbit hides via
+                    // the ship_pixels < 5.0 check in render instead.
+                    let pixel_ok = seg.parent_idx == game.flight.ship.soi_body
+                        || !parent_has_zoomed_child[seg.parent_idx];
                     soi_ok && pixel_ok
                 })
                 .enumerate()
@@ -1604,8 +1607,9 @@ fn render_flight_frame(
                         return None;
                     }
                 }
-                // Pixel-threshold filter: hide when zoomed into a child body
-                if parent_has_zoomed_child[parent_idx] {
+                // Pixel-threshold filter: hide higher-level orbits when
+                // a child body is big on screen. Skip for vessel's own SOI body.
+                if parent_idx != v.ship.soi_body && parent_has_zoomed_child[parent_idx] {
                     return None;
                 }
                 let parent_pos = scaled_positions[parent_idx];
@@ -1677,7 +1681,8 @@ fn render_flight_frame(
                 .filter(|seg| {
                     let soi_ok = view_soi_body.map_or(true, |soi|
                         is_in_soi_of(seg.parent_idx, soi, &game.solar_system.bodies));
-                    let pixel_ok = !parent_has_zoomed_child[seg.parent_idx];
+                    let pixel_ok = seg.parent_idx == game.flight.ship.soi_body
+                        || !parent_has_zoomed_child[seg.parent_idx];
                     soi_ok && pixel_ok
                 })
                 .enumerate()
