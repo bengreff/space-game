@@ -108,11 +108,14 @@ When entering a child SOI, the conversion SHALL:
 2. Subtract child body position/velocity from ship state: `new_pos = pos - child_pos`, `new_vel = vel - child_vel`
 3. Set `soi_body` to the child index
 
-### Requirement: SOI transition on-rails handling
+### Requirement: SOI transition on-rails handling (precise interpolation)
 
-When on-rails and a SOI transition is detected:
-- SOI exit: add current body position/velocity to ship state, switch to parent, recalculate orbit; fall off rails if orbit calculation fails
-- SOI entry: subtract child body position/velocity from ship state, switch to child, recalculate orbit; fall off rails if orbit calculation fails
+When on-rails and a SOI transition is detected, the system SHALL find the exact boundary crossing time within the current timestep using binary search (`BINARY_SEARCH_ITERATIONS = 50` iterations), then perform frame conversion at that precise moment:
+
+1. **Compute previous mean anomaly**: `prev_M = current_M - direction * mean_motion * dt`
+2. **Binary search**: interpolate mean anomaly between `prev_M` and `current_M`; at each sample, evaluate ship position from the orbit and (for entry) child body position at the interpolated time; converge on the fraction where distance equals SOI radius
+3. **Frame conversion at crossing time**: compute ship state vectors from orbit at crossing mean anomaly; compute body position/velocity at crossing time; convert to new reference frame
+4. **Propagate remaining time**: calculate new orbit in new frame; if elliptical, advance mean anomaly by `remaining_dt = (1 - fraction) * dt` and recompute position/velocity; if hyperbolic or invalid, linearly propagate position and fall off rails
 
 ## Maneuver Node Placement
 

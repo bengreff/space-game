@@ -105,3 +105,34 @@ The ship is in "map view" (indicator visible) when its screen size is less than 
 #### Scenario: Ship view
 - **WHEN** `ship_size * pixels_per_world_unit * 2.0 >= 5.0`
 - **THEN** ship parts are rendered, trees/launchpad are visible, orbit lines are hidden
+
+### Requirement: Galaxy view tracked body redirect
+
+When the camera enters galaxy view (screen spans >= 0.1 light-years), the tracked body SHALL be redirected to its nearest star ancestor. This prevents the camera from tracking an invisible planet/moon in galaxy view. The redirect walks up the body hierarchy until it finds a body whose parent is the root body (a star). This applies in both flight mode and tracking station mode.
+
+#### Scenario: Ship tracking redirect in galaxy view
+- **WHEN** in flight mode with ship tracking active and camera enters galaxy view
+- **THEN** ship tracking is disabled, and the tracked body is set to the ship's SOI body's parent star
+- **AND** the camera follows the star instead of the ship
+
+#### Scenario: Body tracking redirect in galaxy view
+- **WHEN** in flight mode tracking a planet or moon and camera enters galaxy view
+- **THEN** the tracked body is redirected to its parent star
+
+### Requirement: Galaxy view rendering restrictions
+
+In galaxy view, only stars (direct children of the root body) and the root body SHALL be visible. All other objects are hidden.
+
+#### Scenario: Galaxy view hides non-star bodies
+- **WHEN** in galaxy view
+- **THEN** planet and moon body circles have radius set to 0 (invisible and non-interactive)
+
+#### Scenario: Galaxy view hides ship and vessels
+- **WHEN** in galaxy view
+- **THEN** the active ship indicator, orbit lines, parts, and launchpad are not rendered
+- **AND** background vessel indicators and orbit lines are not rendered
+
+#### Scenario: Galaxy view hides non-star orbits
+- **WHEN** in galaxy view
+- **THEN** only star orbits around the root body are shown (when the star is tracked)
+- **AND** all planetary and moon orbit lines are hidden

@@ -111,6 +111,46 @@ Orbit lines for celestial bodies SHALL be drawn as thick lines (dual-vertex stri
 - **WHEN** a moon body's on-screen diameter >= 100 pixels
 - **THEN** its orbit line is hidden
 
+### Requirement: SOI-based orbit line filtering
+
+When zoomed into a body (its circle extends beyond the viewport), orbit lines from parent SOIs are hidden to reduce visual clutter. A "view SOI body" is computed as the smallest body that fills the screen and is near the camera.
+
+#### Scenario: View SOI body computation
+- **GIVEN** camera zoom and position
+- **THEN** iterate all bodies; a body qualifies if:
+  - its on-screen diameter > 50% of screen height (body circle is prominent on screen)
+  - camera is within the body's SOI radius (camera is in the body's gravitational domain)
+- **AND** among qualifying bodies, pick the one with smallest physical radius (innermost/deepest SOI)
+- **AND** in galaxy view, no view SOI body is computed (returns None)
+
+#### Scenario: Body orbit filtering by view SOI
+- **WHEN** a view SOI body is active
+- **THEN** only show orbit lines for bodies whose orbit parent is the view SOI body or a descendant of it
+- **AND** this filter is applied before the pixel-threshold filter
+
+#### Scenario: Ship trajectory segment filtering by view SOI
+- **WHEN** a view SOI body is active
+- **THEN** patched conic trajectory segments whose parent body is not within the view SOI are hidden
+- **AND** the first visible segment is treated as `is_first_segment` (with live true anomaly trimming)
+- **AND** maneuver node prediction segments are filtered the same way
+
+#### Scenario: Ship trajectory segment filtering by pixel threshold
+- **WHEN** any child body of a trajectory segment's parent body is large enough on screen that its orbit line is hidden by the pixel-threshold rule (>= 5px for planets, >= 100px for moons)
+- **THEN** that trajectory segment SHALL also be hidden
+- **AND** this applies to patched conic segments, maneuver prediction segments, and background vessel orbits
+- **AND** this filter operates independently of the view SOI filter (both must pass)
+
+This mirrors the body orbit pixel-threshold filter: when a body is big enough on screen that its orbit around parent P is hidden, the ship's orbit around parent P is also clutter and should be hidden.
+
+#### Scenario: Background vessel orbit filtering by view SOI
+- **WHEN** a view SOI body is active
+- **THEN** inactive vessel orbit lines whose parent body is not within the view SOI are hidden
+- **AND** vessel orbits are also hidden when the parent body has a zoomed-in child (pixel threshold filter)
+
+#### Scenario: No filtering outside flight mode
+- **WHEN** in tracking station, title screen, or main menu
+- **THEN** no SOI-based filtering is applied (all orbits shown per existing rules)
+
 ## Launchpad
 
 ### Requirement: Launchpad rendered on Earth in ship view

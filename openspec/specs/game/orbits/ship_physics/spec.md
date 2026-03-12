@@ -43,7 +43,7 @@ The throttle SHALL be a value in the range [0.0, 1.0], clamped after every updat
 
 Ship rotation SHALL use an acceleration-based model:
 - RCS acceleration: `rcs_accel = rcs_torque / moment_of_inertia` (from vessel data), falling back to `ROTATION_ACCEL = 30 deg/s^2` (0.5236 rad/s^2). RCS thrusters consume monopropellant when providing torque.
-- Gimbal acceleration: `gimbal_accel = gimbal_torque / moment_of_inertia` (always applied when non-zero, signed)
+- Gimbal acceleration: `gimbal_accel = gimbal_torque / moment_of_inertia` (always applied at 0.5x in physics, signed). Gimbal deflection accepts a fractional command in [-1, 1] for proportional control.
 - Rotate left: `rotational_velocity += rcs_accel * dt`
 - Rotate right: `rotational_velocity -= rcs_accel * dt`
 - No input: apply rotation drag of `ROTATION_DRAG = 9 deg/s^2` (0.157 rad/s^2), reducing `rotational_velocity` toward zero
@@ -232,6 +232,18 @@ The autopilot SHALL support the following `AutopilotTarget` modes:
 The autopilot rotation controller SHALL use acceleration-based control with stopping distance braking:
 1. Normalize angle difference to [-PI, PI]
 2. If `|angle_diff| < 0.002 rad` (~0.1 degrees) and `|rotational_velocity| < 0.01 rad/s`: snap to target, zero rotational velocity
-3. Calculate stopping distance: `s = v^2 / (2 * accel)`
-4. Brake when going the right direction AND stopping distance >= 50% of remaining angle
-5. Otherwise accelerate toward target
+3. Calculate total acceleration: `total_accel = rcs_accel + gimbal_accel * 0.5` (the 0.5 matches the gimbal application factor in physics)
+4. Calculate stopping distance: `s = v^2 / (2 * total_accel)`
+5. Brake when going the right direction AND stopping distance >= 50% of remaining angle
+6. Otherwise accelerate toward target
+
+#### Scenario: Gimbal proportional control near target
+- **WHEN** autopilot is accelerating toward the target angle (not braking)
+- **THEN** the gimbal command SHALL be scaled by `(|angle_diff| / 0.15).clamp(0, 1)`, producing proportional deflection within ~8.6 degrees of the target
+- **AND** when braking, full gimbal deflection is applied for maximum stopping power
+
+#### Scenario: Gimbal command flow
+- **GIVEN** autopilot is active with a target angle
+- **THEN** `autopilot_desired_direction()` returns a value in [-1, 1] using combined RCS + gimbal torque for stopping distance
+- **AND** engine gimbals deflect proportionally: `gimbal_angle = command * gimbal_range_rad`
+- **AND** manual rotation (A/D keys) still commands full gimbal deflection (+1 or -1)

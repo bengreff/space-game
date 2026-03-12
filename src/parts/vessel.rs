@@ -611,7 +611,8 @@ impl FlightVessel {
     /// Set gimbal angles on all engines based on rotation input.
     /// When rotating left, engines gimbal to create positive (CCW) torque.
     /// When rotating right, engines gimbal to create negative (CW) torque.
-    pub fn update_gimbal(&mut self, rotate_left: bool, rotate_right: bool) {
+    pub fn update_gimbal(&mut self, gimbal_command: f64) {
+        let command = gimbal_command.clamp(-1.0, 1.0);
         for part in &mut self.parts {
             if part.destroyed || part.decoupled || part.gimbal_range_rad <= 0.0 {
                 continue;
@@ -620,13 +621,7 @@ impl FlightVessel {
                 part.gimbal_angle = 0.0;
                 continue;
             }
-            if rotate_left {
-                part.gimbal_angle = part.gimbal_range_rad;
-            } else if rotate_right {
-                part.gimbal_angle = -part.gimbal_range_rad;
-            } else {
-                part.gimbal_angle = 0.0;
-            }
+            part.gimbal_angle = command * part.gimbal_range_rad;
         }
     }
 

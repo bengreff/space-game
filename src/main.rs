@@ -38,6 +38,53 @@ fn is_galaxy_view(camera_zoom: f32, _screen_height: u32) -> bool {
     screen_span_m >= GALAXY_VIEW_THRESHOLD_M
 }
 
+/// Returns true if `body_idx` is equal to or nested inside `soi_body`'s SOI.
+fn is_in_soi_of(body_idx: usize, soi_body: usize, bodies: &[sunscatter::bodies::CelestialBody]) -> bool {
+    let mut idx = body_idx;
+    loop {
+        if idx == soi_body { return true; }
+        match bodies[idx].parent {
+            Some(parent) => idx = parent,
+            None => return false,
+        }
+    }
+}
+
+/// Compute the innermost body whose circle dominates the screen and whose SOI
+/// contains the camera. Returns `None` in galaxy view (no filtering desired).
+fn compute_view_soi_body(game: &Game, render_state: &RenderState) -> Option<usize> {
+    if is_galaxy_view(render_state.camera.zoom, render_state.size.height) {
+        return None;
+    }
+    let pixels_per_world_unit = render_state.camera.zoom * render_state.size.height as f32 / 2.0;
+    let cam_x = render_state.camera.position[0] as f64;
+    let cam_y = render_state.camera.position[1] as f64;
+    let screen_threshold = render_state.size.height as f32 * 0.5;
+
+    let mut best: Option<(usize, f64)> = None; // (body_index, radius)
+    for (i, body) in game.solar_system.bodies.iter().enumerate() {
+        let body_world_radius = body.radius * BODY_SCALE * SCALE;
+        let body_pixels = (body_world_radius as f32) * pixels_per_world_unit * 2.0;
+        if body_pixels <= screen_threshold {
+            continue; // Body isn't prominent enough on screen
+        }
+        // Camera must be within the body's SOI
+        let pos = game.solar_system.body_position(i);
+        let bx = pos[0] * SCALE * BODY_SCALE;
+        let by = pos[1] * SCALE * BODY_SCALE;
+        let dist = ((cam_x - bx).powi(2) + (cam_y - by).powi(2)).sqrt();
+        let soi_world = body.soi_radius * SCALE * BODY_SCALE;
+        if dist > soi_world {
+            continue;
+        }
+        // Pick the smallest qualifying body (innermost SOI)
+        if best.map_or(true, |(_, r)| body.radius < r) {
+            best = Some((i, body.radius));
+        }
+    }
+    best.map(|(idx, _)| idx)
+}
+
 /// Save the current game and return to the title screen
 fn save_and_quit_to_title(game: &mut Game, render_state: &mut RenderState) {
     if let Some(ref name) = game.save_name {
@@ -438,22 +485,9 @@ fn render_flight_frame(
             None
         };
 
-        // Update engine gimbal angles: driven by autopilot when SAS active, else by A/D input
-        if let Some(ref mut vessel) = game.flight.vessel {
-            let (rotate_left, rotate_right) = if let Some(target_angle) = autopilot_target_angle {
-                // Autopilot commands gimbals based on desired rotation direction
-                let dir = game.flight.ship.autopilot_desired_direction(target_angle, None);
-                (dir > 0.0, dir < 0.0)
-            } else {
-                (game.flight.ship_input.rotate_left, game.flight.ship_input.rotate_right)
-            };
-            vessel.update_gimbal(rotate_left, rotate_right);
-        }
-
-        // Build VesselPhysicsData from flight vessel if available
-        // Uses active_thrust which excludes engines without fuel
+        // Build VesselPhysicsData from flight vessel (before gimbal update for stopping distance calc)
         let rcs_enabled = render_state.rcs_enabled;
-        let vessel_physics = game.flight.vessel.as_ref().map(|v| VesselPhysicsData {
+        let mut vessel_physics = game.flight.vessel.as_ref().map(|v| VesselPhysicsData {
             total_mass: v.total_mass,
             max_thrust_vac: v.active_thrust_vac(),
             max_thrust_asl: v.active_thrust_asl(),
@@ -467,6 +501,24 @@ fn render_flight_frame(
             parachute_drag_width: v.parachute_drag_width(),
             parachute_drag_multiplier: v.parachute_drag_multiplier(),
         });
+
+        // Update engine gimbal angles: driven by autopilot when SAS active, else by A/D input
+        if let Some(ref mut vessel) = game.flight.vessel {
+            let gimbal_command = if let Some(target_angle) = autopilot_target_angle {
+                game.flight.ship.autopilot_desired_direction(target_angle, vessel_physics.as_ref())
+            } else if game.flight.ship_input.rotate_left {
+                1.0
+            } else if game.flight.ship_input.rotate_right {
+                -1.0
+            } else {
+                0.0
+            };
+            vessel.update_gimbal(gimbal_command);
+            // Refresh gimbal torque to reflect new gimbal angles
+            if let Some(ref mut vp) = vessel_physics {
+                vp.gimbal_torque = vessel.compute_gimbal_torque();
+            }
+        }
 
         // Compute RCS translation from input (only when RCS enabled)
         game.flight.ship.rcs_translate = if rcs_enabled {
@@ -887,6 +939,22 @@ fn render_flight_frame(
         scaled_positions.push(scaled_pos);
     }
 
+    // In galaxy view, redirect tracked body to its parent star and stop ship tracking
+    let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
+    if in_galaxy_view {
+        if game.flight.tracking_ship {
+            // Switch from ship tracking to tracking the ship's parent star
+            let star_idx = find_star_ancestor(game, game.flight.ship.soi_body);
+            render_state.tracked_body = Some(star_idx);
+            game.flight.tracking_ship = false;
+        } else if let Some(tracked_idx) = render_state.tracked_body {
+            let star_idx = find_star_ancestor(game, tracked_idx);
+            if star_idx != tracked_idx {
+                render_state.tracked_body = Some(star_idx);
+            }
+        }
+    }
+
     // Update camera tracking
     if game.flight.tracking_ship {
         // Decompose camera into body_center + ship_offset for precision at galaxy-scale distances.
@@ -951,23 +1019,80 @@ fn render_flight_frame(
         .map(|i| {
             let body = &game.solar_system.bodies[i];
             let pos = scaled_positions[i];
-            let atmo_height = body.atmosphere.map(|a| a.visible_height()).unwrap_or(0.0);
+            // In galaxy view, only show root + stars (direct children of root)
+            let visible = if in_galaxy_view {
+                body.parent.is_none() || body.parent.map_or(false, |p|
+                    game.solar_system.bodies[p].parent.is_none())
+            } else {
+                true
+            };
+            let radius = if visible { body.radius * BODY_SCALE } else { 0.0 };
+            let atmo_height = if visible { body.atmosphere.map(|a| a.visible_height()).unwrap_or(0.0) } else { 0.0 };
             let atmo_color = body.atmosphere.map(|a| a.color).unwrap_or([0.0; 3]);
-            (pos[0], pos[1], body.radius * BODY_SCALE, body.color, atmo_height, atmo_color, i)
+            (pos[0], pos[1], radius, body.color, atmo_height, atmo_color, i)
         })
         .collect();
 
     let pixels_per_world_unit = render_state.camera.zoom * render_state.size.height as f32 / 2.0;
+    let view_soi_body = compute_view_soi_body(game, render_state);
+
+    // Pre-compute which parent bodies have a child that's large enough on screen
+    // that the child's orbit line would be hidden (pixel threshold). Ship trajectory
+    // segments and vessel orbits around such parents are also clutter and should hide.
+    // This mirrors the body orbit pixel-threshold filter.
+    let mut parent_has_zoomed_child = vec![false; game.solar_system.bodies.len()];
+    for body in game.solar_system.bodies.iter() {
+        if let Some(parent_idx) = body.parent {
+            let parent_body = &game.solar_system.bodies[parent_idx];
+            let body_world_radius = (body.radius * BODY_SCALE * SCALE) as f32;
+            let body_pixels = body_world_radius * pixels_per_world_unit * 2.0;
+            let is_moon = parent_body.parent
+                .map_or(false, |gp| game.solar_system.bodies[gp].parent.is_some());
+            let pixel_threshold = if is_moon { 100.0 } else { 5.0 };
+            if body_pixels >= pixel_threshold {
+                parent_has_zoomed_child[parent_idx] = true;
+            }
+        }
+    }
 
     let orbits: Vec<Option<OrbitRenderData>> = (0..game.solar_system.bodies.len())
         .map(|i| {
             let body = &game.solar_system.bodies[i];
             match (body.parent, &body.orbit) {
                 (Some(parent_idx), Some(orbit)) => {
-                    // Skip star orbits around galactic center (shown only in galaxy view)
                     let parent_body = &game.solar_system.bodies[parent_idx];
                     if parent_body.parent.is_none() {
+                        // Star orbit: only show in galaxy view when this star is tracked
+                        if in_galaxy_view && render_state.tracked_body == Some(i) {
+                            let parent_pos = scaled_positions[parent_idx];
+                            let orbit_color = [
+                                body.color[0] * 0.4,
+                                body.color[1] * 0.4,
+                                body.color[2] * 0.4,
+                                0.5,
+                            ];
+                            return Some(OrbitRenderData {
+                                parent_x: parent_pos[0] * SCALE,
+                                parent_y: parent_pos[1] * SCALE,
+                                semi_major_axis: orbit.semi_major_axis * SCALE * BODY_SCALE,
+                                eccentricity: orbit.eccentricity,
+                                argument_of_periapsis: orbit.argument_of_periapsis,
+                                color: orbit_color,
+                            });
+                        }
                         return None;
+                    }
+
+                    // In galaxy view, skip all non-star orbits
+                    if in_galaxy_view {
+                        return None;
+                    }
+
+                    // SOI filter: only show orbits within the focused body's SOI
+                    if let Some(soi) = view_soi_body {
+                        if !is_in_soi_of(parent_idx, soi, &game.solar_system.bodies) {
+                            return None;
+                        }
                     }
 
                     let body_world_radius = (body.radius * BODY_SCALE * SCALE) as f32;
@@ -1035,15 +1160,27 @@ fn render_flight_frame(
 
     let patched_trajectory = patched_traj_raw.as_ref()
         .map(|traj| {
-            traj.segments.iter().enumerate().map(|(i, seg)| {
+            traj.segments.iter().enumerate()
+                .filter(|(_, seg)| {
+                    // SOI-based filter
+                    let soi_ok = view_soi_body.map_or(true, |soi|
+                        is_in_soi_of(seg.parent_idx, soi, &game.solar_system.bodies));
+                    // Pixel-threshold filter: hide segments around parents where
+                    // child body orbits are already hidden (body is big on screen)
+                    let pixel_ok = !parent_has_zoomed_child[seg.parent_idx];
+                    soi_ok && pixel_ok
+                })
+                .enumerate()
+                .map(|(filtered_i, (orig_i, seg))| {
                 let parent_pos = scaled_positions[seg.parent_idx];
                 let parent_soi = game.solar_system.bodies[seg.parent_idx].soi_radius;
                 let parent_mass = game.solar_system.bodies[seg.parent_idx].effective_mass_at(seg.orbit.semi_major_axis);
-                let alpha = if i == 0 { 0.7 } else { 0.4 };
+                let is_first = filtered_i == 0;
+                let alpha = if is_first { 0.7 } else { 0.4 };
                 // For the first segment, recompute true anomaly from the ship's
                 // current position each frame so the orbit line trims smoothly
                 // instead of jumping when the cached trajectory refreshes.
-                let start_true_anomaly = if i == 0 {
+                let start_true_anomaly = if orig_i == 0 {
                     let rx = game.flight.ship.rel_position[0];
                     let ry = game.flight.ship.rel_position[1];
                     let pos_angle = ry.atan2(rx);
@@ -1067,7 +1204,7 @@ fn render_flight_frame(
                     start_true_anomaly,
                     end_true_anomaly: seg.end_true_anomaly,
                     color: [0.9, 0.2, 0.2, alpha],
-                    is_first_segment: i == 0,
+                    is_first_segment: is_first,
                     retrograde: seg.retrograde,
                     soi_radius: parent_soi * SCALE * BODY_SCALE,
                     parent_body_radius: game.solar_system.bodies[seg.parent_idx].radius,
@@ -1460,16 +1597,26 @@ fn render_flight_frame(
             // Use scaled_positions + rel_position for precision (same as active ship)
             let soi_pos = scaled_positions[v.ship.soi_body];
             let rel = v.ship.rel_position;
-            let orbit_data = v.ship.get_render_orbit().map(|(orbit, parent_idx)| {
+            let orbit_data = v.ship.get_render_orbit().and_then(|(orbit, parent_idx)| {
+                // SOI filter: hide orbits outside the focused body's SOI
+                if let Some(soi) = view_soi_body {
+                    if !is_in_soi_of(parent_idx, soi, &game.solar_system.bodies) {
+                        return None;
+                    }
+                }
+                // Pixel-threshold filter: hide when zoomed into a child body
+                if parent_has_zoomed_child[parent_idx] {
+                    return None;
+                }
                 let parent_pos = scaled_positions[parent_idx];
-                OrbitRenderData {
+                Some(OrbitRenderData {
                     parent_x: parent_pos[0] * SCALE,
                     parent_y: parent_pos[1] * SCALE,
                     semi_major_axis: orbit.semi_major_axis * SCALE * BODY_SCALE,
                     eccentricity: orbit.eccentricity,
                     argument_of_periapsis: orbit.argument_of_periapsis,
                     color: [0.5, 0.5, 0.5, 0.3], // Dimmed grey
-                }
+                })
             });
             let parts = v.vessel.as_ref().map(|fv| {
                 build_vessel_part_render_data(fv, &game.part_definitions)
@@ -1526,11 +1673,19 @@ fn render_flight_frame(
         if let Some(pred_traj) = game.flight.ship.calculate_predicted_trajectory(
             pos, new_vel, parent_idx, &game.solar_system, node.epoch
         ) {
-            let segments: Vec<OrbitSegmentData> = pred_traj.segments.iter().enumerate().map(|(i, seg)| {
+            let segments: Vec<OrbitSegmentData> = pred_traj.segments.iter()
+                .filter(|seg| {
+                    let soi_ok = view_soi_body.map_or(true, |soi|
+                        is_in_soi_of(seg.parent_idx, soi, &game.solar_system.bodies));
+                    let pixel_ok = !parent_has_zoomed_child[seg.parent_idx];
+                    soi_ok && pixel_ok
+                })
+                .enumerate()
+                .map(|(filtered_i, seg)| {
                 let parent_pos = scaled_positions[seg.parent_idx];
                 let parent_soi = game.solar_system.bodies[seg.parent_idx].soi_radius;
                 let parent_mass = game.solar_system.bodies[seg.parent_idx].effective_mass_at(seg.orbit.semi_major_axis);
-                let alpha = if i == 0 { 0.7 } else { 0.5 };
+                let alpha = if filtered_i == 0 { 0.7 } else { 0.5 };
                 OrbitSegmentData {
                     parent_x: parent_pos[0] * SCALE,
                     parent_y: parent_pos[1] * SCALE,
@@ -1540,7 +1695,7 @@ fn render_flight_frame(
                     start_true_anomaly: seg.start_true_anomaly,
                     end_true_anomaly: seg.end_true_anomaly,
                     color: [0.2, 0.8, 0.2, alpha],
-                    is_first_segment: i == 0,
+                    is_first_segment: filtered_i == 0,
                     retrograde: seg.retrograde,
                     soi_radius: parent_soi * SCALE * BODY_SCALE,
                     parent_body_radius: game.solar_system.bodies[seg.parent_idx].radius,
@@ -1557,7 +1712,6 @@ fn render_flight_frame(
     render_state.set_predicted_trajectories(predicted_trajectories);
 
     let accretion_discs = build_accretion_disc_data(game);
-    let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
     render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions), &background_vessels, &accretion_discs, in_galaxy_view);
 
     // Update simulation time for node epoch computation
@@ -1991,18 +2145,18 @@ fn render_flight_frame(
                 // Past the burn start point — stop warping
                 render_state.warp_to_node = false;
                 game.warp_index = 0;
-            } else if effective_time / WARP_LEVELS[5] < 1.0 {
-                // Even minimum on-rails warp (100x) would arrive in < 1 real second
+            } else if effective_time / WARP_LEVELS[5] < 0.5 {
+                // Even minimum on-rails warp (100x) would arrive in < 0.5 real seconds
                 // Drop to 1x and stop auto-warp
                 render_state.warp_to_node = false;
                 game.warp_index = 0;
             } else {
                 // Find the highest warp level where we won't overshoot
-                // (effective_time / warp_level >= 1.0 real second remaining)
+                // (effective_time / warp_level >= 0.5 real seconds remaining)
                 // Minimum auto-warp: index 5 (100x)
                 let mut best_index = 5; // 100x minimum
                 for i in (5..WARP_LEVELS.len()).rev() {
-                    if effective_time / WARP_LEVELS[i] >= 1.0 {
+                    if effective_time / WARP_LEVELS[i] >= 0.5 {
                         best_index = i;
                         break;
                     }

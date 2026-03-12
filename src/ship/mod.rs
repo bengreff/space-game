@@ -605,7 +605,7 @@ impl Ship {
                 ship_orbit.retrograde,
             );
 
-            self.check_soi_transition_on_rails(solar_system);
+            self.check_soi_transition_on_rails(solar_system, dt);
         }
 
         // Radiative cooling while on rails (exponential decay toward ambient)
@@ -1166,8 +1166,10 @@ impl Ship {
         }
     }
 
-    /// Compute the direction the autopilot wants to rotate: +1 (CCW), -1 (CW), or 0 (hold).
-    /// Used to command engine gimbals before physics update.
+    /// Compute the autopilot rotation command in [-1, 1].
+    /// Used to command engine gimbals and for RCS fuel consumption direction.
+    /// Uses combined RCS + gimbal torque for stopping distance, and returns
+    /// a proportional value so gimbals smoothly reduce near the target.
     pub fn autopilot_desired_direction(&self, target_angle: f64, vessel: Option<&VesselPhysicsData>) -> f64 {
         let mut angle_diff = target_angle - self.rotation;
         while angle_diff > std::f64::consts::PI {
@@ -1178,23 +1180,31 @@ impl Ship {
         }
 
         let vel = self.rotational_velocity;
-        let accel = vessel
+        let rw_accel = vessel
             .map(|v| if v.moment_of_inertia > 0.0 { v.rcs_torque / v.moment_of_inertia } else { ROTATION_ACCEL })
             .unwrap_or(ROTATION_ACCEL);
+        // Gimbal torque is applied at 0.5x in update_flying, so use that for stopping distance
+        let gimbal_accel = vessel
+            .map(|v| if v.moment_of_inertia > 0.0 { v.gimbal_torque.abs() * 0.5 / v.moment_of_inertia } else { 0.0 })
+            .unwrap_or(0.0);
+        let total_accel = rw_accel + gimbal_accel;
         let threshold = 0.002;
 
         if angle_diff.abs() < threshold && vel.abs() < 0.01 {
             return 0.0;
         }
 
-        let stopping_dist = vel.powi(2) / (2.0 * accel);
+        let stopping_dist = vel.powi(2) / (2.0 * total_accel);
         let going_right_way = (angle_diff > 0.0 && vel >= 0.0) || (angle_diff < 0.0 && vel <= 0.0);
         let should_brake = going_right_way && stopping_dist >= angle_diff.abs() * 0.5;
 
         if should_brake {
+            // Full brake
             if vel > 0.0 { -1.0 } else { 1.0 }
         } else {
-            if angle_diff > 0.0 { 1.0 } else { -1.0 }
+            // Accelerate toward target, scaled down when close
+            let fraction = (angle_diff.abs() / 0.15).clamp(0.0, 1.0);
+            if angle_diff > 0.0 { fraction } else { -fraction }
         }
     }
 
@@ -1218,8 +1228,9 @@ impl Ship {
             .map(|v| if v.moment_of_inertia > 0.0 { v.rcs_torque / v.moment_of_inertia } else { ROTATION_ACCEL })
             .unwrap_or(ROTATION_ACCEL);
         // Include gimbal torque in total available acceleration for braking calculations
+        // Gimbal is applied at 0.5x in update_flying, so match that here
         let gimbal_accel = vessel
-            .map(|v| if v.moment_of_inertia > 0.0 { v.gimbal_torque.abs() / v.moment_of_inertia } else { 0.0 })
+            .map(|v| if v.moment_of_inertia > 0.0 { v.gimbal_torque.abs() * 0.5 / v.moment_of_inertia } else { 0.0 })
             .unwrap_or(0.0);
         let total_accel = rw_accel + gimbal_accel;
         let threshold = 0.002; // ~0.1 degrees

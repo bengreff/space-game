@@ -3107,7 +3107,7 @@ impl RenderState {
         self.pe_markers.clear();
         self.closest_approach_marker = None;
 
-        if let Some(ship_data) = ship {
+        if let Some(ship_data) = ship.filter(|_| !in_galaxy_view) {
             let pixels_per_world_unit = self.camera.zoom * self.size.height as f32 / 2.0;
             let ship_pixels = ship_data.size as f32 * pixels_per_world_unit * 2.0;
 
@@ -3840,13 +3840,13 @@ impl RenderState {
         // Draw bodies on top of orbit lines
         self.add_body_vertices(&mut all_vertices, &mut all_indices, bodies, scale);
 
-        // Draw launchpad on body surface (ship view only)
-        if let Some(ship_data) = ship {
+        // Draw launchpad on body surface (ship view only, not galaxy view)
+        if let Some(ship_data) = ship.filter(|_| !in_galaxy_view) {
             self.add_launchpad_vertices(&mut all_vertices, &mut all_indices, bodies, scale, ship_data);
         }
 
-        // Draw ship on top of everything
-        if let Some(ship_data) = ship {
+        // Draw ship on top of everything (skip in galaxy view — only stars visible)
+        if let Some(ship_data) = ship.filter(|_| !in_galaxy_view) {
             // Ship position relative to camera, using two-step subtraction for precision.
             // Each subtraction is between values of similar magnitude, preserving f64 precision.
             let rel_x = ((self.ship_body_center[0] - cam_x) + (self.ship_rel_offset[0] - off_x)) as f32;
@@ -4322,14 +4322,13 @@ impl RenderState {
         }
 
         // Background vessels (tracking station, flight map view)
-        if !background_vessels.is_empty() {
+        self.background_vessel_screen_positions.clear();
+        if !background_vessels.is_empty() && !in_galaxy_view {
             let cam_x = self.camera.body_center[0];
             let cam_y = self.camera.body_center[1];
             let off_x = self.camera.ship_offset[0];
             let off_y = self.camera.ship_offset[1];
             let pixels_per_world_unit = self.camera.zoom * self.size.height as f32 / 2.0;
-
-            self.background_vessel_screen_positions.clear();
 
             for vessel in background_vessels {
                 let rel_x = ((vessel.body_center[0] - cam_x) + (vessel.rel_offset[0] - off_x)) as f32;

@@ -1,5 +1,5 @@
 use crate::bodies::{SolarSystem, G};
-use super::{Ship, BINARY_SEARCH_ITERATIONS};
+use super::{Ship, ShipOrbit, BINARY_SEARCH_ITERATIONS};
 
 impl Ship {
     /// Get velocity of a body in absolute coordinates
@@ -35,66 +35,165 @@ impl Ship {
     }
 
     /// Check for SOI transitions when on rails (with precise timing)
-    pub(crate) fn check_soi_transition_on_rails(&mut self, solar_system: &SolarSystem) {
+    ///
+    /// Uses binary search to find the exact SOI boundary crossing time within
+    /// the current timestep, then performs frame conversion at that precise moment.
+    /// This eliminates velocity kicks at high time warp caused by using body
+    /// positions/velocities at the overshot time instead of the crossing time.
+    pub(crate) fn check_soi_transition_on_rails(&mut self, solar_system: &SolarSystem, dt: f64) {
+        // Extract orbit data into locals to avoid borrow issues when mutating self
+        let (orbit, mean_anomaly, parent_idx, retrograde) = match self.cached_orbit {
+            Some(ref so) => (so.orbit, so.mean_anomaly, so.parent_idx, so.retrograde),
+            None => return,
+        };
+
+        let parent = &solar_system.bodies[parent_idx];
+        let parent_mass = parent.effective_mass_at(orbit.semi_major_axis);
+        let mean_motion = orbit.mean_motion(parent_mass);
+        let direction = if retrograde { -1.0 } else { 1.0 };
+        let delta_m = direction * mean_motion * dt;
+        let prev_mean_anomaly = mean_anomaly - delta_m;
+
         let current_body = &solar_system.bodies[self.soi_body];
         let dist_from_current = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
 
         // Check if we've exited current SOI
         if dist_from_current > current_body.soi_radius {
-            if let Some(parent_idx) = current_body.parent {
-                let soi_body_pos = self.get_body_position_at_time(self.soi_body, solar_system.time, solar_system);
-                let soi_body_vel = self.get_body_velocity_at_time(self.soi_body, solar_system.time, solar_system);
+            if let Some(new_parent_idx) = current_body.parent {
+                // Binary search to find exact crossing fraction
+                let mut lo = 0.0_f64;
+                let mut hi = 1.0_f64;
+                for _ in 0..BINARY_SEARCH_ITERATIONS {
+                    let mid = (lo + hi) / 2.0;
+                    let test_m = prev_mean_anomaly + mid * delta_m;
+                    let test_pos = orbit.position_from_mean_anomaly(test_m, parent_mass);
+                    let test_dist = (test_pos[0].powi(2) + test_pos[1].powi(2)).sqrt();
+                    if test_dist < current_body.soi_radius {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                let crossing_fraction = (lo + hi) / 2.0;
+                let crossing_time = solar_system.time - dt * (1.0 - crossing_fraction);
+                let crossing_m = prev_mean_anomaly + crossing_fraction * delta_m;
 
-                self.rel_position = [
-                    self.rel_position[0] + soi_body_pos[0],
-                    self.rel_position[1] + soi_body_pos[1],
-                ];
-                self.rel_velocity = [
-                    self.rel_velocity[0] + soi_body_vel[0],
-                    self.rel_velocity[1] + soi_body_vel[1],
-                ];
+                // Ship state at crossing
+                let cross_pos = orbit.position_from_mean_anomaly(crossing_m, parent_mass);
+                let cross_vel = orbit.velocity_from_mean_anomaly_with_direction(crossing_m, parent_mass, retrograde);
 
-                self.soi_body = parent_idx;
+                // Body state at crossing time
+                let body_pos = self.get_body_position_at_time(self.soi_body, crossing_time, solar_system);
+                let body_vel = self.get_body_velocity_at_time(self.soi_body, crossing_time, solar_system);
 
+                // Convert to parent frame at crossing time
+                self.rel_position = [cross_pos[0] + body_pos[0], cross_pos[1] + body_pos[1]];
+                self.rel_velocity = [cross_vel[0] + body_vel[0], cross_vel[1] + body_vel[1]];
+                self.soi_body = new_parent_idx;
+
+                // Compute new orbit and propagate remaining time
+                let remaining_dt = dt * (1.0 - crossing_fraction);
                 if let Some(new_orbit) = self.calculate_orbit_with_anomaly(solar_system) {
-                    self.cached_orbit = Some(new_orbit);
+                    let new_parent = &solar_system.bodies[new_orbit.parent_idx];
+                    let new_parent_mass = new_parent.effective_mass_at(new_orbit.orbit.semi_major_axis);
+                    let new_mean_motion = new_orbit.orbit.mean_motion(new_parent_mass);
+                    let new_direction = if new_orbit.retrograde { -1.0 } else { 1.0 };
+
+                    let mut advanced_m = new_orbit.mean_anomaly + new_direction * new_mean_motion * remaining_dt;
+                    advanced_m = advanced_m.rem_euclid(std::f64::consts::TAU);
+
+                    self.rel_position = new_orbit.orbit.position_from_mean_anomaly(advanced_m, new_parent_mass);
+                    self.rel_velocity = new_orbit.orbit.velocity_from_mean_anomaly_with_direction(advanced_m, new_parent_mass, new_orbit.retrograde);
+
+                    self.cached_orbit = Some(ShipOrbit {
+                        mean_anomaly: advanced_m,
+                        ..new_orbit
+                    });
                 } else {
+                    // Hyperbolic or invalid orbit in new frame — go off rails
+                    self.rel_position = [
+                        self.rel_position[0] + self.rel_velocity[0] * remaining_dt,
+                        self.rel_position[1] + self.rel_velocity[1] * remaining_dt,
+                    ];
                     self.on_rails = false;
                 }
 
-                println!("SOI: Entered {} SOI", solar_system.bodies[parent_idx].name);
+                println!("SOI: Entered {} SOI", solar_system.bodies[new_parent_idx].name);
                 return;
             }
         }
 
         // Check if we've entered a child body's SOI
-        // Use simple distance check instead of expensive find_soi_intersection
-        // This runs every frame, so it must be fast
         for (child_idx, child) in solar_system.bodies.iter().enumerate() {
             if child.parent != Some(self.soi_body) {
                 continue;
             }
 
-            let child_pos = self.get_body_position_at_time(child_idx, solar_system.time, solar_system);
-            let dx = self.rel_position[0] - child_pos[0];
-            let dy = self.rel_position[1] - child_pos[1];
+            let child_pos_now = self.get_body_position_at_time(child_idx, solar_system.time, solar_system);
+            let dx = self.rel_position[0] - child_pos_now[0];
+            let dy = self.rel_position[1] - child_pos_now[1];
             let dist = (dx * dx + dy * dy).sqrt();
 
             if dist < child.soi_radius {
-                // We've entered this child's SOI - convert to child-relative coordinates
-                let child_vel = self.get_body_velocity_at_time(child_idx, solar_system.time, solar_system);
+                // Binary search to find exact crossing fraction
+                let mut lo = 0.0_f64;
+                let mut hi = 1.0_f64;
+                for _ in 0..BINARY_SEARCH_ITERATIONS {
+                    let mid = (lo + hi) / 2.0;
+                    let test_m = prev_mean_anomaly + mid * delta_m;
+                    let test_time = solar_system.time - dt + mid * dt;
+                    let ship_pos = orbit.position_from_mean_anomaly(test_m, parent_mass);
+                    let child_pos = self.get_body_position_at_time(child_idx, test_time, solar_system);
+                    let cdx = ship_pos[0] - child_pos[0];
+                    let cdy = ship_pos[1] - child_pos[1];
+                    let test_dist = (cdx * cdx + cdy * cdy).sqrt();
+                    if test_dist >= child.soi_radius {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                let crossing_fraction = (lo + hi) / 2.0;
+                let crossing_time = solar_system.time - dt + crossing_fraction * dt;
+                let crossing_m = prev_mean_anomaly + crossing_fraction * delta_m;
 
-                self.rel_position = [dx, dy];
-                self.rel_velocity = [
-                    self.rel_velocity[0] - child_vel[0],
-                    self.rel_velocity[1] - child_vel[1],
-                ];
+                // Ship state at crossing
+                let cross_pos = orbit.position_from_mean_anomaly(crossing_m, parent_mass);
+                let cross_vel = orbit.velocity_from_mean_anomaly_with_direction(crossing_m, parent_mass, retrograde);
 
+                // Child body state at crossing time
+                let child_pos_cross = self.get_body_position_at_time(child_idx, crossing_time, solar_system);
+                let child_vel_cross = self.get_body_velocity_at_time(child_idx, crossing_time, solar_system);
+
+                // Convert to child frame at crossing time
+                self.rel_position = [cross_pos[0] - child_pos_cross[0], cross_pos[1] - child_pos_cross[1]];
+                self.rel_velocity = [cross_vel[0] - child_vel_cross[0], cross_vel[1] - child_vel_cross[1]];
                 self.soi_body = child_idx;
 
+                // Compute new orbit and propagate remaining time
+                let remaining_dt = dt * (1.0 - crossing_fraction);
                 if let Some(new_orbit) = self.calculate_orbit_with_anomaly(solar_system) {
-                    self.cached_orbit = Some(new_orbit);
+                    let new_parent = &solar_system.bodies[new_orbit.parent_idx];
+                    let new_parent_mass = new_parent.effective_mass_at(new_orbit.orbit.semi_major_axis);
+                    let new_mean_motion = new_orbit.orbit.mean_motion(new_parent_mass);
+                    let new_direction = if new_orbit.retrograde { -1.0 } else { 1.0 };
+
+                    let mut advanced_m = new_orbit.mean_anomaly + new_direction * new_mean_motion * remaining_dt;
+                    advanced_m = advanced_m.rem_euclid(std::f64::consts::TAU);
+
+                    self.rel_position = new_orbit.orbit.position_from_mean_anomaly(advanced_m, new_parent_mass);
+                    self.rel_velocity = new_orbit.orbit.velocity_from_mean_anomaly_with_direction(advanced_m, new_parent_mass, new_orbit.retrograde);
+
+                    self.cached_orbit = Some(ShipOrbit {
+                        mean_anomaly: advanced_m,
+                        ..new_orbit
+                    });
                 } else {
+                    // Hyperbolic or invalid orbit in new frame — go off rails
+                    self.rel_position = [
+                        self.rel_position[0] + self.rel_velocity[0] * remaining_dt,
+                        self.rel_position[1] + self.rel_velocity[1] * remaining_dt,
+                    ];
                     self.on_rails = false;
                 }
 
