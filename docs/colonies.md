@@ -18,6 +18,7 @@ Every resource in the game. All quantities in **kg**.
 | 6 | **Atmospheric CO2** | Carbon dioxide from planetary atmospheres (Mars, Venus). | N/A* |
 | 7 | **Gas Giant Atmosphere** | H2/He/He-3 mix scooped from Jupiter, Saturn, Uranus, Neptune. | N/A* |
 | 8 | **Rare Earth Elements** | Neodymium, dysprosium, europium bearing minerals. Required for Electronics manufacturing. | $500 |
+| 9 | **Uranium Ore** | Uranium-bearing minerals. Enriched via centrifuge cascade into fission reactor fuel. | $100 |
 
 *Atmospheric resources only exist at colonies with atmospheres. Not purchasable.
 
@@ -25,32 +26,33 @@ Every resource in the game. All quantities in **kg**.
 
 | # | Resource | Description | Earth Price ($/kg) |
 |---|----------|-------------|-------------------:|
-| 9 | **Structural Metal** | Aerospace-grade aluminum/titanium/steel alloys. Precision machined, heat-treated, inspected. Smelted from Metal Ore (5:1 ratio). | $100 |
-| 10 | **High-Temp Alloys** | Inconel, tungsten, ceramic composites. Engine nozzles, heat shields. Single-crystal castings, vacuum-forged. From Metal Ore + Structural Metal. | $1,000 |
-| 11 | **Electronics** | Flight-qualified avionics, rad-hardened computers, sensors, solar cells. MIL-spec manufacturing. From Structural Metal + HTA + REE. | $10,000 |
-| 12 | **Superconductors** | YBCO tape, REBCO coils, cryocoolers. Magnets for fusion/antimatter/ion engines. Fabricated from Structural Metal + HTA + Electronics. | $50,000 |
-| 13 | **Precision Instruments** | Magnetic confinement coils, particle beam optics, cryogenic seals. Sub-micron tolerance manufacturing. Earth-only until Electronics Mfg Tier 12. | $200,000 |
+| 10 | **Structural Metal** | Aerospace-grade aluminum/titanium/steel alloys. Precision machined, heat-treated, inspected. Smelted from Metal Ore (5:1 ratio). | $100 |
+| 11 | **High-Temp Alloys** | Inconel, tungsten, ceramic composites. Engine nozzles, heat shields. Single-crystal castings, vacuum-forged. From Metal Ore + Structural Metal. | $1,000 |
+| 12 | **Electronics** | Flight-qualified avionics, rad-hardened computers, sensors, solar cells. MIL-spec manufacturing. From Structural Metal + HTA + REE. | $10,000 |
+| 13 | **Superconductors** | YBCO tape, REBCO coils, cryocoolers. Magnets for fusion/antimatter/ion engines. Fabricated from Structural Metal + HTA + Electronics. | $50,000 |
+| 14 | **Precision Instruments** | Magnetic confinement coils, particle beam optics, cryogenic seals. Sub-micron tolerance manufacturing. Earth-only until Electronics Mfg Tier 12. | $200,000 |
 
 ### Fuel Resources
 
 | # | Resource | Earth Price ($/kg) | Earth Available | Notes |
 |---|----------|-------------------:|:---:|-------|
-| 14 | **RP-1** | $1 | Yes | Kerosene. Refined from hydrocarbons (4:1 ratio). |
-| 15 | **Methane** | $2 | Yes | CH4. From hydrocarbons (~1:1 ratio), or Sabatier reaction (CO2 + LH2). |
-| 16 | **Liquid Hydrogen (LH2)** | $6 | Yes | From water electrolysis. ~9:1 Water:LH2 (co-produced with LOX). |
-| 17 | **LOX** | $0.50 | Yes | Liquid oxygen. From water electrolysis. ~1.1:1 Water:LOX (co-produced with LH2). |
-| 18 | **Xenon** | $3,000 | Yes | Rare noble gas. Earth atmospheric extraction only. |
-| 19 | **Deuterium** | $20 | Yes | Heavy hydrogen. Extracted from water (~0.016% by mass). |
-| 20 | **Tritium** | $30,000 | Yes | Bred from lithium in fission reactors. 12.3-year half-life. Required for Nuclear Pulse Units (boosted fission). |
-| 21 | **Nuclear Pulse Units** | $100,000 | Yes | Weapons-grade fissile material. Purchasable on Earth; buildable at colonies with Fission Reactor. |
-| 22 | **Helium-3** | N/A | **No** | Lunar regolith (100,000:1 ratio) or gas giant atmosphere (10,000:1 ratio). |
-| 23 | **Antimatter** | N/A | **No** | Equal parts antihydrogen + hydrogen by mass. Accelerator production only (hydrogen half from electrolysis). |
+| 15 | **RP-1** | $1 | Yes | Kerosene. Refined from hydrocarbons (4:1 ratio). |
+| 16 | **Methane** | $2 | Yes | CH4. From hydrocarbons (~1:1 ratio), or Sabatier reaction (CO2 + LH2). |
+| 17 | **Liquid Hydrogen (LH2)** | $6 | Yes | From water electrolysis. ~9:1 Water:LH2 (co-produced with LOX). |
+| 18 | **LOX** | $0.50 | Yes | Liquid oxygen. From water electrolysis. ~1.1:1 Water:LOX (co-produced with LH2). |
+| 19 | **Xenon** | $3,000 | Yes | Rare noble gas. Earth atmospheric extraction only. |
+| 20 | **Deuterium** | $20 | Yes | Heavy hydrogen. Extracted from water (~0.016% by mass). |
+| 21 | **Tritium** | $30,000 | Yes | Bred from lithium in fission reactors. 12.3-year half-life. Required for Nuclear Pulse Units (boosted fission). |
+| 22 | **Enriched Uranium** | $15,000 | Yes | Reactor-grade U-235 enriched from Uranium Ore (100:1 ratio). Consumed by Fission Reactors. |
+| 23 | **Nuclear Pulse Units** | $100,000 | Yes | Weapons-grade fissile material. Purchasable on Earth; buildable at colonies with Fission Reactor. |
+| 24 | **Helium-3** | N/A | **No** | Lunar regolith (100,000:1 ratio) or gas giant atmosphere (10,000:1 ratio). |
+| 25 | **Antimatter** | N/A | **No** | Equal parts antihydrogen + hydrogen by mass. Accelerator production only (hydrogen half from electrolysis). |
 
 ### Colony Consumables
 
 | # | Resource | Description |
 |---|----------|-------------|
-| 24 | **Food** | Consumed at 0.5 kg/crew/day (dehydrated rations). Produced by Greenhouse (water circulated in closed loop). |
+| 26 | **Food** | Consumed at 0.5 kg/crew/day (dehydrated rations). Produced by Greenhouse (water circulated in closed loop). |
 
 **Power** is tracked as a colony stat (kW generated vs. kW consumed), not a stockpiled resource.
 
@@ -62,22 +64,22 @@ Shows which raw resources can be extracted by Mine or Atmospheric Collector on e
 
 ### Mineable Resources (via Mine)
 
-| Body | Metal Ore | Regolith | Water | Lithium Ore | Hydrocarbons | Rare Earth Elements |
-|------|:---------:|:--------:|:-----:|:-----------:|:------------:|:-------------------:|
-| Moon | Yes | Yes (He-3) | Yes (poles) | — | — | Yes |
-| Mercury | Yes (rich) | Yes | — | — | — | Yes |
-| Venus | Yes | — | — | — | — | — |
-| Mars | Yes | — | Yes | Yes | — | Yes |
-| Phobos | — | Yes | Yes (trace) | — | — | — |
-| Deimos | — | Yes | Yes (trace) | — | — | — |
-| Io | Yes | Yes | — | — | — | — |
-| Europa | — | — | Yes (abundant) | — | — | — |
-| Ganymede | Yes | Yes | Yes | — | — | — |
-| Callisto | — | Yes | Yes | — | — | — |
-| Titan | — | — | Yes | — | Yes (lakes) | — |
-| Rhea | — | Yes | Yes | — | — | — |
-| Iapetus | — | Yes | Yes | — | — | — |
-| Dione | — | Yes | Yes | — | — | — |
+| Body | Metal Ore | Regolith | Water | Lithium Ore | Hydrocarbons | Rare Earth Elements | Uranium Ore |
+|------|:---------:|:--------:|:-----:|:-----------:|:------------:|:-------------------:|:-----------:|
+| Moon | Yes | Yes (He-3) | Yes (poles) | — | — | Yes | Yes (trace) |
+| Mercury | Yes (rich) | Yes | — | — | — | Yes | Yes |
+| Venus | Yes | — | — | — | — | — | — |
+| Mars | Yes | — | Yes | Yes | — | Yes | Yes |
+| Phobos | — | Yes | Yes (trace) | — | — | — | — |
+| Deimos | — | Yes | Yes (trace) | — | — | — | — |
+| Io | Yes | Yes | — | — | — | — | Yes (volcanic) |
+| Europa | — | — | Yes (abundant) | — | — | — | — |
+| Ganymede | Yes | Yes | Yes | — | — | — | Yes |
+| Callisto | — | Yes | Yes | — | — | — | — |
+| Titan | — | — | Yes | — | Yes (lakes) | — | — |
+| Rhea | — | Yes | Yes | — | — | — | — |
+| Iapetus | — | Yes | Yes | — | — | — | — |
+| Dione | — | Yes | Yes | — | — | — | — |
 
 ### Atmospheric Resources (via Atmospheric Collector)
 
@@ -98,6 +100,7 @@ Shows which raw resources can be extracted by Mine or Atmospheric Collector on e
 - **Xenon** is Earth-purchase only. Must be shipped to colonies via trade routes.
 - **Nuclear Pulse Units** purchasable on Earth or manufactured at colonies with a co-located Fission Reactor (see §5).
 - **Tritium** must be bred from Lithium Ore in a Factory with a co-located Fission Reactor.
+- **Uranium Ore** available on Moon, Mercury, Mars, Io, and Ganymede. Must be enriched into Enriched Uranium for Fission Reactors. Early colonies buy Enriched Uranium from Earth; local enrichment requires Nuclear Engineering Tier 3.
 - **He-3** only from lunar regolith extraction (slow) or gas giant atmospheric separation (fast).
 - **Antimatter** only from Particle Accelerators (colony building).
 - **Mercury has no accessible water.** Water must be shipped from other colonies for crew support and greenhouse operation.
@@ -106,11 +109,11 @@ Shows which raw resources can be extracted by Mine or Atmospheric Collector on e
 
 ## 3. Habitability Scores
 
-0 = utterly uninhabitable, 100 = Earth. The score determines a **cost multiplier** for Habitats and Greenhouses: `cost × (100 - score) / 100`. This represents extra shielding, pressure vessels, insulation, and radiation protection needed for human-occupied structures.
+0 = utterly uninhabitable, 100 = Earth. The score determines a **total cost multiplier** for Habitats and Greenhouses: `total_cost = base_cost × (200 - score) / 100`. This represents combined construction and the extra shielding, pressure vessels, insulation, and radiation protection needed for human-occupied structures.
 
-Examples: Earth (100) = 0% extra cost (homes/farms built from anything). Mars (30) = 70% cost. Moon (15) = 85% cost. Mercury (8) = 92% cost. Ship/space station (0) = 100% cost.
+Examples: Earth (100) = 1.0× base cost. Mars (30) = 1.7× base cost. Moon (15) = 1.85× base cost. Mercury (8) = 1.92× base cost. Ship/space station (0) = 2.0× base cost.
 
-**Affects Habitats and Greenhouses ONLY** — resource costs, power draw, AND maintenance all scale by this formula. Automated industrial infrastructure (Mines, Factories, Solar Farms, Construction Robots, Particle Accelerators, Railguns, Launchpads) uses base costs — these systems don't require the radiation shielding and life support that drives the multiplier.
+**Affects Habitats and Greenhouses ONLY** — resource costs, power draw, AND maintenance all scale by this multiplier. Automated industrial infrastructure (Mines, Factories, Solar Farms, Construction Robots, Particle Accelerators, Railguns, Launchpads) uses base costs — these systems don't require the radiation shielding and life support that drives the multiplier.
 
 | Body | Score | Avg Temp (K) | Radiation | Atmosphere | Notes |
 |------|------:|-------------:|-----------|------------|-------|
@@ -244,10 +247,11 @@ Constant power output regardless of location. Essential for outer system colonie
 | Stat | Value |
 |------|-------|
 | Power output | 500 MW (constant) |
+| Fuel consumed | 0.5 kg Enriched Uranium/day |
 | Build cost | 200,000 kg Metal, 100,000 kg HTA, 100,000 kg Elec, 50,000 kg Super |
 | Maintenance / 30 days | 750 kg Metal, 250 kg HTA |
 
-Also provides neutron flux required for Tritium Breeding recipe.
+Consumes Enriched Uranium continuously — without fuel supply, the reactor shuts down. Early colonies purchase Enriched Uranium from Earth ($15,000/kg); local enrichment from Uranium Ore requires Nuclear Engineering Tier 3. Also provides neutron flux required for Tritium Breeding recipe.
 
 ### Fusion Reactor
 High-output power. Requires He-3 fuel supply.
@@ -309,6 +313,20 @@ Electromagnetic launch system. No-atmosphere bodies only (Moon, Mercury, Phobos,
 | Build cost | 200,000 kg Metal, 40,000 kg HTA, 60,000 kg Elec, 40,000 kg Super |
 | Maintenance / 30 days | 500 kg Metal, 125 kg HTA, 125 kg Super |
 
+### Light Construction Robot
+A single remotely operated construction drone for small or early-stage colonies. Lower throughput than a full Construction Robot fleet, but much cheaper to build and ship. Ideal for initial colony bootstrapping.
+
+| Stat | Value |
+|------|-------|
+| Crew required | 1 per robot |
+| Assembly rate | 5 tonnes/day (new construction) |
+| Maintenance rate | 15 tonnes/day (repair/replacement work) |
+| Power draw | 100 kW |
+| Build cost | 3,000 kg Metal, 1,500 kg HTA, 5,000 kg Elec |
+| Maintenance / 30 days | 15 kg Metal, 8 kg HTA, 15 kg Elec |
+
+Suitable for colonies with 1-5 buildings. A single Light Robot can assemble a Mine (30t) in 6 days or a Habitat (9t) in under 2 days. Upgrade to full Construction Robots as the colony grows.
+
 ### Construction Robot
 Remotely operated construction drones. Physically assembles colony buildings and megastructure segments from refined materials, and performs ongoing maintenance/repairs. Each unit represents a fleet of robotic constructors managed by one crew member.
 
@@ -360,6 +378,18 @@ Bulk material storage facility. Stores any resource type. No power draw and no m
 
 Build multiple stockpiles for more storage. Colonies without sufficient stockpile capacity cannot accept deliveries beyond their current storage — the player must build stockpiles before large shipments arrive. Not affected by the habitability multiplier.
 
+### Food Storage
+Refrigerated storage facility for preserved food supplies. Extends a colony's food buffer beyond what Habitats can hold, providing resilience against greenhouse disruptions or supply delays.
+
+| Stat | Value |
+|------|-------|
+| Food capacity | 10,000 kg |
+| Power draw | 5 kW |
+| Build cost | 5,000 kg Metal, 500 kg Elec |
+| Maintenance / 30 days | 10 kg Metal |
+
+10,000 kg feeds 20 crew for 1,000 days (~2.7 years). Build multiple for larger colonies or longer buffers. Not affected by the habitability multiplier.
+
 ### Technology Upgrades
 
 All building output rates above are **base values (Tier 0)**. Each building type has an independent technology line with 15 upgrade tiers. Research improves output by **+11% per tier** (multiplicative), giving approximately **4.8× total improvement** from Tier 0 to Tier 15.
@@ -376,21 +406,21 @@ All building output rates above are **base values (Tier 0)**. Each building type
 
 **Technology Lines** (15 tiers each, chained after a prerequisite tech tree node — see §10):
 
-| Tech Line | Prereq Node | Affects | Base → Tier 15 |
-|-----------|-------------|---------|----------------|
-| **Mining** | 2.6 Colony Foundations | Mine output rate | 2,000 → ~10,000 kg/day |
-| **Metallurgy** | 2.6 Colony Foundations | Metal Smelting + Alloy Forging throughput | 400 → ~2,000 SM/day |
-| **Electronics Manufacturing** | 3.8 Extended Crewed | Electronics + Superconductor fabrication throughput | 8 → ~38 Elec/day |
-| **Agriculture** | 2.3 Advanced Crewed | Greenhouse food output | 0.5 → ~2.4 kg/day (Basic), 2.5 → ~12 (Advanced) |
-| **Chemical Processing** | 2.6 Colony Foundations | Electrolysis, Sabatier, hydrocarbon + fuel refining | All fuel recipes ×4.8 |
-| **Atmospheric Science** | 3.6 Heavy Fission | Atmospheric Collector output rate | 10,000 → ~50,000 kg/day |
-| **Nuclear Engineering** | 3.6 Heavy Fission | Tritium Breeding, NPU Assembly throughput | 0.5 → ~2.5 Tritium/day |
-| **Isotope Extraction** | 6.3 Fusion Power | He-3 processing (regolith and gas giant) | 0.2 → ~1 He-3/day (regolith), 1 → ~5 (gas giant) |
-| **Construction** | 2.6 Colony Foundations | Robot assembly/maintenance rates, ship part build speed | 20 → ~100 t/day assembly |
-| **Precision Manufacturing** | Elec Mfg Tier 12 | Factory Precision Instruments recipe throughput | Unlocked at Electronics Mfg Tier 12 |
-| **Life Support** | 2.6 Colony Foundations | Habitat + Greenhouse maintenance cost reduction | 1.0× → 0.21× maintenance |
+| Tech Line | Prereq Node | Affects | Base → Tier 15 | Recipe Unlocks |
+|-----------|-------------|---------|----------------|----------------|
+| **Mining** | 2.6 Colony Foundations | Mine output rate | 2,000 → ~10,000 kg/day | — (throughput only) |
+| **Metallurgy** | 2.6 Colony Foundations | Metal Smelting + Alloy Forging throughput | 400 → ~2,000 SM/day | T5: Alloy Forging |
+| **Electronics Manufacturing** | 3.8 Extended Crewed | Electronics + Superconductor fabrication throughput | 8 → ~38 Elec/day | T6: Superconductor Fab |
+| **Agriculture** | 2.3 Advanced Crewed | Greenhouse food output | 0.5 → ~2.4 kg/day (Basic), 2.5 → ~12 (Advanced) | — (throughput only) |
+| **Chemical Processing** | 2.6 Colony Foundations | Electrolysis, Sabatier, hydrocarbon + fuel refining | All fuel recipes ×4.8 | T3: Sabatier, Kerosene Refining; T8: Deuterium Extraction |
+| **Atmospheric Science** | 3.6 Heavy Fission | Atmospheric Collector output rate | 10,000 → ~50,000 kg/day | — (throughput only) |
+| **Nuclear Engineering** | 3.6 Heavy Fission | Uranium Enrichment, Tritium Breeding, NPU Assembly throughput | 0.5 → ~2.5 Tritium/day | T3: Uranium Enrichment; T5: NPU Assembly |
+| **Isotope Extraction** | 6.3 Fusion Power | He-3 processing (regolith and gas giant) | 0.2 → ~1 He-3/day (regolith), 1 → ~5 (gas giant) | T5: Gas Giant He-3 |
+| **Construction** | 2.6 Colony Foundations | Robot assembly/maintenance rates, ship part build speed | 20 → ~100 t/day assembly | T8: Ship Part Mfg |
+| **Precision Manufacturing** | Elec Mfg Tier 12 | Factory Precision Instruments recipe throughput | Unlocked at Electronics Mfg Tier 12 | — (single recipe) |
+| **Life Support** | 2.6 Colony Foundations | Habitat + Greenhouse maintenance cost reduction | 1.0× → 0.21× maintenance | — (throughput only) |
 
-Each tier costs Science points (see §8 Science system). Cost per tier: `base × tier^1.8`. Tech lines are independent — the player prioritizes based on strategy.
+Each tier costs Science points (see §8 Science system). Cost per tier: `base × tier^1.7`. Tech lines are independent — the player prioritizes based on strategy.
 
 **Effect on late-game calculations**: The Mk IV analysis (§4 Particle Accelerators) and He-3 production figures assume Tier 13-15 technology. Early colonies operate at base rates and scale up over decades.
 
@@ -499,7 +529,7 @@ Each refined resource requires inputs from earlier stages. The full dependency c
 **Total Electronics** = 59,533,000 + 1,533,000 = **61,066,000 t**
 
 **Electronics** (1.25 kg Metal + 0.25 kg HTA + 0.125 kg REE → 1 kg Elec):
-61,066,000 t Elec needs: 76,333,000 t Metal + 15,267,000 t HTA + ~7,633 t REE
+61,066,000 t Elec needs: 76,333,000 t Metal + 15,267,000 t HTA + ~7,633,000 t REE
 
 **Total HTA** = 766,500 + 3,066,000 + 15,267,000 = **19,100,000 t**
 
@@ -523,7 +553,7 @@ Each refined resource requires inputs from earlier stages. The full dependency c
 | Electronics | 59,533,000 t | 1,533,000 t | **61,066,000 t** |
 | Superconductors | 3,066,000 t | — | **3,066,000 t** |
 | Precision Instruments | 766.5 t | — | **766.5 t** |
-| Rare Earth Elements | — | ~7,633 t | **~7,633 t** (mining) |
+| Rare Earth Elements | — | ~7,633,000 t | **~7,633,000 t** (mining) |
 
 ##### Factory & Mine Requirements (30-year production phase)
 
@@ -541,7 +571,7 @@ Each refined resource requires inputs from earlier stages. The full dependency c
 | Mining | Total Ore | Per Mine Per Day | **Mines Needed** |
 |--------|----------:|----------------:|-------:|
 | Metal Ore | 1,274,000,000 t | 10 t | **11,600** |
-| Rare Earth Elements | ~7,633 t | 10 t | **~1** |
+| Rare Earth Elements | ~7,633,000 t | 10 t | **~70** |
 
 **Electronics manufacturing is the critical bottleneck** — 139,500 factories (64% of all industry) producing 40 kg/day each. This is what makes the Mk IV a true planetary-scale project. Precision Instruments add only 73 factories (<0.04%) — trivial compared to the Electronics bottleneck.
 
@@ -570,7 +600,7 @@ Additionally, Construction Robots must maintain all operational infrastructure (
 
 At 300 t/day maintenance throughput per robot (9,000 t per 30-day cycle): **~27 robots** dedicated to maintenance at full scale.
 
-**Peak (Phase C): ~210 Construction Robots** (~185 construction + ~27 maintenance), requiring **210 crew**. Mercury habitability = 8, so the 11 Habitats needed for this crew cost 92% extra in resources, power, and maintenance.
+**Peak (Phase C): ~210 Construction Robots** (~185 construction + ~27 maintenance), requiring **210 crew**. Mercury habitability = 8, so the 11 Habitats needed for this crew cost 1.92× base in resources, power, and maintenance.
 
 **Operational (Phase D): ~27 Construction Robots** (maintenance only), requiring **27 crew**.
 
@@ -702,6 +732,7 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Output | 200 kg Structural Metal |
 | Time | 12 hours |
 | Power | 150 kW |
+| Waste | 800 kg slag (gangue minerals, impurities, silicates — discarded) |
 
 **Alloy Forging**
 | | |
@@ -710,6 +741,8 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Output | 30 kg High-Temp Alloys |
 | Time | 24 hours |
 | Power | 250 kW |
+| Waste | 210 kg (failed castings, machining swarf, impurity rejects — discarded) |
+| Requires | Metallurgy Tier 5. Early colonies must import HTA from Earth. |
 
 ### Advanced Manufacturing
 
@@ -720,6 +753,7 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Output | 8 kg Electronics |
 | Time | 24 hours |
 | Power | 300 kW |
+| Waste | 5 kg (etching residue, failed wafers, solder dross — discarded) |
 
 **Superconductor Fabrication**
 | | |
@@ -728,6 +762,8 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Output | 2 kg Superconductors |
 | Time | 48 hours |
 | Power | 500 kW |
+| Waste | 7 kg (rejected tape, contaminated substrate, test specimens — discarded) |
+| Requires | Electronics Manufacturing Tier 6. Must import Superconductors until then. |
 
 **Precision Instruments Manufacturing**
 | | |
@@ -736,6 +772,7 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Output | 1 kg Precision Instruments |
 | Time | 120 hours (5 days) |
 | Power | 500 kW |
+| Waste | 64 kg (rejected sub-micron components, calibration test articles, contaminated optics — discarded) |
 | Notes | Requires Electronics Manufacturing Tier 12. Tier 0: 0.2 kg/day/factory. Tier 15: ~0.96 kg/day/factory. |
 
 ### Water Processing
@@ -757,7 +794,7 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Time | 120 hours (5 days) |
 | Power | 100 kW |
 | Mass balance | 10,000 kg in → 10,000 kg out ✓ |
-| Notes | Deuterium is ~0.016% of water by mass. Byproduct LH2/LOX is usable. |
+| Notes | Deuterium is ~0.016% of water by mass. Byproduct LH2/LOX is usable. Requires Chemical Processing Tier 8. |
 
 ### Atmospheric Processing
 
@@ -769,7 +806,7 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Time | 12 hours |
 | Power | 75 kW |
 | Mass balance | 104 kg in → 104 kg out ✓ (CO2 + 4H2 → CH4 + 2H2O) |
-| Notes | Produces Water as byproduct, which can be electrolyzed back to LH2 — partially closed loop. |
+| Notes | Produces Water as byproduct, which can be electrolyzed back to LH2 — partially closed loop. Requires Chemical Processing Tier 3. |
 
 ### Hydrocarbon Processing
 
@@ -780,6 +817,7 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Output | 180 kg Methane |
 | Time | 4 hours |
 | Power | 30 kW |
+| Waste | 20 kg ethane/propane impurities (discarded) |
 | Notes | Titan's surface lakes are nearly pure methane/ethane. Simple purification. |
 
 **Kerosene Refining** (Titan — requires Hydrocarbons)
@@ -789,9 +827,20 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Output | 100 kg RP-1 |
 | Time | 12 hours |
 | Power | 75 kW |
-| Notes | Complex processing of light hydrocarbons into kerosene-grade fuel. |
+| Waste | 300 kg light hydrocarbon byproducts (discarded) |
+| Notes | Complex processing of light hydrocarbons into kerosene-grade fuel. Requires Chemical Processing Tier 3. |
 
 ### Nuclear Processing
+
+**Uranium Enrichment**
+| | |
+|-|-|
+| Input | 100 kg Uranium Ore |
+| Output | 1 kg Enriched Uranium |
+| Time | 48 hours |
+| Power | 500 kW |
+| Waste | 99 kg depleted uranium tails (discarded) |
+| Notes | Centrifuge cascade concentrates U-235 from ~0.7% to reactor-grade ~4%. Requires Nuclear Engineering Tier 3. Must import Enriched Uranium from Earth until then. |
 
 **Tritium Breeding** (requires co-located Fission Reactor for neutron flux)
 | | |
@@ -800,6 +849,7 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Output | 1 kg Tritium |
 | Time | 48 hours |
 | Power | 200 kW |
+| Waste | 19 kg irradiated lithium residue (discarded) |
 | Notes | Fission Reactor must be present on the colony. Lithium Ore mineable on Mars. |
 
 **Nuclear Pulse Unit Assembly** (requires co-located Fission Reactor for fissile material breeding)
@@ -809,7 +859,8 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Output | 1 Nuclear Pulse Unit (~50 kg) |
 | Time | 240 hours (10 days) |
 | Power | 500 kW |
-| Notes | Boosted fission device. Fission Reactor must be present for fissile material breeding. Tritium bred from Lithium Ore (Mars). |
+| Waste | ~90 kg machining swarf, shielding offcuts, and test components (discarded) |
+| Notes | Boosted fission device. Fission Reactor must be present for fissile material breeding. Tritium bred from Lithium Ore (Mars). Requires Nuclear Engineering Tier 5. Must import NPUs from Earth until then. |
 
 ### He-3 Extraction
 
@@ -820,6 +871,7 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Output | 0.2 kg Helium-3 |
 | Time | 24 hours |
 | Power | 500 kW |
+| Waste | ~20,000 kg spent regolith (returned to surface) |
 | Notes | Heats regolith to release solar-wind-implanted He-3. Extremely low yield (100,000:1 ratio). Requires 10 Mines to feed one Factory (Mine produces 2,000 kg/day, recipe needs 20,000 kg). |
 
 **Gas Giant He-3 Separation** (Jupiter, Saturn, Uranus, Neptune — requires Gas Giant Atmosphere)
@@ -829,7 +881,8 @@ All processing is done on the standard **Factory** building. Each Factory runs o
 | Output | 1 kg Helium-3 |
 | Time | 24 hours |
 | Power | 200 kW |
-| Notes | Cryogenic separation of He-3 from bulk H2/He. 1 Atmospheric Collector feeds 1 Factory exactly (10,000 kg/day). **5× more efficient than lunar extraction per factory.** |
+| Waste | ~9,999 kg bulk H2/He vented |
+| Notes | Cryogenic separation of He-3 from bulk H2/He. 1 Atmospheric Collector feeds 1 Factory exactly (10,000 kg/day). **5× more efficient than lunar extraction per factory.** Requires Isotope Extraction Tier 5. |
 
 ### Food Production
 
@@ -837,7 +890,7 @@ Handled by **Greenhouse** buildings directly (not a Factory recipe). Basic Green
 
 ### Ship Part Manufacturing
 
-Any Factory can build ship parts by consuming the part's resource cost (Metal, HTA, Elec, Super as defined in §7) from colony inventory. Production time = 120 hours per 1,000 kg of part mass at Tier 0 (minimum 40 hours for small parts). Improved by Construction technology.
+Any Factory can build ship parts by consuming the part's resource cost (Metal, HTA, Elec, Super as defined in §7) from colony inventory. Production time = 120 hours per 1,000 kg of part mass at Tier 0 (minimum 40 hours for small parts). Improved by Construction technology. Requires Construction Tier 8 — colonies need real construction expertise before building ships locally.
 
 ### Recipe Throughput Summary (Tier 0 base rates)
 
@@ -852,6 +905,7 @@ Any Factory can build ship parts by consuming the part's resource cost (Metal, H
 | Deuterium Extraction | 0.4 kg Deuterium | 1 Mine (on Water) |
 | Sabatier Reaction | 64 kg Methane (2 batches) | 1 Atmo Collector (excess) |
 | Methane Purification | 1,080 kg Methane (6 batches) | 1 Mine (on Hydrocarbons, excess) |
+| Uranium Enrichment | 0.5 kg Enriched Uranium (0.5 batches) | <1 Mine (on Uranium Ore) |
 | Tritium Breeding | 0.5 kg Tritium (0.5 batches) | <1 Mine (on Lithium Ore) |
 | Pulse Unit Assembly | 0.1 units | Needs Metal + HTA supply chain |
 | He-3 Regolith | 0.2 kg He-3 | **10 Mines** (on Regolith) |
@@ -885,7 +939,9 @@ A special cargo part that establishes a colony when landed on a body. Pre-fabric
 
 **Earth cost:** 10,600 × $100 + 50 × $1,000 + 1,350 × $10,000 + 3,000 × $50 (food) = **$14.8M**
 
-The Colony Module does NOT include a Construction Robot — the first robot must be delivered on a separate mission (pre-assembled, 30,000 kg, $78M at Earth prices). Until a robot arrives, the colony cannot build anything new. The 300-day food supply provides a buffer for follow-up missions.
+The Colony Module's Habitat is pre-fabricated for the destination and provided at **base cost (1.0×)**, bypassing the habitability multiplier. All subsequent Habitats built on-site pay the full multiplier for that body.
+
+The Colony Module does NOT include a Construction Robot — the first robot must be delivered on a separate mission (pre-assembled Light Construction Robot: 9,500 kg, $51.8M at Earth prices; or full Construction Robot: 30,000 kg, $156M). Until a robot arrives, the colony cannot build anything new. The 300-day food supply provides a buffer for follow-up missions.
 
 Land a ship carrying a Colony Module on any body without an existing colony → colony is established. The module is consumed and becomes the initial infrastructure.
 
@@ -1129,7 +1185,7 @@ On Earth, all resources are purchased with money at listed $/kg rates. On coloni
 | Lunar Tourism | $10M/tourist | Yes | Orbit Moon, return safely |
 | Material Return | Market price | Yes | Ship colony resources to Earth (sells at §1 $/kg) |
 
-**Early game flow**: Default parts build $200–500K probe rockets. Suborbital payloads net ~$300K profit. Orbital payloads require bigger engines (Node 1.3). Tourism requires crewed spaceflight (Node 1.6). Late-game income shifts to material returns from colonies.
+**Early game flow**: Default parts build $200–500K probe rockets. Suborbital payloads net ~$300K profit and the suborbital milestone (25 sci) provides early research momentum. With $5M/yr R&D (~45 sci/yr) plus milestones, orbit is reachable in ~2 years (140 sci for nodes 1.1–1.3). Orbital and geostationary milestones then inject 75 more science immediately. Tourism requires crewed spaceflight (Node 1.6). Late-game income shifts to material returns from colonies.
 
 ### Science
 
@@ -1137,7 +1193,17 @@ Science points unlock tech tree nodes (§10) and efficiency upgrade tiers (§4).
 
 #### Discovery Science — One-Time Rewards
 
-Awarded once per body per achievement (orbit, landing). Scaled by distance from Earth.
+**Earth Milestones** — awarded once each during early spaceflight:
+
+| Milestone | Science | Trigger |
+|-----------|--------:|--------|
+| First suborbital flight | 25 | Reach 100 km altitude |
+| First Earth orbit | 50 | Complete stable orbit |
+| Geostationary altitude | 25 | Reach 35,786 km altitude |
+
+**Total Earth milestones: 100 science**
+
+**Per-Body Discoveries** — awarded once per body per achievement (orbit, landing). Scaled by distance from Earth.
 
 ```
 Orbit reward  = 50 + 30 × ln(1 + distance_AU)
@@ -1167,7 +1233,7 @@ Landing reward = 100 + 80 × ln(1 + distance_AU)
 
 Gas giants: orbit only (no landing). Exoplanets: flat **500 orbit + 500 landing = 1,000/body**.
 
-**Total solar system discovery: ~4,530 science**
+**Total solar system discovery: ~4,630 science** (100 Earth milestones + 4,530 per-body)
 **3 exoplanet systems × ~8 bodies: ~24,000 science**
 
 #### R&D — Money to Science
@@ -1192,21 +1258,21 @@ Realistic trajectory over 200 years (ramping from $1M to $1B): **~22,000 total R
 
 Science Labs (§4) extract 10× the body's landing discovery value over time on a logarithmic exhaustion curve. See §4 Science Lab for building stats and extraction formula.
 
-**Solar system labs (14 bodies, 50yr): ~25,000 science**
+**Solar system labs (14 bodies, 50yr): ~27,000 science**
 **Exoplanet labs (3 systems × 8 bodies, 50yr): ~115,000 science**
 
 #### Total Science Budget
 
 | Source | Science |
 |--------|--------:|
-| Solar system discovery | 4,530 |
+| Solar system discovery | 4,630 |
 | Exoplanet discovery (3 systems) | 24,000 |
 | R&D (200yr, ramping to $1B/yr) | 22,000 |
-| Solar system labs (14 bodies) | 25,000 |
+| Solar system labs (14 bodies) | 27,000 |
 | Exoplanet labs (24 bodies) | 115,000 |
-| **Total** | **~190,500** |
+| **Total** | **~192,600** |
 
-Tech tree total cost: **~185,000** — completable with ~5,000 margin (see §10).
+Tech tree total cost: **~192,990** — tight but completable with full colonization + R&D (see §10).
 
 ### Trade Routes & Logistics
 
@@ -1382,15 +1448,15 @@ Available from game start (no research required):
 
 Gecko, Tank 1×1, Tank 1×2, Tank 1×4, Tank 1×8, Tiny Probe Core, NC-1 Nose Cone, AE-FF0 Fairing, TD-1 Decoupler
 
-### ERA 1: EARLY CHEMICAL (50–200 science)
+### ERA 1: EARLY CHEMICAL (25–200 science)
 
-**1.1 Basic Rocketry** — 50 sci — Prereqs: none
+**1.1 Basic Rocketry** — 25 sci — Prereqs: none
 - Hummingbird, Firefly, NC-1R, NC-1L, Small Parachute, HS-1, Battery Z-1
 
-**1.2 Structural Engineering** — 75 sci — Prereqs: [1.1]
+**1.2 Structural Engineering** — 40 sci — Prereqs: [1.1]
 - TD-12, TT-38K Radial, AE-FF1, NC-3, NC-3R, NC-3L
 
-**1.3 Small Kerolox** — 100 sci — Prereqs: [1.2]
+**1.3 Small Kerolox** — 75 sci — Prereqs: [1.2]
 - Wolf, Viper, Tank 3×1, Tank 3×2, Tank 3×4, Tank 3×8, HS-3, Small Probe Core
 
 **1.4 Small Methalox** — 100 sci — Prereqs: [1.2]
@@ -1402,7 +1468,7 @@ Gecko, Tank 1×1, Tank 1×2, Tank 1×4, Tank 1×8, Tiny Probe Core, NC-1 Nose Co
 **1.6 Crewed Spaceflight** — 200 sci — Prereqs: [1.3]
 - Small Cmd Pod, Small Inline Ctrl, Large Parachute, RV-1 RCS, RV-1 RCS Mirror, SP-3, Tiny Cargo
 
-**Era 1 total: 675 science**
+**Era 1 total: 590 science**
 
 ### ERA 2: ADVANCED CHEMICAL (250–500 science)
 
@@ -1424,7 +1490,7 @@ Gecko, Tank 1×1, Tank 1×2, Tank 1×4, Tank 1×8, Tiny Probe Core, NC-1 Nose Co
 
 **2.6 Colony Foundations** — 500 sci — Prereqs: [2.3]
 - Colony Module (ship part)
-- Buildings: Habitat, Mine, Factory, Small Solar Farm, Stockpile, Construction Robot, Launchpad
+- Buildings: Habitat, Mine, Factory, Small Solar Farm, Stockpile, Light Construction Robot, Construction Robot, Food Storage, Launchpad
 
 **Era 2 total: 2,300 science**
 
@@ -1454,7 +1520,7 @@ Gecko, Tank 1×1, Tank 1×2, Tank 1×4, Tank 1×8, Tiny Probe Core, NC-1 Nose Co
 
 **3.8 Extended Crewed Missions** — 1,000 sci — Prereqs: [2.6]
 - Large Inline Ctrl, Medium Quarters, SP-12, Battery Z-5, Medium Cargo, Medium Greenhouse (ship), Large Probe Core
-- Buildings: Advanced Greenhouse, Medium Solar Farm
+- Buildings: Medium Solar Farm
 
 **Era 3 total: 8,200 science**
 
@@ -1465,7 +1531,7 @@ Gecko, Tank 1×1, Tank 1×2, Tank 1×4, Tank 1×8, Tiny Probe Core, NC-1 Nose Co
 
 **4.2 Deep Space Habitation** — 2,500 sci — Prereqs: [3.8]
 - XL Inline Ctrl, Large Quarters, SP-24, Battery Z-9, Battery Z-13, Large Cargo, Large Greenhouse (ship)
-- Buildings: Railgun, Large Solar Farm
+- Buildings: Advanced Greenhouse, Railgun, Large Solar Farm
 
 **4.3 Science Laboratory** — 1,500 sci — Prereqs: [2.6]
 - Buildings: Science Lab
@@ -1545,21 +1611,23 @@ Gecko, Tank 1×1, Tank 1×2, Tank 1×4, Tank 1×8, Tiny Probe Core, NC-1 Nose Co
 
 ### Efficiency Upgrade Lines
 
-Each line: 15 tiers in a chain after a prerequisite node. Cost per tier: `base × tier^1.8`. See §4 Technology Upgrades for what each line affects.
+Each line: 15 tiers in a chain after a prerequisite node. Cost per tier: `base × tier^1.7`. See §4 Technology Upgrades for what each line affects.
 
-| Tech Line | Base | Total (15 tiers) | Prereq Node |
-|-----------|-----:|-----------------:|-------------|
-| Mining | 8 | 4,800 | 2.6 Colony Foundations |
-| Metallurgy | 8 | 4,800 | 2.6 Colony Foundations |
-| Electronics Mfg | 10 | 6,000 | 3.8 Extended Crewed |
-| Agriculture | 6 | 3,600 | 2.3 Advanced Crewed |
-| Chemical Processing | 6 | 3,600 | 2.6 Colony Foundations |
-| Atmospheric Science | 8 | 4,800 | 3.6 Heavy Fission |
-| Nuclear Engineering | 12 | 7,200 | 3.6 Heavy Fission |
-| Isotope Extraction | 12 | 7,200 | 6.3 Fusion Power |
-| Construction | 8 | 4,800 | 2.6 Colony Foundations |
-| Precision Mfg | 15 | 9,000 | Elec Mfg Tier 12 |
-| Life Support | 6 | 3,600 | 2.6 Colony Foundations |
+Beyond throughput scaling (+11%/tier), some tiers gate new factory recipes — making tier investment feel qualitatively meaningful rather than pure number-going-up. Lines without recipe gates (Mining, Agriculture, Atmospheric Science, Life Support, Precision Mfg) reward the player through throughput alone.
+
+| Tech Line | Base | Total (15 tiers) | Prereq Node | Recipe Gates |
+|-----------|-----:|-----------------:|-------------|--------------|
+| Mining | 8 | 4,800 | 2.6 Colony Foundations | — |
+| Metallurgy | 8 | 4,800 | 2.6 Colony Foundations | T5: Alloy Forging |
+| Electronics Mfg | 10 | 6,000 | 3.8 Extended Crewed | T6: Superconductor Fab |
+| Agriculture | 6 | 3,600 | 2.3 Advanced Crewed | — |
+| Chemical Processing | 6 | 3,600 | 2.6 Colony Foundations | T3: Sabatier, Kerosene; T8: Deuterium |
+| Atmospheric Science | 8 | 4,800 | 3.6 Heavy Fission | — |
+| Nuclear Engineering | 12 | 7,200 | 3.6 Heavy Fission | T3: Uranium Enrichment; T5: NPU Assembly |
+| Isotope Extraction | 12 | 7,200 | 6.3 Fusion Power | T5: Gas Giant He-3 |
+| Construction | 8 | 4,800 | 2.6 Colony Foundations | T8: Ship Part Mfg |
+| Precision Mfg | 15 | 9,000 | Elec Mfg Tier 12 | — |
+| Life Support | 6 | 3,600 | 2.6 Colony Foundations | — |
 
 **Total efficiency upgrades: ~59,400 science**
 
@@ -1567,7 +1635,7 @@ Each line: 15 tiers in a chain after a prerequisite node. Cost per tier: `base �
 
 | Era | Nodes | Science |
 |-----|------:|--------:|
-| 1 Early Chemical | 6 | 675 |
+| 1 Early Chemical | 6 | 590 |
 | 2 Advanced Chemical | 6 | 2,300 |
 | 3 Nuclear & Electric | 8 | 8,200 |
 | 4 Interplanetary | 3 | 6,000 |
@@ -1577,9 +1645,9 @@ Each line: 15 tiers in a chain after a prerequisite node. Cost per tier: `base �
 | 8 Antimatter Engines | 3 | 32,000 |
 | 9 Endgame | 2 | 25,000 |
 | Efficiency Upgrades | 165 | 59,400 |
-| **Total** | **204** | **~193,075** |
+| **Total** | **204** | **~192,990** |
 
-vs budget of ~190,500 — tight but completable with full colonization + R&D.
+vs budget of ~192,600 — tight but completable with full colonization + R&D.
 
 ---
 
