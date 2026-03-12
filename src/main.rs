@@ -50,6 +50,34 @@ fn is_in_soi_of(body_idx: usize, soi_body: usize, bodies: &[sunscatter::bodies::
     }
 }
 
+/// Check if a trajectory segment around `seg_parent` should be hidden because
+/// the body between `from_body` and `seg_parent` in the SOI chain is big enough
+/// on screen that its orbit line would be hidden by the pixel threshold.
+fn segment_hidden_by_ancestor_threshold(
+    from_body: usize,
+    seg_parent: usize,
+    bodies: &[sunscatter::bodies::CelestialBody],
+    pixels_per_world_unit: f32,
+) -> bool {
+    // Walk from from_body up the parent chain to find the direct child of seg_parent
+    let mut idx = from_body;
+    loop {
+        match bodies[idx].parent {
+            Some(p) if p == seg_parent => {
+                // idx orbits seg_parent — check if idx is big enough to hide its orbit
+                let body_world_radius = (bodies[idx].radius * BODY_SCALE * SCALE) as f32;
+                let body_pixels = body_world_radius * pixels_per_world_unit * 2.0;
+                let is_moon = bodies[seg_parent].parent
+                    .map_or(false, |gp| bodies[gp].parent.is_some());
+                let pixel_threshold = if is_moon { 100.0 } else { 5.0 };
+                return body_pixels >= pixel_threshold;
+            }
+            Some(p) => idx = p,
+            None => return false, // from_body is not in seg_parent's SOI chain
+        }
+    }
+}
+
 /// Compute the innermost body whose circle dominates the screen and whose SOI
 /// contains the camera. Returns `None` in galaxy view (no filtering desired).
 fn compute_view_soi_body(game: &Game, render_state: &RenderState) -> Option<usize> {
@@ -1036,25 +1064,6 @@ fn render_flight_frame(
     let pixels_per_world_unit = render_state.camera.zoom * render_state.size.height as f32 / 2.0;
     let view_soi_body = compute_view_soi_body(game, render_state);
 
-    // Pre-compute which parent bodies have a child that's large enough on screen
-    // that the child's orbit line would be hidden (pixel threshold). Ship trajectory
-    // segments and vessel orbits around such parents are also clutter and should hide.
-    // This mirrors the body orbit pixel-threshold filter.
-    let mut parent_has_zoomed_child = vec![false; game.solar_system.bodies.len()];
-    for body in game.solar_system.bodies.iter() {
-        if let Some(parent_idx) = body.parent {
-            let parent_body = &game.solar_system.bodies[parent_idx];
-            let body_world_radius = (body.radius * BODY_SCALE * SCALE) as f32;
-            let body_pixels = body_world_radius * pixels_per_world_unit * 2.0;
-            let is_moon = parent_body.parent
-                .map_or(false, |gp| game.solar_system.bodies[gp].parent.is_some());
-            let pixel_threshold = if is_moon { 100.0 } else { 5.0 };
-            if body_pixels >= pixel_threshold {
-                parent_has_zoomed_child[parent_idx] = true;
-            }
-        }
-    }
-
     let orbits: Vec<Option<OrbitRenderData>> = (0..game.solar_system.bodies.len())
         .map(|i| {
             let body = &game.solar_system.bodies[i];
@@ -1165,12 +1174,14 @@ fn render_flight_frame(
                     // SOI-based filter
                     let soi_ok = view_soi_body.map_or(true, |soi|
                         is_in_soi_of(seg.parent_idx, soi, &game.solar_system.bodies));
-                    // Pixel-threshold filter: hide higher-level segments when a
-                    // child body's orbit is hidden (body is big on screen).
-                    // Skip for the ship's own SOI body — that orbit hides via
-                    // the ship_pixels < 5.0 check in render instead.
+                    // Pixel-threshold filter: hide higher-level segments when the
+                    // body in the ship's SOI chain that orbits the segment's parent
+                    // is big enough on screen. Skip for the ship's own SOI body —
+                    // that orbit hides via ship_pixels < 5.0 in render.
                     let pixel_ok = seg.parent_idx == game.flight.ship.soi_body
-                        || !parent_has_zoomed_child[seg.parent_idx];
+                        || !segment_hidden_by_ancestor_threshold(
+                            game.flight.ship.soi_body, seg.parent_idx,
+                            &game.solar_system.bodies, pixels_per_world_unit);
                     soi_ok && pixel_ok
                 })
                 .enumerate()
@@ -1607,9 +1618,13 @@ fn render_flight_frame(
                         return None;
                     }
                 }
-                // Pixel-threshold filter: hide higher-level orbits when
-                // a child body is big on screen. Skip for vessel's own SOI body.
-                if parent_idx != v.ship.soi_body && parent_has_zoomed_child[parent_idx] {
+                // Pixel-threshold filter: hide higher-level orbits when the
+                // body in the vessel's SOI chain is big on screen.
+                if parent_idx != v.ship.soi_body
+                    && segment_hidden_by_ancestor_threshold(
+                        v.ship.soi_body, parent_idx,
+                        &game.solar_system.bodies, pixels_per_world_unit)
+                {
                     return None;
                 }
                 let parent_pos = scaled_positions[parent_idx];
@@ -1682,7 +1697,9 @@ fn render_flight_frame(
                     let soi_ok = view_soi_body.map_or(true, |soi|
                         is_in_soi_of(seg.parent_idx, soi, &game.solar_system.bodies));
                     let pixel_ok = seg.parent_idx == game.flight.ship.soi_body
-                        || !parent_has_zoomed_child[seg.parent_idx];
+                        || !segment_hidden_by_ancestor_threshold(
+                            game.flight.ship.soi_body, seg.parent_idx,
+                            &game.solar_system.bodies, pixels_per_world_unit);
                     soi_ok && pixel_ok
                 })
                 .enumerate()
