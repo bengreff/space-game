@@ -1238,21 +1238,32 @@ Gas giants: orbit only (no landing). Exoplanets: flat **500 orbit + 500 landing 
 
 #### R&D — Money to Science
 
+R&D draws from a global exhaustion pool of **50,000 science**. Your annual budget determines the base rate, but effective output diminishes as cumulative R&D science increases — early research yields breakthroughs, late research hits diminishing returns.
+
 ```
-science_per_year = 25 × ln(1 + budget_dollars / 1,000,000)
+base_rate = 25 × ln(1 + budget_dollars / 1,000,000)
+effective_rate = base_rate × (1 - cumulative_earned / 50,000)
 ```
 
 Set in $1M/year increments. Flows evenly over time.
 
-| Annual Budget | Science/Year |
-|--------------:|-------------:|
-| $1M | 17 |
-| $10M | 60 |
-| $100M | 115 |
-| $500M | 156 |
-| $1B | 173 |
+| Annual Budget | Base Rate | @ 0 earned | @ 10,000 earned | @ 22,000 earned |
+|--------------:|----------:|-----------:|----------------:|----------------:|
+| $1M | 17/yr | 17/yr | 14/yr | 9/yr |
+| $10M | 60/yr | 60/yr | 48/yr | 34/yr |
+| $100M | 115/yr | 115/yr | 92/yr | 64/yr |
+| $500M | 156/yr | 156/yr | 125/yr | 87/yr |
+| $1B | 173/yr | 173/yr | 138/yr | 97/yr |
 
-Realistic trajectory over 200 years (ramping from $1M to $1B): **~22,000 total R&D science**.
+| Milestone | Cumulative R&D Science | Effective Rate (@ $1B) |
+|-----------|----------------------:|----------------------:|
+| Year ~50 | ~7,000 | 86% of base |
+| Year ~100 | ~14,000 | 72% of base |
+| Year ~200 | ~22,000 | 56% of base |
+| Year ~500 | ~38,000 | 24% of base |
+| Theoretical max | 50,000 | 0% (exhausted) |
+
+Realistic trajectory over 200 years (ramping from $1M to $1B): **~22,000 R&D science**. Over the full 600-year game: **~42,000**.
 
 #### Lab Building — Colony Science Extraction
 
@@ -1263,16 +1274,16 @@ Science Labs (§4) extract 10× the body's landing discovery value over time on 
 
 #### Total Science Budget
 
-| Source | Science |
-|--------|--------:|
-| Solar system discovery | 4,630 |
-| Exoplanet discovery (3 systems) | 24,000 |
-| R&D (200yr, ramping to $1B/yr) | 22,000 |
-| Solar system labs (14 bodies) | 27,000 |
-| Exoplanet labs (24 bodies) | 115,000 |
-| **Total** | **~192,600** |
+| Source | @ 200yr | Full Game (~600yr) |
+|--------|--------:|---------:|
+| Solar system discovery | 4,630 | 4,630 |
+| Exoplanet discovery (3 systems) | 24,000 | 24,000 |
+| R&D (50,000 cap) | 22,000 | ~42,000 |
+| Solar system labs (14 bodies) | 27,000 | ~28,000 |
+| Exoplanet labs (24 bodies) | 115,000 | ~120,000 |
+| **Total** | **~192,600** | **~218,600** |
 
-Tech tree total cost: **~192,990** — tight but completable with full colonization + R&D (see §10).
+Tech tree total cost: **~192,990**. Completable with full colonization + sustained R&D. The R&D exhaustion pool provides ~25,000 science of headroom over the full game — the player doesn't need perfect optimization of every source (see §10).
 
 ### Trade Routes & Logistics
 
@@ -1647,7 +1658,7 @@ Beyond throughput scaling (+11%/tier), some tiers gate new factory recipes — m
 | Efficiency Upgrades | 165 | 59,400 |
 | **Total** | **204** | **~192,990** |
 
-vs budget of ~192,600 — tight but completable with full colonization + R&D.
+vs full-game budget of ~218,600 — completable with ~25,000 science headroom from the R&D exhaustion pool.
 
 ---
 
