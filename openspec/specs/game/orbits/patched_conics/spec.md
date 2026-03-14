@@ -50,6 +50,22 @@ Both live trajectory and maneuver node predictions SHALL use a shared `compute_p
 4. For elliptical orbits below max: searches for SOI intersection, pushes truncated segment if found, converts frame, and continues
 5. Terminates when: no SOI transition found, max crossings exhausted, orbit calculation fails, or no parent body exists
 
+### Requirement: Galactic mass profile trajectory subdivision
+
+For parent bodies with `galactic_mass_profile = true`, trajectory arcs SHALL be subdivided into 32 piecewise Keplerian sub-arcs to account for the varying enclosed mass M(r). At each sub-arc boundary, state vectors (position, velocity) are extracted from the current sub-orbit and orbital elements are recomputed using `effective_mass_at(r)` at the local distance. Each sub-arc is pushed as a separate `PatchedConicSegment` with the same `parent_idx`.
+
+#### Hyperbolic subdivision
+For hyperbolic orbits, each sub-arc advances by `1/remaining` of the true anomaly range from current position to the SOI exit TA (recomputed on each sub-orbit). If the orbit becomes elliptical during subdivision (mass decrease makes the orbit bound), a full-orbit segment is pushed and subdivision stops. After subdivision, the SOI exit continuation uses exit state from the final sub-orbit.
+
+#### Elliptical subdivision (SOI intersection)
+For elliptical orbits with an SOI intersection, the arc is subdivided using equal time steps (`intersect_time / 32`). At each step, mean anomaly is advanced by `n * dt_step` on the current sub-orbit, where n is the mean motion for the local enclosed mass.
+
+#### Elliptical subdivision (full orbit)
+For elliptical orbits without SOI intersection, one full orbital period is subdivided using equal time steps (`period_estimate / 32`). The resulting sub-arcs form a rosette pattern reflecting the non-Keplerian nature of galactic orbits.
+
+#### SOI intersection mass for galactic profiles
+`find_soi_intersection()` SHALL use `effective_mass_at(r)` at the ship's current orbital distance (not the semi-major axis) for period and mean motion calculations when the parent has `galactic_mass_profile`.
+
 ## Elliptical SOI Intersection
 
 ### Requirement: Elliptical orbit SOI intersection detection

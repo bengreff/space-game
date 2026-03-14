@@ -1565,10 +1565,10 @@ Gecko, Tank 1×1, Tank 1×2, Tank 1×4, Tank 1×8, Tiny Probe Core, NC-1 Nose Co
 ### ERA 6: FUSION (4,000–7,000 science)
 
 **6.1 Fusion Propulsion — Probe** — 4,000 sci — Prereqs: [5.2]
-- Z-Pinch Probe, Daedalus S2
+- Z-Pinch Probe, Daedalus S2, Fusion Sphere S
 
 **6.2 Fusion Propulsion — Full Scale** — 6,000 sci — Prereqs: [6.1]
-- Z-Pinch Advanced, Daedalus S1
+- Z-Pinch Advanced, Daedalus S1, Fusion Sphere M, Fusion Sphere L
 
 **6.3 Fusion Power** — 5,000 sci — Prereqs: [6.1]
 - Stellarator

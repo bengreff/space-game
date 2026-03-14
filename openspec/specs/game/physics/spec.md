@@ -10,3 +10,4 @@ Physical interactions between the ship and its environment: atmospheric effects 
 - [Terrain Collision](terrain_collision/spec.md) - Collision detection with celestial body surfaces and launchpad structures
 - [Craft Collision](craft_collision/spec.md) - Collision detection between vessels (future)
 - [Fuel System](fuel/spec.md) - Fuel zones, consumption, and drain priority (asparagus/onion staging)
+- [Relativity](relativity/spec.md) - Threshold-based special and gravitational relativity (thrust limiting, time dilation, HUD)

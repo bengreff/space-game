@@ -175,7 +175,7 @@ For engines, the info panel SHALL display: propellant type (including secondary 
 
 ### Requirement: Tank info for palette selection
 
-For tanks selected in the palette, the info panel SHALL display: dry mass, grid area, and propellant capacity for all three fuel types.
+For tanks selected in the palette, the info panel SHALL display: dry mass (from `def.mass`, the RON part mass) and propellant capacity for all three standard fuel types (RP-1, CH4, LH2).
 
 ### Requirement: Tank info for placed parts
 

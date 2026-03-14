@@ -31,7 +31,7 @@ const WARP_LEVELS: &[f64] = &[1.0, 2.0, 3.0, 5.0, 10.0, 100.0, 1000.0, 10000.0, 
 const BODY_SCALE: f64 = 1.0;
 
 // Galaxy view threshold: screen spans 0.1 light-years or more
-const GALAXY_VIEW_THRESHOLD_M: f64 = 0.1 * 9.461e15; // 0.1 light-years in meters
+const GALAXY_VIEW_THRESHOLD_M: f64 = 10.0 * 9.461e15; // 10 light-years in meters
 
 fn is_galaxy_view(camera_zoom: f32, _screen_height: u32) -> bool {
     let screen_span_m = 2.0 / (camera_zoom as f64 * SCALE);
@@ -133,13 +133,15 @@ fn main() {
     println!("  Escape: Pause / Menu");
     println!("  Left Shift / Left Ctrl: Throttle up/down");
     println!("  Z/X: Full/cut throttle");
-    println!("  Q/E: Rotate left/right");
+    println!("  Q/E: Rotate ship");
     println!("  WASD: RCS translation (when RCS enabled)");
+    println!("  Space: Stage");
     println!("  R: Toggle RCS");
+    println!("  [ / ]: Switch vessel");
     println!("  ` (backtick): Focus on ship");
     println!("  Left mouse drag: Pan camera");
     println!("  Scroll wheel: Zoom in/out");
-    println!("  Double-click planet: Focus on it");
+    println!("  Double-click: Focus on body / switch to vessel");
 
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -152,9 +154,16 @@ fn main() {
             .unwrap(),
     );
 
+    let t0 = Instant::now();
     let mut game = Game::new();
+    println!("  Game::new(): {:.0?}", t0.elapsed());
+
     let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
+
+    let t1 = Instant::now();
     let mut render_state = pollster::block_on(RenderState::new(window.clone(), &body_names));
+    println!("  RenderState::new(): {:.0?}", t1.elapsed());
+    println!("Startup total: {:.0?}", t0.elapsed());
     let mut last_frame = Instant::now();
 
     // Double-click detection
@@ -243,6 +252,7 @@ fn main() {
                                         &mut render_state,
                                         &mut cached_quicksaves,
                                         &mut quicksaves_dirty,
+                                        dt,
                                     );
                                 }
                                 GameMode::Editor => {
@@ -440,8 +450,14 @@ fn render_flight_frame(
     render_state: &mut RenderState,
     cached_quicksaves: &mut Vec<sunscatter::save::QuicksaveInfo>,
     quicksaves_dirty: &mut bool,
+    frame_dt: f32,
 ) {
-    let dt = 1.0 / 60.0; // Approximate for now, actual dt passed separately
+    // Use actual frame time, clamped to avoid spiral-of-death on hitches
+    let dt = (frame_dt as f64).clamp(0.0001, 0.1);
+
+    // Check if the vessel has a functioning command pod
+    let has_control = game.flight.vessel.as_ref()
+        .map_or(true, |v| v.has_control(&game.part_definitions));
 
     // Power system state (updated each frame, read when building render data)
     let mut power_generation = 0.0_f64;
@@ -499,7 +515,13 @@ fn render_flight_frame(
         game.simulation_time += dt * time_warp;
 
         // Determine autopilot state and desired direction (before gimbal update)
-        let autopilot_target = render_state.get_autopilot_target();
+        // No control → force autopilot off
+        let autopilot_target = if has_control {
+            render_state.get_autopilot_target()
+        } else {
+            render_state.autopilot_target = AutopilotTarget::Off;
+            AutopilotTarget::Off
+        };
         let autopilot_active = autopilot_target != AutopilotTarget::Off && !game.flight.ship.on_rails;
         let autopilot_target_angle = if autopilot_active {
             if autopilot_target == AutopilotTarget::Target {
@@ -558,6 +580,12 @@ fn render_flight_frame(
         } else {
             [0.0, 0.0]
         };
+
+        // No control → zero all inputs and throttle
+        if !has_control {
+            game.flight.ship_input = sunscatter::ship::ShipInput::default();
+            game.flight.ship.throttle = 0.0;
+        }
 
         // Update ship physics (gimbal torque always applied in update_flying)
         let has_flight_vessel = game.flight.vessel.is_some();
@@ -967,21 +995,7 @@ fn render_flight_frame(
         scaled_positions.push(scaled_pos);
     }
 
-    // In galaxy view, redirect tracked body to its parent star and stop ship tracking
     let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
-    if in_galaxy_view {
-        if game.flight.tracking_ship {
-            // Switch from ship tracking to tracking the ship's parent star
-            let star_idx = find_star_ancestor(game, game.flight.ship.soi_body);
-            render_state.tracked_body = Some(star_idx);
-            game.flight.tracking_ship = false;
-        } else if let Some(tracked_idx) = render_state.tracked_body {
-            let star_idx = find_star_ancestor(game, tracked_idx);
-            if star_idx != tracked_idx {
-                render_state.tracked_body = Some(star_idx);
-            }
-        }
-    }
 
     // Update camera tracking
     if game.flight.tracking_ship {
@@ -1586,6 +1600,21 @@ fn render_flight_frame(
             let vy = game.flight.ship.rel_velocity[1];
             let speed = (vx * vx + vy * vy).sqrt();
             if speed > 0.1 { [vx / speed, vy / speed] } else { [0.0, 0.0] }
+        },
+        speed_fraction_c: velocity / sunscatter::ship::SPEED_OF_LIGHT,
+        lorentz_gamma: sunscatter::ship::lorentz_gamma(velocity),
+        proper_time: game.flight.ship.proper_time,
+        mission_time: game.flight.ship.mission_time,
+        is_relativistic: velocity > sunscatter::ship::RELATIVISTIC_SPEED_THRESHOLD,
+        orbits_root: game.solar_system.bodies[game.flight.ship.soi_body].parent.is_none(),
+        has_control: game.flight.vessel.as_ref()
+            .map_or(true, |v| v.has_control(&game.part_definitions)),
+        grav_time_factor: {
+            let dist = distance_from_soi;
+            let soi = &game.solar_system.bodies[game.flight.ship.soi_body];
+            sunscatter::ship::gravitational_time_factor(
+                sunscatter::bodies::G * soi.effective_mass_at(dist), dist, soi.is_compact(),
+            )
         },
         stage_delta_vs: if vessel_stage_delta_vs.is_empty() { None } else { Some(vessel_stage_delta_vs) },
         stage_burn_times: if vessel_stage_burn_times.is_empty() { None } else { Some(vessel_stage_burn_times) },
@@ -2687,19 +2716,6 @@ fn compute_scaled_positions(game: &Game) -> Vec<[f64; 2]> {
     scaled
 }
 
-/// Walk up the body hierarchy to find the nearest star (child of the root body).
-/// Returns the body index itself if it's already a star or the root.
-fn find_star_ancestor(game: &Game, mut idx: usize) -> usize {
-    loop {
-        let body = &game.solar_system.bodies[idx];
-        match body.parent {
-            None => return idx,                                    // Root body
-            Some(p) if game.solar_system.bodies[p].parent.is_none() => return idx, // Star (parent is root)
-            Some(p) => idx = p,                                    // Walk up
-        }
-    }
-}
-
 /// Build body render tuples from scaled positions
 fn build_body_data(game: &Game, scaled_positions: &[[f64; 2]], in_galaxy_view: bool) -> Vec<(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)> {
     (0..game.solar_system.bodies.len())
@@ -3251,16 +3267,6 @@ fn render_tracking_station_frame(
     let scaled_positions = compute_scaled_positions(game);
     let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
 
-    // In galaxy view, redirect tracked planet/moon to its parent star
-    if in_galaxy_view {
-        if let Some(tracked_idx) = render_state.tracked_body {
-            let star_idx = find_star_ancestor(game, tracked_idx);
-            if star_idx != tracked_idx {
-                render_state.tracked_body = Some(star_idx);
-            }
-        }
-    }
-
     let bodies = build_body_data(game, &scaled_positions, in_galaxy_view);
     let orbits = build_orbit_data(game, &scaled_positions, render_state);
 
@@ -3667,12 +3673,16 @@ fn handle_flight_keyboard(
         match named_key {
             winit::keyboard::NamedKey::Space => {
                 if pressed {
-                    let in_atmo = game.flight.ship.in_atmosphere(&game.solar_system);
-                    let is_landed = matches!(game.flight.ship.state, ShipState::Landed { .. });
-                    if let Some(ref mut vessel) = game.flight.vessel {
-                        vessel.activate_next_stage(&game.part_definitions, in_atmo, is_landed);
+                    let can_stage = game.flight.vessel.as_ref()
+                        .map_or(true, |v| v.has_control(&game.part_definitions));
+                    if can_stage {
+                        let in_atmo = game.flight.ship.in_atmosphere(&game.solar_system);
+                        let is_landed = matches!(game.flight.ship.state, ShipState::Landed { .. });
+                        if let Some(ref mut vessel) = game.flight.vessel {
+                            vessel.activate_next_stage(&game.part_definitions, in_atmo, is_landed);
+                        }
+                        handle_post_decouple(game);
                     }
-                    handle_post_decouple(game);
                 }
             }
             winit::keyboard::NamedKey::Shift => game.flight.ship_input.throttle_up = pressed,

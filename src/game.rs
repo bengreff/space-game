@@ -556,6 +556,8 @@ impl Game {
         self.flight.ship.cached_orbit = None;
         self.flight.ship.temperature = crate::ship::AMBIENT_TEMPERATURE;
         self.flight.ship.heat_flux = 0.0;
+        self.flight.ship.proper_time = 0.0;
+        self.flight.ship.mission_time = 0.0;
         self.flight.ship.state = crate::ship::ShipState::Landed {
             body_index: earth_idx,
             surface_angle,
@@ -676,20 +678,20 @@ pub fn format_date(simulation_time: f64) -> String {
     const EPOCH_YEAR: i32 = 2030;
 
     let total_seconds = simulation_time as i64;
-    let days_total = (total_seconds / 86400) as i32;
+    let days_total = total_seconds / 86400;
     let remaining_secs = total_seconds % 86400;
     let hours = remaining_secs / 3600;
     let minutes = (remaining_secs % 3600) / 60;
 
-    fn is_leap(y: i32) -> bool {
+    fn is_leap(y: i64) -> bool {
         (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
     }
 
-    fn days_in_year(y: i32) -> i32 {
+    fn days_in_year(y: i64) -> i64 {
         if is_leap(y) { 366 } else { 365 }
     }
 
-    fn days_in_month(y: i32, m: i32) -> i32 {
+    fn days_in_month(y: i64, m: i64) -> i64 {
         match m {
             1 => 31, 2 => if is_leap(y) { 29 } else { 28 },
             3 => 31, 4 => 30, 5 => 31, 6 => 30,
@@ -698,22 +700,38 @@ pub fn format_date(simulation_time: f64) -> String {
         }
     }
 
-    let mut year = EPOCH_YEAR;
+    let mut year: i64 = EPOCH_YEAR as i64;
     let mut remaining_days = days_total;
 
+    // Fast-path: jump by estimated years to avoid iterating one year at a time
     if remaining_days >= 0 {
+        let approx_years = remaining_days / 366; // conservative (leap years)
+        if approx_years > 0 {
+            year += approx_years;
+            remaining_days -= approx_years * 365 + approx_years / 4 - approx_years / 100 + approx_years / 400;
+        }
         while remaining_days >= days_in_year(year) {
             remaining_days -= days_in_year(year);
             year += 1;
         }
+        // Overshoot correction from the fast-path approximation
+        while remaining_days < 0 {
+            year -= 1;
+            remaining_days += days_in_year(year);
+        }
     } else {
+        let approx_years = (-remaining_days) / 365;
+        if approx_years > 0 {
+            year -= approx_years;
+            remaining_days += approx_years * 365 + approx_years / 4 - approx_years / 100 + approx_years / 400;
+        }
         while remaining_days < 0 {
             year -= 1;
             remaining_days += days_in_year(year);
         }
     }
 
-    let mut month = 1;
+    let mut month: i64 = 1;
     while month < 12 && remaining_days >= days_in_month(year, month) {
         remaining_days -= days_in_month(year, month);
         month += 1;

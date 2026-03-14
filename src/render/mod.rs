@@ -14,6 +14,6 @@ pub use types::{
     OrbitSegmentData, PauseAction, PorkchopGrid, PorkchopPoint, RcsNozzleState, SelectedTarget,
     ShipOrbitData, ShipPartRenderData, ShipRenderData, StagedPartInfo, TargetPopup,
     TitleScreenAction, TrackingStationAction, TrackingVesselData, Vertex,
-    HYPERBOLIC_RENDER_MARGIN, HYPERBOLIC_SKIP_MARGIN,
+    HYPERBOLIC_RENDER_MARGIN,
 };
 pub use crate::save::QuicksaveInfo;

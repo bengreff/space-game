@@ -17,6 +17,9 @@ Inactive vessels are stored in `FlightState.inactive_vessels: Vec<TrackedVessel>
 ### Requirement: Debris classification
 Vessels are classified as debris (`is_debris = true`) when they have no non-destroyed, non-decoupled part with `can_control = true` (checked via `FlightVessel::has_control()`). Fairing halves are always classified as debris. The active vessel (player-controlled) is never classified as debris when shelved. Debris classification persists across save/load via `SavedVessel.is_debris` (with `#[serde(default)]` for backward compatibility with old saves).
 
+### Requirement: Active vessel control gating
+The active vessel's `has_control()` is checked every frame. When the active vessel has no functioning command pod (all pods destroyed or decoupled), all player inputs are disabled: throttle is forced to 0, rotation/translation inputs are zeroed, autopilot is forced off, staging (spacebar) is blocked, and autopilot/RCS HUD buttons are non-functional. The vessel becomes uncontrollable debris that continues on its current trajectory. A bare ship (no FlightVessel) is always considered controllable.
+
 ### Requirement: Debris auto-cleanup
 Debris vessels are automatically deleted when they are more than 2000m from ALL controllable vessels (active vessel + non-debris inactive vessels), or when they are in a different SOI from all controllable vessels. This cleanup runs every frame in flight mode via `FlightState::cleanup_distant_debris()`, called from `render_flight_frame()` in main.rs after inactive vessel propagation.
 

@@ -116,11 +116,11 @@ The system SHALL support three propellant types, each pairing an oxidizer (LOX) 
 
 ### Requirement: Propellant capacity scaling
 
-Tank propellant capacity SHALL scale linearly with `grid_area`. A tank with grid area N stores `N * oxygen_per_sq` kg of oxidizer and `N * fuel_per_sq` kg of fuel.
+Tank propellant capacity SHALL scale linearly with `grid_area` (f64, volume-equivalent units). A tank with grid_area N stores `N * oxygen_per_sq` kg of oxidizer and `N * fuel_per_sq` kg of fuel. The `grid_area` value is derived from the tank's 3D volume: cylinders use `V = pi/4 * d^2 * h`, spheres use `V = 4/3 * pi * r^3`, then `grid_area = volume / 0.491 m^3`.
 
 ### Requirement: Tank dry mass
 
-Tank dry mass SHALL be 35.0 kg per grid square of area.
+Tank dry mass SHALL be the `mass` field from the RON part definition (in tonnes), derived from `volume * structural_density / 1000`. Structural densities: standard 71.7 kg/m^3, H2 19.8 kg/m^3, xenon 28.1 kg/m^3, fusion 16.2 kg/m^3.
 
 ## Part Definitions
 
@@ -184,4 +184,4 @@ Fairing definitions SHALL include: `ejection_force` (kN, used when jettisoning t
 
 ### Requirement: Tank data
 
-Tank definitions SHALL include: `grid_area` for capacity calculation.
+Tank definitions SHALL include: `grid_area` (f64, volume-equivalent units) for capacity calculation. The value represents propellant volume normalized to the reference tank (medium 5x4 cylinder = 20.0 grid_area = 9.817 m^3).

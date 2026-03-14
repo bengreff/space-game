@@ -88,6 +88,14 @@ impl CelestialBody {
         }
     }
 
+    /// Whether this body causes gravitational time dilation (black holes, neutron stars).
+    /// True when Schwarzschild radius > 1% of body radius.
+    pub fn is_compact(&self) -> bool {
+        const C_SQ: f64 = 2.998e8 * 2.998e8;
+        let r_s = 2.0 * G * self.mass / C_SQ;
+        r_s / self.radius > 0.01
+    }
+
     /// Surface rotational velocity at a given distance from body center (m/s)
     pub fn surface_velocity_at(&self, distance: f64) -> f64 {
         match self.sidereal_period {
@@ -420,7 +428,10 @@ impl SolarSystem {
                     } else {
                         file.bodies[pi].mass * PHYSICS_SCALE * PHYSICS_SCALE
                     };
-                    calculate_soi(o.semi_major_axis, mass, parent_mass)
+                    let soi = calculate_soi(o.semi_major_axis, mass, parent_mass);
+                    // Stars/black holes orbiting the galactic center have vastly oversized
+                    // SOIs (~1 ly) that overlap neighbors; shrink to ~0.05 ly for gameplay.
+                    if file.bodies[pi].galactic_mass_profile { soi / 20.0 } else { soi }
                 }
                 _ => f64::INFINITY,
             };
@@ -502,7 +513,7 @@ impl SolarSystem {
                 // ν=3π/2 → x=0, y≈-21,000 ly (Sun directly below Sgr A*)
                 mean_anomaly_at_epoch: 4.8534,
             }),
-            soi_radius: calculate_soi(sun_sma, sun_mass, galactic_enclosed_mass(sun_sma)),
+            soi_radius: calculate_soi(sun_sma, sun_mass, galactic_enclosed_mass(sun_sma)) / 20.0,
             atmosphere: None,
             sidereal_period: None,
             accretion_disc: None,

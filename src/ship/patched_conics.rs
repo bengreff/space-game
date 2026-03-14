@@ -100,27 +100,153 @@ impl Ship {
                     if current_retrograde { -ta } else { ta }
                 };
 
-                // Calculate time to exit for body position computation
-                let exit_ma = self.true_to_mean_anomaly(&current_orbit, exit_true_anomaly);
-                let start_ma = self.true_to_mean_anomaly(&current_orbit, current_ta);
-                let parent_mass_eff = parent.effective_mass_at(a_abs);
-                let mu = G * parent_mass_eff;
-                let n = (mu / a_abs.powi(3)).sqrt();
-                let time_to_exit = if n > 0.0 {
-                    (exit_ma - start_ma).abs() / n
-                } else {
-                    0.0
-                };
+                // Compute exit state (position/velocity at SOI boundary) and push segments
+                let exit_pos: [f64; 2];
+                let exit_vel: [f64; 2];
+                let time_to_exit: f64;
 
-                segments.push(PatchedConicSegment {
-                    orbit: current_orbit,
-                    parent_idx: current_parent_idx,
-                    retrograde: current_retrograde,
-                    start_true_anomaly: current_ta,
-                    end_true_anomaly: Some(exit_true_anomaly),
-                    start_time: cumulative_time,
-                    end_time: Some(cumulative_time + time_to_exit),
-                });
+                if parent.galactic_mass_profile {
+                    // For galactic mass profile bodies, the enclosed mass varies dramatically
+                    // with distance (4-component Milky Way model). Subdivide the trajectory
+                    // into sub-arcs, recomputing orbital elements at each boundary using
+                    // effective_mass_at(r) for accurate periapsis prediction.
+                    let num_subs: usize = 32;
+                    let mut sub_orbit = current_orbit;
+                    let mut sub_ta = current_ta;
+                    let mut sub_retro = current_retrograde;
+                    let mut sub_time = 0.0_f64;
+
+                    // Compute initial mass from actual distance, not semi-major axis
+                    let init_ma = self.true_to_mean_anomaly(&current_orbit, current_ta);
+                    let init_pos = current_orbit.position_from_mean_anomaly(init_ma, 0.0);
+                    let r_init = (init_pos[0].powi(2) + init_pos[1].powi(2)).sqrt();
+                    let mut sub_mass = parent.effective_mass_at(r_init);
+                    let mut became_elliptical = false;
+
+                    for i in 0..num_subs {
+                        let remaining = num_subs - i;
+                        let e = sub_orbit.eccentricity;
+
+                        if e < 1.0 {
+                            // Orbit became elliptical during subdivision — no SOI exit.
+                            // Push a full-orbit segment and stop.
+                            segments.push(PatchedConicSegment {
+                                orbit: sub_orbit,
+                                parent_idx: current_parent_idx,
+                                retrograde: sub_retro,
+                                start_true_anomaly: sub_ta,
+                                end_true_anomaly: None,
+                                start_time: cumulative_time + sub_time,
+                                end_time: None,
+                            });
+                            became_elliptical = true;
+                            break;
+                        }
+
+                        // Compute SOI exit TA on the current sub-orbit
+                        let sub_a_abs = sub_orbit.semi_major_axis.abs();
+                        let p = sub_a_abs * (e * e - 1.0);
+                        let cos_exit = (p / soi_radius - 1.0) / e;
+                        let sub_exit_ta = if cos_exit.abs() <= 1.0 {
+                            let ta = cos_exit.acos();
+                            if sub_retro { -ta } else { ta }
+                        } else {
+                            let ta = (-1.0 / e).acos() - HYPERBOLIC_ANGLE_MARGIN;
+                            if sub_retro { -ta } else { ta }
+                        };
+
+                        // Advance by 1/remaining of the range to SOI exit
+                        let ta_range = sub_exit_ta - sub_ta;
+                        let end_sub_ta = if remaining == 1 {
+                            sub_exit_ta
+                        } else {
+                            sub_ta + ta_range / remaining as f64
+                        };
+
+                        // Time for this sub-arc
+                        let mu = G * sub_mass;
+                        let n = (mu / sub_a_abs.powi(3)).sqrt();
+                        let start_ma = self.true_to_mean_anomaly(&sub_orbit, sub_ta);
+                        let end_ma = self.true_to_mean_anomaly(&sub_orbit, end_sub_ta);
+                        let dt_sub = if n > 0.0 { (end_ma - start_ma).abs() / n } else { 0.0 };
+
+                        segments.push(PatchedConicSegment {
+                            orbit: sub_orbit,
+                            parent_idx: current_parent_idx,
+                            retrograde: sub_retro,
+                            start_true_anomaly: sub_ta,
+                            end_true_anomaly: Some(end_sub_ta),
+                            start_time: cumulative_time + sub_time,
+                            end_time: Some(cumulative_time + sub_time + dt_sub),
+                        });
+
+                        sub_time += dt_sub;
+
+                        if remaining > 1 {
+                            // Extract state vectors at end of this sub-arc
+                            let pos = sub_orbit.position_from_mean_anomaly(end_ma, sub_mass);
+                            let vel = sub_orbit.velocity_from_mean_anomaly_with_direction(
+                                end_ma, sub_mass, sub_retro,
+                            );
+
+                            // Recompute orbit with local enclosed mass
+                            let r_new = (pos[0].powi(2) + pos[1].powi(2)).sqrt();
+                            let new_mass = parent.effective_mass_at(r_new);
+                            if let Some((new_orb, new_ta, new_ret)) =
+                                self.calculate_orbit_from_state(pos, vel, new_mass)
+                            {
+                                sub_orbit = new_orb;
+                                sub_ta = new_ta;
+                                sub_retro = new_ret;
+                                sub_mass = new_mass;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+
+                    if became_elliptical {
+                        break; // No SOI exit — trajectory ends here
+                    }
+
+                    // Exit state from the last sub-orbit's endpoint
+                    let last_end_ta = segments.last()
+                        .and_then(|s| s.end_true_anomaly)
+                        .unwrap_or(sub_ta);
+                    let last_exit_ma = self.true_to_mean_anomaly(&sub_orbit, last_end_ta);
+                    exit_pos = sub_orbit.position_from_mean_anomaly(last_exit_ma, sub_mass);
+                    exit_vel = sub_orbit.velocity_from_mean_anomaly_with_direction(
+                        last_exit_ma, sub_mass, sub_retro,
+                    );
+                    time_to_exit = sub_time;
+                } else {
+                    // Standard single-segment trajectory for non-galactic bodies
+                    let exit_ma = self.true_to_mean_anomaly(&current_orbit, exit_true_anomaly);
+                    let start_ma = self.true_to_mean_anomaly(&current_orbit, current_ta);
+                    let parent_mass_eff = parent.effective_mass_at(a_abs);
+                    let mu = G * parent_mass_eff;
+                    let n = (mu / a_abs.powi(3)).sqrt();
+                    time_to_exit = if n > 0.0 {
+                        (exit_ma - start_ma).abs() / n
+                    } else {
+                        0.0
+                    };
+
+                    segments.push(PatchedConicSegment {
+                        orbit: current_orbit,
+                        parent_idx: current_parent_idx,
+                        retrograde: current_retrograde,
+                        start_true_anomaly: current_ta,
+                        end_true_anomaly: Some(exit_true_anomaly),
+                        start_time: cumulative_time,
+                        end_time: Some(cumulative_time + time_to_exit),
+                    });
+
+                    exit_pos = current_orbit.position_from_mean_anomaly(exit_ma, parent_mass_eff);
+                    exit_vel = current_orbit.velocity_from_mean_anomaly_with_direction(
+                        exit_ma, parent_mass_eff, current_retrograde,
+                    );
+                }
 
                 // Try to continue to parent body after SOI exit
                 if soi_crossings >= MAX_PATCHED_CONICS {
@@ -128,10 +254,6 @@ impl Ship {
                 }
 
                 if let Some(grandparent_idx) = parent.parent {
-                    let exit_pos = current_orbit.position_from_mean_anomaly(exit_ma, parent_mass_eff);
-                    let exit_vel = current_orbit.velocity_from_mean_anomaly_with_direction(
-                        exit_ma, parent_mass_eff, current_retrograde,
-                    );
                     let exit_absolute_time = base_time + cumulative_time + time_to_exit;
 
                     let (new_pos, new_vel, _) = self.convert_to_parent_frame(
@@ -186,29 +308,107 @@ impl Ship {
 
             match intersection {
                 Some((intersect_ta, intersect_time, new_parent_idx, entry)) => {
-                    segments.push(PatchedConicSegment {
-                        orbit: current_orbit,
-                        parent_idx: current_parent_idx,
-                        retrograde: current_retrograde,
-                        start_true_anomaly: current_ta,
-                        end_true_anomaly: Some(intersect_ta),
-                        start_time: cumulative_time,
-                        end_time: Some(cumulative_time + intersect_time),
-                    });
+                    let intersect_pos: [f64; 2];
+                    let intersect_vel: [f64; 2];
+                    let actual_intersect_time: f64;
 
-                    let intersect_mean_anomaly = self.true_to_mean_anomaly(&current_orbit, intersect_ta);
-                    let eff_mass = parent.effective_mass_at(current_orbit.semi_major_axis);
-                    let pos = current_orbit.position_from_mean_anomaly(intersect_mean_anomaly, eff_mass);
-                    let vel = current_orbit.velocity_from_mean_anomaly_with_direction(
-                        intersect_mean_anomaly,
-                        eff_mass,
-                        current_retrograde,
-                    );
+                    if parent.galactic_mass_profile {
+                        // Subdivide elliptical arc to intersection for varying enclosed mass
+                        let num_subs: usize = 32;
+                        let mut sub_orbit = current_orbit;
+                        let mut sub_ta = current_ta;
+                        let mut sub_retro = current_retrograde;
+                        let mut sub_time = 0.0_f64;
 
-                    let absolute_intersect_time = base_time + cumulative_time + intersect_time;
+                        let init_ma = self.true_to_mean_anomaly(&current_orbit, current_ta);
+                        let init_pos = current_orbit.position_from_mean_anomaly(init_ma, 0.0);
+                        let r_init = (init_pos[0].powi(2) + init_pos[1].powi(2)).sqrt();
+                        let mut sub_mass = parent.effective_mass_at(r_init);
+
+                        let dt_step = intersect_time / num_subs as f64;
+
+                        for i in 0..num_subs {
+                            let mu = G * sub_mass;
+                            let a = sub_orbit.semi_major_axis;
+                            let n = (mu / a.powi(3)).sqrt();
+                            let start_ma = self.true_to_mean_anomaly(&sub_orbit, sub_ta);
+
+                            let delta_ma = n * dt_step;
+                            let end_ma = if sub_retro {
+                                (start_ma - delta_ma).rem_euclid(std::f64::consts::TAU)
+                            } else {
+                                (start_ma + delta_ma).rem_euclid(std::f64::consts::TAU)
+                            };
+                            let end_sub_ta = self.mean_to_true_anomaly(&sub_orbit, end_ma);
+
+                            segments.push(PatchedConicSegment {
+                                orbit: sub_orbit,
+                                parent_idx: current_parent_idx,
+                                retrograde: sub_retro,
+                                start_true_anomaly: sub_ta,
+                                end_true_anomaly: Some(end_sub_ta),
+                                start_time: cumulative_time + sub_time,
+                                end_time: Some(cumulative_time + sub_time + dt_step),
+                            });
+
+                            sub_time += dt_step;
+
+                            if i < num_subs - 1 {
+                                let pos = sub_orbit.position_from_mean_anomaly(end_ma, sub_mass);
+                                let vel = sub_orbit.velocity_from_mean_anomaly_with_direction(
+                                    end_ma, sub_mass, sub_retro,
+                                );
+
+                                let r_new = (pos[0].powi(2) + pos[1].powi(2)).sqrt();
+                                let new_mass = parent.effective_mass_at(r_new);
+                                if let Some((new_orb, new_ta, new_ret)) =
+                                    self.calculate_orbit_from_state(pos, vel, new_mass)
+                                {
+                                    sub_orbit = new_orb;
+                                    sub_ta = new_ta;
+                                    sub_retro = new_ret;
+                                    sub_mass = new_mass;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+
+                        let last_end_ta = segments.last()
+                            .and_then(|s| s.end_true_anomaly)
+                            .unwrap_or(sub_ta);
+                        let last_ma = self.true_to_mean_anomaly(&sub_orbit, last_end_ta);
+                        intersect_pos = sub_orbit.position_from_mean_anomaly(last_ma, sub_mass);
+                        intersect_vel = sub_orbit.velocity_from_mean_anomaly_with_direction(
+                            last_ma, sub_mass, sub_retro,
+                        );
+                        actual_intersect_time = sub_time;
+                    } else {
+                        segments.push(PatchedConicSegment {
+                            orbit: current_orbit,
+                            parent_idx: current_parent_idx,
+                            retrograde: current_retrograde,
+                            start_true_anomaly: current_ta,
+                            end_true_anomaly: Some(intersect_ta),
+                            start_time: cumulative_time,
+                            end_time: Some(cumulative_time + intersect_time),
+                        });
+
+                        let intersect_mean_anomaly = self.true_to_mean_anomaly(&current_orbit, intersect_ta);
+                        let eff_mass = parent.effective_mass_at(current_orbit.semi_major_axis);
+                        intersect_pos = current_orbit.position_from_mean_anomaly(intersect_mean_anomaly, eff_mass);
+                        intersect_vel = current_orbit.velocity_from_mean_anomaly_with_direction(
+                            intersect_mean_anomaly,
+                            eff_mass,
+                            current_retrograde,
+                        );
+                        actual_intersect_time = intersect_time;
+                    }
+
+                    let absolute_intersect_time = base_time + cumulative_time + actual_intersect_time;
                     let (new_pos, new_vel, _) = if entry {
                         self.convert_to_child_frame(
-                            pos, vel,
+                            intersect_pos, intersect_vel,
                             current_parent_idx,
                             new_parent_idx,
                             absolute_intersect_time,
@@ -216,7 +416,7 @@ impl Ship {
                         )
                     } else {
                         self.convert_to_parent_frame(
-                            pos, vel,
+                            intersect_pos, intersect_vel,
                             current_parent_idx,
                             new_parent_idx,
                             absolute_intersect_time,
@@ -229,7 +429,7 @@ impl Ship {
                     if let Some((new_orbit, new_ta, new_retro)) = self.calculate_orbit_from_state(
                         new_pos, new_vel, new_parent.effective_mass_at(r_new),
                     ) {
-                        cumulative_time += intersect_time;
+                        cumulative_time += actual_intersect_time;
                         current_orbit = new_orbit;
                         current_parent_idx = new_parent_idx;
                         current_ta = new_ta;
@@ -240,15 +440,83 @@ impl Ship {
                     break;
                 }
                 None => {
-                    segments.push(PatchedConicSegment {
-                        orbit: current_orbit,
-                        parent_idx: current_parent_idx,
-                        retrograde: current_retrograde,
-                        start_true_anomaly: current_ta,
-                        end_true_anomaly: None,
-                        start_time: cumulative_time,
-                        end_time: None,
-                    });
+                    if parent.galactic_mass_profile {
+                        // Subdivide one full orbit for accurate display with varying enclosed mass.
+                        // The orbit forms a rosette pattern, not a closed ellipse.
+                        let num_subs: usize = 32;
+                        let mut sub_orbit = current_orbit;
+                        let mut sub_ta = current_ta;
+                        let mut sub_retro = current_retrograde;
+                        let mut sub_time = 0.0_f64;
+
+                        let init_ma = self.true_to_mean_anomaly(&current_orbit, current_ta);
+                        let init_pos = current_orbit.position_from_mean_anomaly(init_ma, 0.0);
+                        let r_init = (init_pos[0].powi(2) + init_pos[1].powi(2)).sqrt();
+                        let mut sub_mass = parent.effective_mass_at(r_init);
+
+                        // Estimate one orbital period from current parameters
+                        let mu_init = G * sub_mass;
+                        let period_est = std::f64::consts::TAU
+                            * (current_orbit.semi_major_axis.powi(3) / mu_init).sqrt();
+                        let dt_step = period_est / num_subs as f64;
+
+                        for i in 0..num_subs {
+                            let mu = G * sub_mass;
+                            let a = sub_orbit.semi_major_axis;
+                            let n = (mu / a.powi(3)).sqrt();
+                            let start_ma = self.true_to_mean_anomaly(&sub_orbit, sub_ta);
+
+                            let delta_ma = n * dt_step;
+                            let end_ma = if sub_retro {
+                                (start_ma - delta_ma).rem_euclid(std::f64::consts::TAU)
+                            } else {
+                                (start_ma + delta_ma).rem_euclid(std::f64::consts::TAU)
+                            };
+                            let end_sub_ta = self.mean_to_true_anomaly(&sub_orbit, end_ma);
+
+                            segments.push(PatchedConicSegment {
+                                orbit: sub_orbit,
+                                parent_idx: current_parent_idx,
+                                retrograde: sub_retro,
+                                start_true_anomaly: sub_ta,
+                                end_true_anomaly: Some(end_sub_ta),
+                                start_time: cumulative_time + sub_time,
+                                end_time: Some(cumulative_time + sub_time + dt_step),
+                            });
+
+                            sub_time += dt_step;
+
+                            if i < num_subs - 1 {
+                                let pos = sub_orbit.position_from_mean_anomaly(end_ma, sub_mass);
+                                let vel = sub_orbit.velocity_from_mean_anomaly_with_direction(
+                                    end_ma, sub_mass, sub_retro,
+                                );
+
+                                let r_new = (pos[0].powi(2) + pos[1].powi(2)).sqrt();
+                                let new_mass = parent.effective_mass_at(r_new);
+                                if let Some((new_orb, new_ta, new_ret)) =
+                                    self.calculate_orbit_from_state(pos, vel, new_mass)
+                                {
+                                    sub_orbit = new_orb;
+                                    sub_ta = new_ta;
+                                    sub_retro = new_ret;
+                                    sub_mass = new_mass;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        segments.push(PatchedConicSegment {
+                            orbit: current_orbit,
+                            parent_idx: current_parent_idx,
+                            retrograde: current_retrograde,
+                            start_true_anomaly: current_ta,
+                            end_true_anomaly: None,
+                            start_time: cumulative_time,
+                            end_time: None,
+                        });
+                    }
                     break;
                 }
             }
@@ -269,7 +537,14 @@ impl Ship {
         base_time: f64,
     ) -> Option<(f64, f64, usize, bool)> {
         let parent = &solar_system.bodies[parent_idx];
-        let parent_mass_eff = parent.effective_mass_at(orbit.semi_major_axis);
+        let parent_mass_eff = if parent.galactic_mass_profile {
+            // Use mass at current orbital distance for better period estimate
+            let start_pos = orbit.position_from_mean_anomaly(start_mean_anomaly, 0.0);
+            let r = (start_pos[0].powi(2) + start_pos[1].powi(2)).sqrt();
+            parent.effective_mass_at(r)
+        } else {
+            parent.effective_mass_at(orbit.semi_major_axis)
+        };
         let mu = G * parent_mass_eff;
         let period = std::f64::consts::TAU * (orbit.semi_major_axis.powi(3) / mu).sqrt();
         let mean_motion = std::f64::consts::TAU / period;

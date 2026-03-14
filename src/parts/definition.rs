@@ -295,20 +295,15 @@ impl FuelType {
 /// Tank-specific data (for fuel tanks)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TankData {
-    pub grid_area: u32,  // Tank area in grid squares (for capacity calculation)
+    pub grid_area: f64,  // Tank volume in grid-area-equivalent units (for capacity calculation)
 }
 
 impl TankData {
-    /// Dry mass in kg (35 kg per grid square)
-    pub fn dry_mass_kg(&self) -> f64 {
-        self.grid_area as f64 * 35.0
-    }
-
     /// Get propellant masses for a given fuel type (in kg)
     /// Returns (oxygen_kg, fuel_kg)
     pub fn propellant_capacity(&self, fuel_type: FuelType) -> (f64, f64) {
         let (ox_per_sq, fuel_per_sq) = fuel_type.propellant_per_grid_square();
-        (ox_per_sq * self.grid_area as f64, fuel_per_sq * self.grid_area as f64)
+        (ox_per_sq * self.grid_area, fuel_per_sq * self.grid_area)
     }
 }
 

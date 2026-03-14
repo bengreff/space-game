@@ -9,20 +9,23 @@ use super::textures::BodyTextureMap;
 use super::types::{
     BodyData, BodyInfoData, MainMenuAction, ManeuverNode, OrbitRenderData, PauseAction,
     ShipOrbitData, ShipRenderData, TitleScreenAction, TrackingStationAction,
-    TrackingVesselData, Vertex, HYPERBOLIC_RENDER_MARGIN, HYPERBOLIC_SKIP_MARGIN,
+    TrackingVesselData, Vertex, HYPERBOLIC_RENDER_MARGIN,
 };
 
-/// Format seconds into a human-readable duration string (e.g., "1d 2h 3m 4s")
+/// Format seconds into a human-readable duration string (e.g., "1y 2d 3h 4m 5s")
 fn format_duration(seconds: f64) -> String {
     if !seconds.is_finite() || seconds < 0.0 {
         return "---".to_string();
     }
     let total = seconds as u64;
-    let d = total / 86400;
+    let y = total / (86400 * 365);
+    let d = (total / 86400) % 365;
     let h = (total % 86400) / 3600;
     let m = (total % 3600) / 60;
     let s = total % 60;
-    if d > 0 {
+    if y > 0 {
+        format!("{}y {}d {}h {}m", y, d, h, m)
+    } else if d > 0 {
         format!("{}d {}h {}m {}s", d, h, m, s)
     } else if h > 0 {
         format!("{}h {}m {}s", h, m, s)
@@ -30,6 +33,27 @@ fn format_duration(seconds: f64) -> String {
         format!("{}m {}s", m, s)
     } else {
         format!("{}s", s)
+    }
+}
+
+/// Format duration without seconds (for long-running mission timers)
+fn format_duration_no_seconds(seconds: f64) -> String {
+    if !seconds.is_finite() || seconds < 0.0 {
+        return "---".to_string();
+    }
+    let total = seconds as u64;
+    let y = total / (86400 * 365);
+    let d = (total / 86400) % 365;
+    let h = (total % 86400) / 3600;
+    let m = (total % 3600) / 60;
+    if y > 0 {
+        format!("{}y {}d {}h", y, d, h)
+    } else if d > 0 {
+        format!("{}d {}h {}m", d, h, m)
+    } else if h > 0 {
+        format!("{}h {}m", h, m)
+    } else {
+        format!("{}m", m)
     }
 }
 
@@ -142,11 +166,19 @@ pub struct RenderState {
     pub ship_heat_flux: f64,              // W/m², for HUD display
     pub ship_below_landing_altitude: bool, // Whether warp > 10x should be blocked
     pub ship_velocity_direction: [f64; 2], // Normalized velocity unit vector for prograde arrow
+    // Relativistic state
+    pub ship_speed_fraction_c: f64,
+    pub ship_lorentz_gamma: f64,
+    pub ship_proper_time: f64,
+    pub ship_mission_time: f64,
+    pub ship_is_relativistic: bool,
+    pub ship_grav_time_factor: f64,
     // Part click state
     pub selected_flight_part: Option<usize>,  // index into flight_parts_cache
     pub flight_parts_cache: Vec<super::types::ShipPartRenderData>,
     pub ship_render_x: f64,
     pub ship_render_y: f64,
+    pub ship_orbits_root: bool,     // Ship is directly orbiting the root body (Sgr A*)
     pub ship_body_center: [f64; 2],  // SOI body position in render units (large, galaxy-scale)
     pub ship_rel_offset: [f64; 2],   // Ship offset from SOI body in render units (small, local)
     pub ship_render_rotation: f64,
@@ -158,6 +190,7 @@ pub struct RenderState {
     pub solar_deploy_request: Option<(usize, bool)>,  // (part_index, deploy)
     pub parachute_deploy_request: Option<usize>,  // part_index to deploy parachute
     pub parachute_cut_request: Option<usize>,     // part_index to cut deployed parachute
+    pub ship_has_control: bool,    // Whether the vessel has a functioning command pod
     pub ship_in_atmosphere: bool,  // Whether the active vessel is in atmosphere
     pub ship_is_landed: bool,      // Whether the active vessel is landed
     pub ap_markers: Vec<([f64; 2], f64)>, // Apoapsis markers: (world pos relative to camera, altitude)
@@ -321,8 +354,10 @@ impl RenderState {
         });
 
         // Load body textures
+        let t_tex = std::time::Instant::now();
         let (body_texture_view, body_sampler, body_texture_map) =
             super::textures::load_body_textures(&device, &queue, body_names);
+        println!("    Body textures: {:.0?}", t_tex.elapsed());
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -363,7 +398,9 @@ impl RenderState {
         });
 
         // Load sprite atlas
+        let t_spr = std::time::Instant::now();
         let sprite_atlas = super::sprites::load_sprite_atlas(&device, &queue);
+        println!("    Sprite atlas: {:.0?}", t_spr.elapsed());
         let sprite_bind_group_layout = super::sprites::create_sprite_bind_group_layout(&device);
         let plume_start_time = std::time::Instant::now();
 
@@ -518,10 +555,17 @@ impl RenderState {
             ship_heat_flux: 0.0,
             ship_below_landing_altitude: false,
             ship_velocity_direction: [0.0, 0.0],
+            ship_speed_fraction_c: 0.0,
+            ship_lorentz_gamma: 1.0,
+            ship_proper_time: 0.0,
+            ship_mission_time: 0.0,
+            ship_is_relativistic: false,
+            ship_grav_time_factor: 1.0,
             selected_flight_part: None,
             flight_parts_cache: Vec::new(),
             ship_render_x: 0.0,
             ship_render_y: 0.0,
+            ship_orbits_root: false,
             ship_body_center: [0.0, 0.0],
             ship_rel_offset: [0.0, 0.0],
             ship_render_rotation: 0.0,
@@ -533,6 +577,7 @@ impl RenderState {
             solar_deploy_request: None,
             parachute_deploy_request: None,
             parachute_cut_request: None,
+            ship_has_control: true,
             ship_in_atmosphere: false,
             ship_is_landed: false,
             ap_markers: Vec::new(),
@@ -714,6 +759,12 @@ impl RenderState {
         let vessel_current_stage = self.vessel_current_stage;
 
         let ship_acceleration = self.ship_acceleration;
+        let ship_speed_fraction_c = self.ship_speed_fraction_c;
+        let ship_lorentz_gamma = self.ship_lorentz_gamma;
+        let ship_proper_time = self.ship_proper_time;
+        let ship_mission_time = self.ship_mission_time;
+        let ship_is_relativistic = self.ship_is_relativistic;
+        let ship_grav_time_factor = self.ship_grav_time_factor;
         let ship_below_landing_altitude = self.ship_below_landing_altitude;
         let ship_soi_surface_gravity = self.ship_soi_surface_gravity;
         let ship_g_force = self.ship_g_force;
@@ -730,6 +781,7 @@ impl RenderState {
         let burn_time = self.burn_time;
         let warp_to_node_active = self.warp_to_node;
         let current_autopilot = self.autopilot_target;
+        let has_control = self.ship_has_control;
         let vessel_stages = self.vessel_stages.clone();
         let vessel_stage_delta_vs = self.vessel_stage_delta_vs.clone();
         let vessel_stage_burn_times = self.vessel_stage_burn_times.clone();
@@ -776,10 +828,10 @@ impl RenderState {
                         // Block selecting warp > max physics warp while actually producing thrust
                         let actually_thrusting = ship_throttle > 0.0 && ship_acceleration > 0.0;
                         let blocked_throttle = actually_thrusting && warp > RAILS_WARP_THRESHOLD;
-                        // Block on-rails warps that would reach SOI boundary in < 0.5 seconds
+                        // Block on-rails warps that would reach SOI boundary in < 0.1 real seconds
                         // Physics warp (≤10x) handles SOI transitions via substeps, so only block on-rails
                         let blocked_intercept = warp > RAILS_WARP_THRESHOLD && ship_time_to_intercept
-                            .map(|t| t / warp < 0.5)
+                            .map(|t| t / warp < 0.1)
                             .unwrap_or(false);
                         // Block on-rails warp when below landing altitude
                         let blocked_landing = ship_below_landing_altitude && warp > RAILS_WARP_THRESHOLD;
@@ -859,7 +911,9 @@ impl RenderState {
                 .frame(egui::Frame::none().fill(egui::Color32::from_rgba_unmultiplied(20, 20, 30, 200)))
                 .show(ctx, |ui| {
                     // Format velocity
-                    let vel_str = if ship_velocity >= 1000.0 {
+                    let vel_str = if ship_speed_fraction_c > 0.01 {
+                        format!("{:.2}% c", ship_speed_fraction_c * 100.0)
+                    } else if ship_velocity >= 1000.0 {
                         format!("{:.2} km/s", ship_velocity / 1000.0)
                     } else {
                         format!("{:.1} m/s", ship_velocity)
@@ -882,12 +936,16 @@ impl RenderState {
 
                         // RCS toggle button
                         {
-                            let rcs_btn_color = if self.rcs_enabled {
+                            let rcs_btn_color = if !has_control {
+                                egui::Color32::from_rgb(40, 40, 45)
+                            } else if self.rcs_enabled {
                                 egui::Color32::from_rgb(80, 150, 80)
                             } else {
                                 egui::Color32::from_rgb(60, 60, 70)
                             };
-                            let rcs_text_color = if self.rcs_enabled {
+                            let rcs_text_color = if !has_control {
+                                egui::Color32::from_rgb(80, 80, 80)
+                            } else if self.rcs_enabled {
                                 egui::Color32::WHITE
                             } else {
                                 egui::Color32::LIGHT_GRAY
@@ -895,7 +953,7 @@ impl RenderState {
                             let rcs_btn = egui::Button::new(egui::RichText::new("RCS").size(11.0).color(rcs_text_color))
                                 .fill(rcs_btn_color)
                                 .min_size(egui::vec2(35.0, 20.0));
-                            if ui.add(rcs_btn).clicked() {
+                            if ui.add(rcs_btn).clicked() && has_control {
                                 self.rcs_enabled = !self.rcs_enabled;
                             }
                         }
@@ -907,12 +965,16 @@ impl RenderState {
                         // Helper to create autopilot button
                         let autopilot_btn = |ui: &mut egui::Ui, label: &str, target: AutopilotTarget, current: AutopilotTarget| -> bool {
                             let is_active = current == target;
-                            let btn_color = if is_active {
+                            let btn_color = if !has_control {
+                                egui::Color32::from_rgb(40, 40, 45)
+                            } else if is_active {
                                 egui::Color32::from_rgb(80, 150, 80)
                             } else {
                                 egui::Color32::from_rgb(60, 60, 70)
                             };
-                            let text_color = if is_active {
+                            let text_color = if !has_control {
+                                egui::Color32::from_rgb(80, 80, 80)
+                            } else if is_active {
                                 egui::Color32::WHITE
                             } else {
                                 egui::Color32::LIGHT_GRAY
@@ -920,8 +982,13 @@ impl RenderState {
                             let btn = egui::Button::new(egui::RichText::new(label).size(11.0).color(text_color))
                                 .fill(btn_color)
                                 .min_size(egui::vec2(35.0, 20.0));
-                            ui.add(btn).clicked()
+                            ui.add(btn).clicked() && has_control
                         };
+
+                        if !has_control {
+                            ui.colored_label(egui::Color32::RED, "NO CONTROL");
+                            ui.add_space(5.0);
+                        }
 
                         // Prograde button
                         if autopilot_btn(ui, "PRO", AutopilotTarget::Prograde, new_autopilot_target) {
@@ -1062,7 +1129,18 @@ impl RenderState {
                         ui.label(egui::RichText::new("ALT").size(11.0).color(egui::Color32::GRAY));
                         ui.label(egui::RichText::new(&alt_str).size(13.0).strong().color(egui::Color32::WHITE));
 
-
+                        if ship_is_relativistic || ship_grav_time_factor < 0.999 {
+                            ui.add_space(10.0);
+                            ui.label(egui::RichText::new("\u{03B3}").size(11.0).color(egui::Color32::from_rgb(160, 120, 220)));
+                            ui.label(egui::RichText::new(format!("{:.4}", ship_lorentz_gamma))
+                                .size(13.0).strong().color(egui::Color32::from_rgb(200, 170, 255)));
+                            ui.add_space(8.0);
+                            ui.label(egui::RichText::new(format!("Ship T+{}", format_duration_no_seconds(ship_proper_time)))
+                                .size(11.0).color(egui::Color32::from_rgb(170, 210, 255)));
+                            ui.add_space(5.0);
+                            ui.label(egui::RichText::new(format!("Earth T+{}", format_duration_no_seconds(ship_mission_time)))
+                                .size(11.0).color(egui::Color32::from_rgb(255, 210, 170)));
+                        }
 
                     });
                 });
@@ -1407,6 +1485,17 @@ impl RenderState {
                             };
                             ui.label(egui::RichText::new(format!("Total Δv: {}", dv_str))
                                 .size(12.0).strong());
+                            let cruise_v = crate::ship::relativistic_cruise_velocity(total_dv);
+                            let cruise_beta = cruise_v / crate::ship::SPEED_OF_LIGHT;
+                            if cruise_beta > 0.005 {
+                                let cruise_str = if cruise_beta > 0.01 {
+                                    format!("Cruise: {:.2}% c", cruise_beta * 100.0)
+                                } else {
+                                    format!("Cruise: {:.0} km/s", cruise_v / 1000.0)
+                                };
+                                ui.label(egui::RichText::new(cruise_str)
+                                    .size(10.0).color(egui::Color32::from_rgb(180, 140, 240)));
+                            }
                         }
 
                         if let Some(current) = vessel_current_stage {
@@ -2996,6 +3085,14 @@ impl RenderState {
             self.ship_heat_flux = s.heat_flux;
             self.ship_below_landing_altitude = s.below_landing_altitude;
             self.ship_velocity_direction = s.velocity_direction;
+            self.ship_speed_fraction_c = s.speed_fraction_c;
+            self.ship_lorentz_gamma = s.lorentz_gamma;
+            self.ship_proper_time = s.proper_time;
+            self.ship_mission_time = s.mission_time;
+            self.ship_is_relativistic = s.is_relativistic;
+            self.ship_grav_time_factor = s.grav_time_factor;
+            self.ship_orbits_root = s.orbits_root;
+            self.ship_has_control = s.has_control;
             self.ship_render_x = s.x;
             self.ship_render_y = s.y;
             self.ship_render_rotation = s.rotation;
@@ -3107,7 +3204,7 @@ impl RenderState {
         self.pe_markers.clear();
         self.closest_approach_marker = None;
 
-        if let Some(ship_data) = ship.filter(|_| !in_galaxy_view) {
+        if let Some(ship_data) = ship {
             let pixels_per_world_unit = self.camera.zoom * self.size.height as f32 / 2.0;
             let ship_pixels = ship_data.size as f32 * pixels_per_world_unit * 2.0;
 
@@ -3168,11 +3265,6 @@ impl RenderState {
                         for i in 0..num_points {
                             let t = i as f64 / (num_points - 1) as f64;
                             let ta = start_ta + t * (end_ta - start_ta);
-
-                            // Skip if too close to asymptote
-                            if ta.abs() >= max_true_anomaly - HYPERBOLIC_SKIP_MARGIN {
-                                continue;
-                            }
 
                             // Calculate radius from orbit equation: r = p / (1 + e*cos(ν))
                             let denom = 1.0 + e * ta.cos();
@@ -3588,10 +3680,6 @@ impl RenderState {
                         let t = i as f64 / (num_points - 1) as f64;
                         let ta = start_ta + t * (end_ta - start_ta);
 
-                        if ta.abs() >= max_ta - HYPERBOLIC_SKIP_MARGIN {
-                            continue;
-                        }
-
                         let denom = 1.0 + e * ta.cos();
                         if denom <= 0.001 {
                             continue;
@@ -3845,8 +3933,8 @@ impl RenderState {
             self.add_launchpad_vertices(&mut all_vertices, &mut all_indices, bodies, scale, ship_data);
         }
 
-        // Draw ship on top of everything (skip in galaxy view — only stars visible)
-        if let Some(ship_data) = ship.filter(|_| !in_galaxy_view) {
+        // Draw ship on top of everything
+        if let Some(ship_data) = ship {
             // Ship position relative to camera, using two-step subtraction for precision.
             // Each subtraction is between values of similar magnitude, preserving f64 precision.
             let rel_x = ((self.ship_body_center[0] - cam_x) + (self.ship_rel_offset[0] - off_x)) as f32;

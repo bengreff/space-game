@@ -61,6 +61,35 @@ pub const RAILS_WARP_THRESHOLD: f64 = 10.0;
 /// Maximum physics timestep for accurate integration (seconds)
 const MAX_PHYSICS_DT: f64 = 0.01;
 
+/// Speed of light in m/s
+pub const SPEED_OF_LIGHT: f64 = 2.998e8;
+/// Speed of light squared
+pub const C_SQUARED: f64 = SPEED_OF_LIGHT * SPEED_OF_LIGHT;
+/// Below this speed, relativistic effects are skipped (~2,998 km/s = 0.01c)
+pub const RELATIVISTIC_SPEED_THRESHOLD: f64 = 0.01 * SPEED_OF_LIGHT;
+/// GM/rc² threshold below which gravitational time dilation is skipped
+const GRAV_DILATION_THRESHOLD: f64 = 0.001;
+
+/// Lorentz factor. Returns 1.0 below threshold.
+pub fn lorentz_gamma(speed: f64) -> f64 {
+    if speed < RELATIVISTIC_SPEED_THRESHOLD { return 1.0; }
+    let beta_sq = (speed / SPEED_OF_LIGHT).powi(2);
+    1.0 / (1.0 - beta_sq).max(1e-12).sqrt()
+}
+
+/// Gravitational time dilation factor √(1 - 2GM/rc²). Returns 1.0 unless compact + above threshold.
+pub fn gravitational_time_factor(gm: f64, r: f64, body_is_compact: bool) -> f64 {
+    if !body_is_compact || r <= 0.0 { return 1.0; }
+    let potential = gm / (r * C_SQUARED);
+    if potential < GRAV_DILATION_THRESHOLD { return 1.0; }
+    (1.0 - 2.0 * potential).max(1e-12).sqrt()
+}
+
+/// Convert Newtonian Δv to relativistic cruise velocity: v = c·tanh(Δv/c)
+pub fn relativistic_cruise_velocity(newtonian_dv: f64) -> f64 {
+    SPEED_OF_LIGHT * (newtonian_dv / SPEED_OF_LIGHT).tanh()
+}
+
 /// Aerodynamic drag coefficient (blunt body)
 const DRAG_COEFFICIENT: f64 = 0.4;
 
@@ -200,6 +229,12 @@ pub struct Ship {
     /// RCS translation input: [forward, right] in vessel-local frame, -1..1 each
     #[serde(skip)]
     pub rcs_translate: [f64; 2],
+    /// Ship clock (seconds) — ticks slower at high v or near compact objects
+    #[serde(default)]
+    pub proper_time: f64,
+    /// Coordinate/Earth time elapsed (seconds)
+    #[serde(default)]
+    pub mission_time: f64,
 }
 
 impl Ship {
@@ -251,6 +286,8 @@ impl Ship {
             temperature: AMBIENT_TEMPERATURE,
             heat_flux: 0.0,
             rcs_translate: [0.0, 0.0],
+            proper_time: 0.0,
+            mission_time: 0.0,
         }
     }
 
@@ -542,6 +579,7 @@ impl Ship {
         if let Some(ship_orbit) = self.calculate_orbit_with_anomaly(solar_system) {
             self.cached_orbit = Some(ship_orbit);
             self.on_rails = true;
+            self.rotational_velocity = 0.0;
         }
     }
 
@@ -605,6 +643,17 @@ impl Ship {
                 ship_orbit.retrograde,
             );
 
+            {
+                let speed = (self.rel_velocity[0].powi(2) + self.rel_velocity[1].powi(2)).sqrt();
+                let gamma = lorentz_gamma(speed);
+                let dist = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
+                let grav_factor = gravitational_time_factor(
+                    G * parent.effective_mass_at(dist), dist, parent.is_compact(),
+                );
+                self.proper_time += dt * grav_factor / gamma;
+                self.mission_time += dt;
+            }
+
             self.check_soi_transition_on_rails(solar_system, dt);
         }
 
@@ -657,6 +706,19 @@ impl Ship {
 
         for _ in 0..num_steps {
             self.physics_substep(sub_dt, input, solar_system, vessel);
+        }
+
+        // Proper time accumulation (once per frame, after all substeps)
+        {
+            let soi_body = &solar_system.bodies[self.soi_body];
+            let speed = (self.rel_velocity[0].powi(2) + self.rel_velocity[1].powi(2)).sqrt();
+            let gamma = lorentz_gamma(speed);
+            let dist = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
+            let grav_factor = gravitational_time_factor(
+                G * soi_body.effective_mass_at(dist), dist, soi_body.is_compact(),
+            );
+            self.proper_time += dt * grav_factor / gamma;
+            self.mission_time += dt;
         }
 
         // Update temperature from aerodynamic heating (once per frame)
@@ -794,7 +856,19 @@ impl Ship {
 
         let thrust_accel = if self.throttle > 0.0 {
             let mag = self.throttle * max_thrust_accel;
-            [self.rotation.cos() * mag, self.rotation.sin() * mag]
+            let raw = [self.rotation.cos() * mag, self.rotation.sin() * mag];
+            let speed_sq = self.rel_velocity[0].powi(2) + self.rel_velocity[1].powi(2);
+            if speed_sq > RELATIVISTIC_SPEED_THRESHOLD * RELATIVISTIC_SPEED_THRESHOLD {
+                let speed = speed_sq.sqrt();
+                let gamma = lorentz_gamma(speed);
+                let gamma_cubed = gamma * gamma * gamma;
+                let v_hat = [self.rel_velocity[0] / speed, self.rel_velocity[1] / speed];
+                let a_dot_v = raw[0] * v_hat[0] + raw[1] * v_hat[1];
+                let a_long = [a_dot_v * v_hat[0], a_dot_v * v_hat[1]];
+                let a_trans = [raw[0] - a_long[0], raw[1] - a_long[1]];
+                [a_long[0] / gamma_cubed + a_trans[0] / gamma,
+                 a_long[1] / gamma_cubed + a_trans[1] / gamma]
+            } else { raw }
         } else {
             [0.0, 0.0]
         };
@@ -977,6 +1051,15 @@ impl Ship {
                 surface_distance * surface_angle.sin(),
             ];
             self.rel_velocity = [0.0, 0.0];
+        }
+
+        {
+            let dist = (self.rel_position[0].powi(2) + self.rel_position[1].powi(2)).sqrt();
+            let grav_factor = gravitational_time_factor(
+                G * body.effective_mass_at(dist), dist, body.is_compact(),
+            );
+            self.proper_time += dt * grav_factor;
+            self.mission_time += dt;
         }
     }
 

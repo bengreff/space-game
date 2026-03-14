@@ -614,8 +614,7 @@ pub fn render_editor_ui(
                         if let Some(ref tank) = def.tank {
                             ui.separator();
                             ui.heading("Tank Stats");
-                            ui.label(format!("Dry Mass: {:.0} kg", tank.dry_mass_kg()));
-                            ui.label(format!("Grid Area: {} squares", tank.grid_area));
+                            ui.label(format!("Dry Mass: {:.0} kg", def.mass * 1000.0));
 
                             ui.separator();
                             ui.label("Propellant Capacity:");
@@ -745,8 +744,7 @@ pub fn render_editor_ui(
                             if let Some(ref tank) = def.tank {
                                 ui.separator();
                                 ui.heading("Tank Stats");
-                                ui.label(format!("Dry Mass: {:.0} kg", tank.dry_mass_kg()));
-                                ui.label(format!("Grid Area: {} squares", tank.grid_area));
+                                ui.label(format!("Dry Mass: {:.0} kg", def.mass * 1000.0));
 
                                 ui.separator();
                                 ui.label("Fuel Type:");

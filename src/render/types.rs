@@ -1,9 +1,6 @@
 /// Margin from hyperbolic asymptote for trajectory endpoint rendering
 pub const HYPERBOLIC_RENDER_MARGIN: f64 = 0.01;
 
-/// Skip margin for points too close to hyperbolic asymptote
-pub const HYPERBOLIC_SKIP_MARGIN: f64 = 0.005;
-
 /// Vertex for 2D rendering
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -206,6 +203,16 @@ pub struct ShipRenderData {
     pub rcs_translate: [f64; 2],  // [forward, right] translation for nozzle activation
     // Velocity direction for prograde arrow
     pub velocity_direction: [f64; 2],  // Normalized velocity unit vector (or [0,0] if nearly stationary)
+    // Relativistic state
+    pub speed_fraction_c: f64,
+    pub lorentz_gamma: f64,
+    pub proper_time: f64,
+    pub mission_time: f64,
+    pub is_relativistic: bool,
+    pub grav_time_factor: f64,
+    // Galaxy view
+    pub orbits_root: bool,  // Ship is directly orbiting the root body (Sgr A*)
+    pub has_control: bool,  // Whether the vessel has a functioning command pod
 }
 
 /// Info about a part in a stage, for the staging UI

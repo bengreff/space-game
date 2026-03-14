@@ -62,6 +62,7 @@ An "RCS" toggle button SHALL appear at the left of the bottom panel, before the 
 - Active fill = `rgb(80, 150, 80)`, inactive = `rgb(60, 60, 70)`
 - Active text = white, inactive text = light gray
 - Button style matches SAS buttons (text size 11, min size 35x20)
+- **No control**: fill = `rgb(40, 40, 45)`, text = `rgb(80, 80, 80)`, clicks ignored
 
 #### Scenario: RCS disabled effects
 - **WHEN** RCS is disabled
@@ -75,9 +76,14 @@ The SAS system SHALL display buttons for: "PRO" (Prograde), "RET" (Retrograde), 
 - Active fill = `rgb(80, 150, 80)`, inactive = `rgb(60, 60, 70)`
 - Active text = white, inactive text = light gray
 - Button text size = 11, minimum size = 35x20
+- **No control**: fill = `rgb(40, 40, 45)`, text = `rgb(80, 80, 80)`, clicks ignored
 
 #### Scenario: Toggle behavior
 - Clicking active button toggles to Off; clicking inactive button activates that mode
+
+### Requirement: No control indicator
+
+When the active vessel has no functioning command pod (`ship_has_control = false`), a red "NO CONTROL" label SHALL be displayed in the autopilot buttons row, between the SAS label and the autopilot buttons.
 
 ### Requirement: Vessel stats display
 

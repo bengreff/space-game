@@ -1,7 +1,7 @@
 //! Maneuver node management for RenderState
 
 use super::state::RenderState;
-use super::types::{ManeuverDeltaV, ManeuverNode, HYPERBOLIC_RENDER_MARGIN, HYPERBOLIC_SKIP_MARGIN};
+use super::types::{ManeuverDeltaV, ManeuverNode, HYPERBOLIC_RENDER_MARGIN};
 use crate::bodies::G;
 use crate::ship::AutopilotTarget;
 
@@ -66,10 +66,6 @@ impl RenderState {
                 for i in 0..num_samples {
                     let t = i as f64 / (num_samples - 1) as f64;
                     let ta = start_ta + t * (end_ta - start_ta);
-
-                    if ta.abs() >= max_ta - HYPERBOLIC_SKIP_MARGIN {
-                        continue;
-                    }
 
                     let denom = 1.0 + e * ta.cos();
                     if denom <= 0.001 {

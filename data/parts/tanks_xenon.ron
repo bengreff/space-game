@@ -2,11 +2,12 @@
 // Supercritical xenon storage for electric propulsion engines.
 // Very dense (~1600 kg/m³) — tanks are compact but heavy.
 // High-pressure vessels with distinctive dark finish.
+// Volume-based: grid_area from cylinder volume. Structural density: 28.1 kg/m³ (~95.8% FF)
 
 (
     parts: [
         // ============================================
-        // TINY XENON TANK (1×1 grid)
+        // TINY XENON TANK (1x1 grid)
         // ============================================
 
         (
@@ -14,20 +15,20 @@
             name: "Xe-1",
             description: "Miniature xenon storage sphere for single ion engine missions. Supercritical xenon at 100+ bar provides high storage density in a compact form factor. Standard choice for lightweight probes.",
             category: FuelTanks,
-            mass: 0.015,
+            mass: 0.003,
             cost: 1500,
             size: Tiny,
             shape: Rectangle,
             grid_width: 1.0,
             grid_height: 1.0,
             tank: Some((
-                grid_area: 1,
+                grid_area: 0.2,
             )),
             resources: {},
         ),
 
         // ============================================
-        // SMALL XENON TANK (3×1 grid)
+        // SMALL XENON TANK (3x1 grid)
         // ============================================
 
         (
@@ -35,20 +36,20 @@
             name: "Xe-3",
             description: "Standard xenon tank for multi-engine electric propulsion systems. Three-sphere composite pressure vessel with shared manifold. Enough xenon for extended interplanetary transfers.",
             category: FuelTanks,
-            mass: 0.040,
+            mass: 0.025,
             cost: 4000,
             size: Small,
             shape: Rectangle,
             grid_width: 3.0,
             grid_height: 1.0,
             tank: Some((
-                grid_area: 3,
+                grid_area: 1.8,
             )),
             resources: {},
         ),
 
         // ============================================
-        // MEDIUM XENON TANK (5×1 grid)
+        // MEDIUM XENON TANK (5x1 grid)
         // ============================================
 
         (
@@ -56,20 +57,20 @@
             name: "Xe-5",
             description: "Medium xenon tank for Hall thruster and MPD missions. High-pressure titanium alloy vessel with integrated feed system. Supports sustained electric propulsion burns lasting weeks.",
             category: FuelTanks,
-            mass: 0.070,
+            mass: 0.069,
             cost: 7000,
             size: Medium,
             shape: Rectangle,
             grid_width: 5.0,
             grid_height: 1.0,
             tank: Some((
-                grid_area: 5,
+                grid_area: 5.0,
             )),
             resources: {},
         ),
 
         // ============================================
-        // LARGE XENON TANK (9×1 grid)
+        // LARGE XENON TANK (9x1 grid)
         // ============================================
 
         (
@@ -77,14 +78,14 @@
             name: "Xe-9",
             description: "Large xenon tank for heavy electric propulsion spacecraft. Bank of high-pressure vessels with redundant isolation valves and pressure regulation. Required for MPD thruster missions to the outer solar system.",
             category: FuelTanks,
-            mass: 0.120,
+            mass: 0.223,
             cost: 12000,
             size: Large,
             shape: Rectangle,
             grid_width: 9.0,
             grid_height: 1.0,
             tank: Some((
-                grid_area: 9,
+                grid_area: 16.2,
             )),
             resources: {},
         ),
