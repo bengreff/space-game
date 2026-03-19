@@ -62,7 +62,6 @@ pub enum EditorAction {
     LoadBlueprint(String),
     DeleteBlueprint(String),
     NewVessel,
-    ExitToFlight,
 }
 
 /// Body info for TWR calculation
@@ -146,12 +145,6 @@ pub fn render_editor_ui(
                     action = EditorAction::Launch;
                 }
             });
-
-            // Exit to flight (without launching)
-            ui.separator();
-            if ui.button("Exit to Flight").clicked() {
-                action = EditorAction::ExitToFlight;
-            }
 
             // Part count
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

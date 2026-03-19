@@ -30,7 +30,12 @@ import random
 # Constants
 # ================================================================
 PX = 360   # pixels per grid square (4x base resolution)
+MAX_SPRITE_PX = 4096  # cap output image size to avoid multi-GB RGBA decode
 PAD = 0  # No padding — atlas packer adds spacing
+
+def _capped_px(w, h):
+    """Return effective PX capped so the output image stays within MAX_SPRITE_PX."""
+    return min(PX, MAX_SPRITE_PX // max(w, h))
 
 # ================================================================
 # Palette — steel base + interstellar accents
@@ -413,6 +418,7 @@ def generate_orion():
     absorber column above, pulse unit magazine, narrower mount at top.
     """
     W, H, TOP = 70, 52, 30
+    PX = _capped_px(W, H)
     img_w = int(W * PX) + PAD * 2
     img_h = int(H * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -617,6 +623,7 @@ def generate_daedalus(stage=1):
     else:
         W, H, TOP = 44, 34, 16
 
+    PX = _capped_px(W, H)
     img_w = int(W * PX) + PAD * 2
     img_h = int(H * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -756,6 +763,7 @@ def generate_zpinch(variant="probe"):
     else:
         W, H, TOP = 16, 26, 10
 
+    PX = _capped_px(W, H)
     img_w = int(W * PX) + PAD * 2
     img_h = int(H * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -880,6 +888,7 @@ def generate_amcat():
     nozzle. More compact than Daedalus (less reaction area needed).
     """
     W, H, TOP = 22, 16, 12
+    PX = _capped_px(W, H)
     img_w = int(W * PX) + PAD * 2
     img_h = int(H * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -1009,6 +1018,7 @@ def generate_am_torch():
     of coil rings with magnetic mirrors at both ends.
     """
     W, H, TOP = 8, 12, 6
+    PX = _capped_px(W, H)
     img_w = int(W * PX) + PAD * 2
     img_h = int(H * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -1147,6 +1157,7 @@ def generate_gamma_conversion():
     focal point structure.
     """
     W, H, TOP = 34, 26, 14
+    PX = _capped_px(W, H)
     img_w = int(W * PX) + PAD * 2
     img_h = int(H * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))

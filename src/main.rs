@@ -2663,11 +2663,6 @@ fn render_editor_frame(
         EditorAction::NewVessel => {
             game.new_vessel();
         }
-        EditorAction::ExitToFlight => {
-            println!("Exiting to flight mode...");
-            game.enter_flight();
-            println!("Now in flight mode: {:?}", game.mode);
-        }
         EditorAction::None => {}
     }
 

@@ -505,6 +505,27 @@ fn collect_sprite_paths(
         .collect()
 }
 
+/// Max dimension for any individual sprite during decode.
+/// Sprites larger than this are immediately downscaled to limit memory and decode time.
+/// The final atlas is 16384 wide; individual sprites rarely need more than 4096px.
+const MAX_SPRITE_DIM: u32 = 4096;
+
+/// Downscale an image if its largest dimension exceeds MAX_SPRITE_DIM
+fn cap_sprite_size(id: &str, rgba: image::RgbaImage) -> image::RgbaImage {
+    let (w, h) = rgba.dimensions();
+    if w <= MAX_SPRITE_DIM && h <= MAX_SPRITE_DIM {
+        return rgba;
+    }
+    let scale = MAX_SPRITE_DIM as f64 / w.max(h) as f64;
+    let new_w = ((w as f64 * scale) as u32).max(1);
+    let new_h = ((h as f64 * scale) as u32).max(1);
+    log::info!(
+        "Downscaling sprite '{}' from {}x{} to {}x{} (cap {})",
+        id, w, h, new_w, new_h, MAX_SPRITE_DIM
+    );
+    image::imageops::resize(&rgba, new_w, new_h, image::imageops::FilterType::Lanczos3)
+}
+
 /// Decode sprite PNGs in parallel and return SpriteEntries
 fn decode_sprites_parallel(
     paths: Vec<(String, PathBuf)>,
@@ -523,7 +544,7 @@ fn decode_sprites_parallel(
             reader.no_limits();
             match reader.decode() {
                 Ok(img) => {
-                    let rgba: image::RgbaImage = img.into_rgba8();
+                    let rgba = cap_sprite_size(&stem, img.into_rgba8());
                     let (w, h) = rgba.dimensions();
                     Some(SpriteEntry {
                         id: stem,
@@ -584,7 +605,7 @@ fn decode_plume_sprites_parallel(
             reader.no_limits();
             match reader.decode() {
                 Ok(img) => {
-                    let rgba: image::RgbaImage = img.into_rgba8();
+                    let rgba = cap_sprite_size(&stem, img.into_rgba8());
                     let (w, h) = rgba.dimensions();
                     Some(SpriteEntry {
                         id: stem,

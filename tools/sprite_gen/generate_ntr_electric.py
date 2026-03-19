@@ -34,7 +34,12 @@ import os
 # Constants
 # ================================================================
 PX = 360
+MAX_SPRITE_PX = 4096
 PAD = 0  # No padding — atlas packer adds spacing
+
+def _capped_px(w, h):
+    """Return effective PX capped so the output image stays within MAX_SPRITE_PX."""
+    return min(PX, MAX_SPRITE_PX // max(w, h))
 
 # ================================================================
 # Palette
@@ -176,6 +181,7 @@ def generate_ntr_engine(size="small"):
         "large":  (9, 9),   # Wyvern
     }
     GW, GH = sizes[size]
+    PX = _capped_px(GW, GH)
 
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2
@@ -396,6 +402,7 @@ def generate_ion_engine(size="tiny_short"):
         "tiny_tall":  (1, 3),  # Cicada
     }
     GW, GH = sizes[size]
+    PX = _capped_px(GW, GH)
 
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2
@@ -527,6 +534,7 @@ def generate_hall_engine(size="tiny"):
         "small": (3, 3),  # Albatross
     }
     GW, GH = sizes[size]
+    PX = _capped_px(GW, GH)
 
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2
@@ -675,6 +683,7 @@ def generate_mpd_engine(size="small"):
         "medium": (5, 5),  # Orca
     }
     GW, GH = sizes[size]
+    PX = _capped_px(GW, GH)
 
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2
@@ -839,6 +848,7 @@ def generate_small_reactor(size="tiny"):
         "medium": (5, 5),  # Crucible
     }
     GW, GH = sizes[size]
+    PX = _capped_px(GW, GH)
 
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2
@@ -976,6 +986,7 @@ def generate_h2_tank(size="tiny"):
         "large":  (9, 8),
     }
     GW, GH = sizes[size]
+    PX = _capped_px(GW, GH)
 
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2
@@ -1079,6 +1090,7 @@ def generate_xenon_tank(size="tiny"):
         "large":  (9, 1),
     }
     GW, GH = sizes[size]
+    PX = _capped_px(GW, GH)
 
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2

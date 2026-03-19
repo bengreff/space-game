@@ -22,7 +22,12 @@ STEEL_VERY_DARK = (32, 34, 38)
 INTERIOR = (20, 18, 16)
 
 PX = 360   # Pixels per grid square (4x base resolution)
+MAX_SPRITE_PX = 4096  # cap output image size to avoid multi-GB RGBA decode
 PAD = 0   # No padding — atlas packer adds 1px spacing between sprites
+
+def _capped_px(w, h):
+    """Return effective PX capped so the output image stays within MAX_SPRITE_PX."""
+    return min(PX, MAX_SPRITE_PX // max(w, h))
 
 
 # ================================================================
@@ -48,6 +53,7 @@ def lerp_color(c1, c2, t):
 def generate_tank(spec):
     """Fuel tank: cylindrical body with end caps and weld seams."""
     gw, gh = spec["grid_width"], spec["grid_height"]
+    PX = _capped_px(gw, gh)
     w, h = int(gw * PX), int(gh * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -145,6 +151,7 @@ def generate_pod(spec):
 def generate_decoupler(spec):
     """Stack decoupler: metallic band with separation line and bolts."""
     gw, gh = spec["grid_width"], spec["grid_height"]
+    PX = _capped_px(gw, gh)
     w, h = int(gw * PX), int(gh * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -190,6 +197,7 @@ def generate_decoupler(spec):
 def generate_decoupler_radial(spec):
     """Radial decoupler: two-sided clamp with spring mechanism."""
     gw, gh = spec["grid_width"], spec["grid_height"]
+    PX = _capped_px(gw, gh)
     w, h = int(gw * PX), int(gh * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -232,6 +240,7 @@ def generate_decoupler_radial(spec):
 def generate_fairing(spec):
     """Fairing base: disc/ring with seam and bolt pattern."""
     gw, gh = spec["grid_width"], spec["grid_height"]
+    PX = _capped_px(gw, gh)
     w, h = int(gw * PX), int(gh * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -270,6 +279,7 @@ def generate_nosecone(spec):
     """Nose cone: triangular shape with gradient, edge lines, and tip highlight."""
     gw, gh = spec["grid_width"], spec["grid_height"]
     shape = spec["shape"]
+    PX = _capped_px(gw, gh)
     w, h = int(gw * PX), int(gh * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -392,6 +402,7 @@ def generate_nosecone(spec):
 def generate_heatshield(spec):
     """Heat shield: dramatic convex dome — 1/3 height at edges, 1 grid at center."""
     gw, gh = spec["grid_width"], spec["grid_height"]
+    PX = _capped_px(gw, gh)
     w = int(gw * PX)
     # Both edge and center height scale with width
     edge_h = max(5, int(w * 0.04))
@@ -497,6 +508,7 @@ def generate_rcs(spec):
 def generate_battery(spec):
     """Battery bank: black rectangle with horizontal cell lines and terminals."""
     gw, gh = spec["grid_width"], spec["grid_height"]
+    PX = _capped_px(gw, gh)
     w, h = int(gw * PX), int(gh * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -538,6 +550,7 @@ def generate_battery(spec):
 def generate_solar_panel(spec):
     """Solar panel: dark navy with bright blue photovoltaic cell grid."""
     gw, gh = spec["grid_width"], spec["grid_height"]
+    PX = _capped_px(gw, gh)
     w, h = int(gw * PX), int(gh * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -595,6 +608,7 @@ def generate_solar_panel(spec):
 def generate_rtg(spec):
     """RTG: dark grey body with red/orange heat dissipation fins."""
     gw, gh = spec["grid_width"], spec["grid_height"]
+    PX = _capped_px(gw, gh)
     w, h = int(gw * PX), int(gh * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))

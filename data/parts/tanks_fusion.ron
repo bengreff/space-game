@@ -1,6 +1,6 @@
 // Spherical Fusion Fuel Tank Definitions
 // Cryogenic D+He3 storage for fusion engines (Daedalus, Z-Pinch).
-// Volume-based: grid_area from sphere volume (V = 4/3 pi r^3).
+// Geometric mean scaling: grid_area = sqrt(d^2 * V_sphere / 0.491)
 // Structural density: 16.2 kg/m³ → 95.2% fuel fraction.
 // Era 6 tech tree parts.
 
@@ -15,14 +15,14 @@
             name: "Fusion Sphere S",
             description: "Small spherical cryogenic tank for deuterium-helium-3 fusion fuel. Composite overwrap pressure vessel with active zero-boiloff cryocoolers. Sized for probe-class fusion missions with the Z-Pinch engine.",
             category: Interstellar,
-            mass: 8.482,
+            mass: 5.194,
             cost: 2000000,
             size: XL,
             shape: Rectangle,
             grid_width: 20.0,
             grid_height: 20.0,
             tank: Some((
-                grid_area: 1066.6,
+                grid_area: 653.2,
             )),
             resources: {},
         ),
@@ -36,14 +36,14 @@
             name: "Fusion Sphere M",
             description: "Medium spherical cryogenic tank for deuterium-helium-3 fusion fuel. Geodesic panel construction with integrated structural longerons and multi-layer insulation. Standard choice for Daedalus second-stage propellant.",
             category: Interstellar,
-            mass: 67.858,
+            mass: 29.384,
             cost: 5000000,
             size: XL,
             shape: Rectangle,
             grid_width: 40.0,
             grid_height: 40.0,
             tank: Some((
-                grid_area: 8533.2,
+                grid_area: 3695.0,
             )),
             resources: {},
         ),
@@ -57,14 +57,14 @@
             name: "Fusion Sphere L",
             description: "Large spherical cryogenic tank for deuterium-helium-3 fusion fuel. Massive geodesic pressure vessel with truss side-mount for structural attachment. Designed for Daedalus first-stage interstellar missions requiring tens of thousands of tonnes of propellant.",
             category: Interstellar,
-            mass: 229.022,
+            mass: 80.972,
             cost: 10000000,
             size: XL,
             shape: Rectangle,
             grid_width: 60.0,
             grid_height: 60.0,
             tank: Some((
-                grid_area: 28799.6,
+                grid_area: 10182.3,
             )),
             resources: {},
         ),

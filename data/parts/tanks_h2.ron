@@ -2,7 +2,7 @@
 // Pure LH2 tanks for Nuclear Thermal Rocket engines.
 // No oxidizer — hydrogen only. Very low density (~70 kg/m³) means
 // large tanks but lightweight structure. Distinctive MLI insulation blankets.
-// Volume-based: grid_area from cylinder volume. Structural density: 19.8 kg/m³ (~93.5% FF)
+// Geometric mean scaling: grid_area = w^1.5 * h / sqrt(5). Structural density: 19.8 kg/m³ (~93.5% FF)
 
 (
     parts: [
@@ -15,14 +15,14 @@
             name: "LH2-T",
             description: "Compact liquid hydrogen tank for small NTR upper stages. Multi-layer insulation blanket minimizes boil-off. Sized for probe-class nuclear thermal missions.",
             category: FuelTanks,
-            mass: 0.004,
+            mass: 0.009,
             cost: 400,
             size: Tiny,
             shape: Rectangle,
             grid_width: 1.0,
             grid_height: 2.0,
             tank: Some((
-                grid_area: 0.4,
+                grid_area: 0.9,
             )),
             resources: {},
         ),
@@ -36,14 +36,14 @@
             name: "LH2-S",
             description: "Standard liquid hydrogen tank for single-engine NTR stages. Foam-insulated aluminum-lithium shell with internal anti-slosh baffles. Good balance of capacity and structural mass.",
             category: FuelTanks,
-            mass: 0.070,
+            mass: 0.090,
             cost: 1800,
             size: Small,
             shape: Rectangle,
             grid_width: 3.0,
             grid_height: 4.0,
             tank: Some((
-                grid_area: 7.2,
+                grid_area: 9.3,
             )),
             resources: {},
         ),
@@ -78,14 +78,14 @@
             name: "LH2-L",
             description: "Large liquid hydrogen tank for heavy NTR spacecraft. Massive cryogenic vessel with integrated structural longerons and multi-layer insulation. Designed for crewed Mars round-trip missions with dual Wyvern engines.",
             category: FuelTanks,
-            mass: 1.260,
+            mass: 0.939,
             cost: 12000,
             size: Large,
             shape: Rectangle,
             grid_width: 9.0,
             grid_height: 8.0,
             tank: Some((
-                grid_area: 129.6,
+                grid_area: 96.6,
             )),
             resources: {},
         ),

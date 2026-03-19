@@ -3,12 +3,12 @@
 Generate sprites for spherical fusion fuel tanks.
 
 Three sizes of cryogenic D+He3 storage:
-  Fusion Sphere S  (20x20 grid, 10m diameter)  ->  7200x7200 px
-  Fusion Sphere M  (40x40 grid, 20m diameter)  -> 14400x14400 px
-  Fusion Sphere L  (60x60 grid, 30m diameter)  -> 21600x21600 px
+  Fusion Sphere S  (20x20 grid, 10m diameter)  ->  4080x4080 px (capped)
+  Fusion Sphere M  (40x40 grid, 20m diameter)  ->  4080x4080 px (capped)
+  Fusion Sphere L  (60x60 grid, 30m diameter)  ->  4080x4080 px (capped)
 
-Flat warm gold color (no directional lighting) with geodesic panel lines,
-equatorial weld seam, single 5-grid-wide structural truss on one side,
+Flat white/grey color (no directional lighting) with geodesic panel lines,
+equatorial weld seam, single 2.5-grid-wide structural truss on one side,
 and fill port detail.
 
 Uses PIL + numpy: numpy for per-pixel sphere fill (processed in strips
@@ -21,20 +21,21 @@ import math
 import os
 
 PX = 360  # pixels per grid square
+MAX_SPRITE_PX = 4096  # cap output image size to avoid multi-GB RGBA decode
 
 # ================================================================
-# Palette — warm gold for cryogenic D+He3
+# Palette — white/grey for cryogenic D+He3
 # ================================================================
 
 # Flat sphere color (numpy float32 array)
-GOLD_BASE = np.array([185, 150, 85], dtype=np.float32)
+SPHERE_BASE = np.array([225, 222, 218], dtype=np.float32)
 
 # Subtle edge darkening color
-GOLD_EDGE = np.array([145, 115, 65], dtype=np.float32)
+SPHERE_EDGE = np.array([170, 165, 158], dtype=np.float32)
 
 # Panel seam lines (PIL tuples)
-SEAM_COLOR = (155, 125, 72)
-WELD_COLOR = (130, 105, 60)
+SEAM_COLOR = (180, 175, 168)
+WELD_COLOR = (155, 150, 142)
 
 # Truss structure
 TRUSS_DARK = (65, 60, 50, 255)
@@ -65,7 +66,8 @@ TANKS = {
 
 def generate_fusion_sphere(grid_size):
     """Generate a spherical fusion tank sprite with flat shading."""
-    size = grid_size * PX
+    effective_px = min(PX, MAX_SPRITE_PX // grid_size)
+    size = grid_size * effective_px
     radius = size / 2.0
     cx_f = cy_f = size / 2.0
     cx = cy = size // 2
@@ -104,7 +106,7 @@ def generate_fusion_sphere(grid_size):
         # Flat base color with subtle edge darkening (limb effect)
         # Edges get slightly darker to suggest curvature without lighting
         limb = np.clip(dist * 1.2, 0.0, 1.0)[..., np.newaxis]
-        color = GOLD_BASE + (GOLD_EDGE - GOLD_BASE) * (limb ** 2)
+        color = SPHERE_BASE + (SPHERE_EDGE - SPHERE_BASE) * (limb ** 2)
 
         color = np.clip(color, 0, 255).astype(np.uint8)
 
@@ -197,9 +199,9 @@ def generate_fusion_sphere(grid_size):
     # 5 grid squares wide, flat outer edge, attached at equator
     d = ImageDraw.Draw(img)
 
-    truss_grid_w = 5  # 5 grid squares wide
-    truss_px_w = truss_grid_w * PX  # width in pixels
-    truss_height = int(r * 0.6)  # ~60% of radius tall
+    truss_grid_w = 2.5  # 2.5 grid squares wide
+    truss_px_w = int(truss_grid_w * effective_px)  # width in pixels
+    truss_height = int(r * 0.3)  # ~30% of radius tall
 
     # Truss starts at the sphere edge on the right side
     truss_x1 = cx + r - int(r * 0.03)  # slightly overlapping sphere edge

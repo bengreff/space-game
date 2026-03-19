@@ -36,7 +36,12 @@ import os
 # Constants
 # ================================================================
 PX = 360
+MAX_SPRITE_PX = 4096
 PAD = 0
+
+def _capped_px(w, h):
+    """Return effective PX capped so the output image stays within MAX_SPRITE_PX."""
+    return min(PX, MAX_SPRITE_PX // max(w, h))
 
 # ================================================================
 # Palette
@@ -140,6 +145,7 @@ def generate_pod_large():
     """Large command pod: 9x5 trapezoid hull with viewport windows."""
     gw, gh = 9.0, 5.0
     tw_grid = 3.0
+    PX = _capped_px(int(gw), int(gh))
     w, h = int(gw * PX), int(gh * PX)
     tw = int(tw_grid * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
@@ -212,6 +218,7 @@ def generate_control(size):
         "xl":     (13, 4),
     }
     GW, GH = sizes[size]
+    PX = _capped_px(GW, GH)
     w, h = int(GW * PX), int(GH * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -353,6 +360,7 @@ def generate_quarters(size):
         "large":  (9, 6),
     }
     GW, GH = sizes[size]
+    PX = _capped_px(GW, GH)
     w, h = int(GW * PX), int(GH * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -465,6 +473,7 @@ def generate_greenhouse(size):
         "large":  (9, 6),
     }
     GW, GH = sizes[size]
+    PX = _capped_px(GW, GH)
     w, h = int(GW * PX), int(GH * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -585,6 +594,7 @@ def generate_cargo(size):
         "large":  (9, 5),
     }
     GW, GH = sizes[size]
+    PX = _capped_px(GW, GH)
     w, h = int(GW * PX), int(GH * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
@@ -697,6 +707,7 @@ def generate_probe(size):
         "large":  (9, 1),
     }
     GW, GH = sizes[size]
+    PX = _capped_px(GW, GH)
     w, h = int(GW * PX), int(GH * PX)
     cw, ch = w + PAD * 2, h + PAD * 2
     img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))

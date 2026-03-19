@@ -23,7 +23,12 @@ import os
 # Constants
 # ================================================================
 PX = 360
+MAX_SPRITE_PX = 4096  # cap output image size to avoid multi-GB RGBA decode
 PAD = 0  # No padding — atlas packer adds spacing
+
+def _capped_px(w, h):
+    """Return effective PX capped so the output image stays within MAX_SPRITE_PX."""
+    return min(PX, MAX_SPRITE_PX // max(w, h))
 
 # ================================================================
 # Palette (shared with interstellar engine generator)
@@ -150,6 +155,7 @@ def generate_fission_reactor(size="small"):
     else:
         GW, GH = 9, 9
 
+    PX = _capped_px(GW, GH)
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -294,6 +300,7 @@ def generate_fusion_reactor(size="small"):
     else:
         GW, GH = 11, 9
 
+    PX = _capped_px(GW, GH)
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -461,6 +468,7 @@ def generate_am_reactor(size="small"):
     else:
         GW, GH = 11, 9
 
+    PX = _capped_px(GW, GH)
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -657,6 +665,7 @@ def generate_whipple_shield(size="small"):
     }
     GW, GH = sizes[size]
 
+    PX = _capped_px(GW, GH)
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -771,6 +780,7 @@ def generate_fres_shield(size="small"):
     }
     GW, GH = sizes[size]
 
+    PX = _capped_px(GW, GH)
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -978,6 +988,7 @@ def generate_geodesic_deflector(size="small"):
     }
     GW, GH = sizes[size]
 
+    PX = _capped_px(GW, GH)
     img_w = int(GW * PX) + PAD * 2
     img_h = int(GH * PX) + PAD * 2
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))

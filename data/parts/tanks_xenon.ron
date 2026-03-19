@@ -2,7 +2,7 @@
 // Supercritical xenon storage for electric propulsion engines.
 // Very dense (~1600 kg/m³) — tanks are compact but heavy.
 // High-pressure vessels with distinctive dark finish.
-// Volume-based: grid_area from cylinder volume. Structural density: 28.1 kg/m³ (~95.8% FF)
+// Geometric mean scaling: grid_area = w^1.5 * h / sqrt(5). Structural density: 28.1 kg/m³ (~95.8% FF)
 
 (
     parts: [
@@ -15,14 +15,14 @@
             name: "Xe-1",
             description: "Miniature xenon storage sphere for single ion engine missions. Supercritical xenon at 100+ bar provides high storage density in a compact form factor. Standard choice for lightweight probes.",
             category: FuelTanks,
-            mass: 0.003,
+            mass: 0.006,
             cost: 1500,
             size: Tiny,
             shape: Rectangle,
             grid_width: 1.0,
             grid_height: 1.0,
             tank: Some((
-                grid_area: 0.2,
+                grid_area: 0.4,
             )),
             resources: {},
         ),
@@ -36,14 +36,14 @@
             name: "Xe-3",
             description: "Standard xenon tank for multi-engine electric propulsion systems. Three-sphere composite pressure vessel with shared manifold. Enough xenon for extended interplanetary transfers.",
             category: FuelTanks,
-            mass: 0.025,
+            mass: 0.032,
             cost: 4000,
             size: Small,
             shape: Rectangle,
             grid_width: 3.0,
             grid_height: 1.0,
             tank: Some((
-                grid_area: 1.8,
+                grid_area: 2.3,
             )),
             resources: {},
         ),
@@ -78,14 +78,14 @@
             name: "Xe-9",
             description: "Large xenon tank for heavy electric propulsion spacecraft. Bank of high-pressure vessels with redundant isolation valves and pressure regulation. Required for MPD thruster missions to the outer solar system.",
             category: FuelTanks,
-            mass: 0.223,
+            mass: 0.167,
             cost: 12000,
             size: Large,
             shape: Rectangle,
             grid_width: 9.0,
             grid_height: 1.0,
             tank: Some((
-                grid_area: 16.2,
+                grid_area: 12.1,
             )),
             resources: {},
         ),

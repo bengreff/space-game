@@ -40,8 +40,13 @@ NOZZLE_UPPER = (85, 88, 96)
 VALVE_COLOR = (72, 75, 82)
 
 PX = 360
+MAX_SPRITE_PX = 4096
 PAD = 0
 BELL_EXP = 1.5
+
+def _capped_px(w, h):
+    """Return effective PX capped so the output image stays within MAX_SPRITE_PX."""
+    return min(PX, MAX_SPRITE_PX // max(w, h))
 
 
 # ================================================================
@@ -516,6 +521,7 @@ ENGINE_DEFS = {
 # ================================================================
 
 def generate_engine(name, spec):
+    PX = _capped_px(spec["hitbox_w"], spec["hitbox_h"])
     is_twin = spec.get("twin", False)
     exit_w_px = spec["exit_w"] * PX
     top_w_px = spec["top_w"] * PX
