@@ -97,8 +97,10 @@ Child body SOI entry intersections SHALL be refined with binary search:
 ### Requirement: SOI transition during physics simulation (precise)
 
 During physics substeps, SOI transitions SHALL be detected by comparing distances before and after the substep:
-- SOI exit: `curr_dist > soi_radius AND prev_dist <= soi_radius`
+- SOI exit: `curr_dist > soi_radius AND prev_dist <= soi_radius` (distances relative to SOI body center)
 - SOI entry (child): `curr_dist_to_child < child_soi_radius AND prev_dist_to_child >= child_soi_radius`
+
+All distance calculations SHALL use consistent coordinate frames. For child SOI entry, ship position (`rel_position`, relative to SOI body) and child body position (`get_body_position_at_time`, relative to its parent = same SOI body) are both in the SOI-body-relative frame, so distances are computed directly as `ship_rel_pos - child_rel_pos`.
 
 ### Requirement: Precise SOI crossing interpolation
 
@@ -186,6 +188,12 @@ The system SHALL support calculating a predicted trajectory from arbitrary state
 
 When a navigation target is selected (body or vessel), the system SHALL compute and display the closest approach point on the trajectory segment that shares the same SOI as the target.
 
+#### Visibility conditions
+Closest approach markers SHALL NOT be displayed when:
+- The ship is already in the target body's SOI (soi_body == target_idx)
+- The trajectory intercepts the target body's SOI (any segment has parent_idx == target_idx)
+- The matching trajectory segment is hyperbolic (eccentricity >= 1.0)
+
 #### Scenario: SOI matching for body targets
 - **GIVEN** a body target with index `target_idx`
 - **THEN** the system SHALL find the first trajectory segment where `segment.parent_idx == bodies[target_idx].parent`
@@ -214,4 +222,7 @@ Two closest approach markers SHALL be displayed:
 1. **Ship marker**: Yellow (`[1.0, 1.0, 0.0, 0.9]`) filled circle at the ship's position at closest approach time
 2. **Target marker**: Yellow (`[1.0, 1.0, 0.0, 0.9]`) filled circle at the target's position at closest approach time
 
-Both markers use a 16-segment triangle fan, same size as Ap/Pe markers. Both are labeled "CA" in yellow text above the dot (11pt). On hover (20px radius): display "Closest Approach: {distance}" below the dot using standard altitude formatting. Both markers show the same distance value.
+Both markers use a 16-segment triangle fan, same size as Ap/Pe markers. Both are labeled "CA" in yellow text above the dot (11pt). On hover (20px radius): display the distance using standard altitude formatting (matching AP/PE style). Both markers show the same distance value.
+
+#### Rendering precision
+Closest approach world positions SHALL be stored as (parent_render_pos, orbit_offset, distance) with the parent position computed from the same frame's scaled_positions as the camera reference. The CA computation SHALL execute before the rendering call to ensure frame-consistent precision. The rendering SHALL use two-step subtraction: (parent - body_center) + (orbit_offset - ship_offset).

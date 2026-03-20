@@ -1762,46 +1762,28 @@ fn render_flight_frame(
     }
     render_state.set_predicted_trajectories(predicted_trajectories);
 
-    let accretion_discs = build_accretion_disc_data(game);
-    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions), &background_vessels, &accretion_discs, in_galaxy_view);
-
-    // Update simulation time for node epoch computation
-    render_state.simulation_time = game.simulation_time;
-
-    // Compute target angle for navigation target
-    if let Some(target) = render_state.selected_target {
-        let ship_abs = game.flight.ship.absolute_position(&game.solar_system);
-        let target_abs = match target {
-            SelectedTarget::Body(idx) => {
-                game.solar_system.body_position(idx)
-            }
-            SelectedTarget::Vessel(id) => {
-                if let Some(v) = game.flight.inactive_vessels.iter().find(|v| v.id == id) {
-                    v.ship.absolute_position(&game.solar_system)
-                } else {
-                    // Target vessel no longer exists; clear target
-                    render_state.selected_target = None;
-                    render_state.selected_target_name.clear();
-                    render_state.selected_target_angle = None;
-                    [0.0, 0.0]
-                }
-            }
-        };
-        if render_state.selected_target.is_some() {
-            let dx = target_abs[0] - ship_abs[0];
-            let dy = target_abs[1] - ship_abs[1];
-            render_state.selected_target_angle = Some(dy.atan2(dx));
-        }
-    } else {
-        render_state.selected_target_angle = None;
-    }
-
-    // Compute closest approach marker to navigation target
+    // Compute closest approach marker to navigation target BEFORE render call
+    // so that CA world positions use the same frame's scaled_positions as the camera.
     render_state.closest_approach_world_pos = None;
     render_state.closest_approach_marker = None;
     render_state.target_closest_approach_world_pos = None;
     render_state.target_closest_approach_marker = None;
     if let (Some(target), Some(ref traj)) = (render_state.selected_target, &patched_traj_raw) {
+        // Skip CA if ship is already orbiting the target body
+        let skip_ca = match target {
+            SelectedTarget::Body(idx) => {
+                // Ship is in the target's SOI — CA is meaningless
+                game.flight.ship.soi_body == idx
+                // Or trajectory enters the target's SOI — proper encounter exists
+                || traj.segments.iter().any(|s| s.parent_idx == idx)
+            }
+            SelectedTarget::Vessel(_) => false,
+        };
+
+        if skip_ca {
+            // Leave CA markers as None (already cleared above)
+        } else {
+
         // Determine which SOI the target is in
         let target_soi_parent = match target {
             SelectedTarget::Body(idx) => game.solar_system.bodies[idx].parent,
@@ -1814,7 +1796,10 @@ fn render_flight_frame(
 
         if let Some(target_parent) = target_soi_parent {
             // Find first trajectory segment in the same SOI as the target
-            if let Some(seg) = traj.segments.iter().find(|s| s.parent_idx == target_parent) {
+            if let Some(seg) = traj.segments.iter()
+                .find(|s| s.parent_idx == target_parent)
+                .filter(|s| s.orbit.eccentricity < 1.0) // Skip hyperbolic — ship is escaping
+            {
                 let e = seg.orbit.eccentricity;
                 let a = seg.orbit.semi_major_axis;
                 let arg_peri = seg.orbit.argument_of_periapsis;
@@ -1928,22 +1913,57 @@ fn render_flight_frame(
                     best_dist = compute_dist(best_t);
                 }
 
-                // Convert best point to render coordinates
+                // Convert best point to render coordinates (split parent + offset for two-step precision)
                 if best_dist < f64::MAX {
                     if let Some((ship_pos, target_pos)) = compute_positions(best_t) {
                         let parent_scaled = scaled_positions[seg.parent_idx];
-                        // Ship marker
-                        let world_x = parent_scaled[0] * SCALE + ship_pos[0] * SCALE * BODY_SCALE;
-                        let world_y = parent_scaled[1] * SCALE + ship_pos[1] * SCALE * BODY_SCALE;
-                        render_state.closest_approach_world_pos = Some(([world_x, world_y], best_dist));
+                        let parent_render = [parent_scaled[0] * SCALE, parent_scaled[1] * SCALE];
+                        // Ship marker: parent (galaxy-scale) + orbit offset (solar-system-scale)
+                        let ship_offset = [ship_pos[0] * SCALE * BODY_SCALE, ship_pos[1] * SCALE * BODY_SCALE];
+                        render_state.closest_approach_world_pos = Some((parent_render, ship_offset, best_dist));
                         // Target marker
-                        let tgt_world_x = parent_scaled[0] * SCALE + target_pos[0] * SCALE * BODY_SCALE;
-                        let tgt_world_y = parent_scaled[1] * SCALE + target_pos[1] * SCALE * BODY_SCALE;
-                        render_state.target_closest_approach_world_pos = Some(([tgt_world_x, tgt_world_y], best_dist));
+                        let tgt_offset = [target_pos[0] * SCALE * BODY_SCALE, target_pos[1] * SCALE * BODY_SCALE];
+                        render_state.target_closest_approach_world_pos = Some((parent_render, tgt_offset, best_dist));
                     }
                 }
             }
         }
+
+        } // else !skip_ca
+    }
+
+    let accretion_discs = build_accretion_disc_data(game);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions), &background_vessels, &accretion_discs, in_galaxy_view);
+
+    // Update simulation time for node epoch computation
+    render_state.simulation_time = game.simulation_time;
+
+    // Compute target angle for navigation target
+    if let Some(target) = render_state.selected_target {
+        let ship_abs = game.flight.ship.absolute_position(&game.solar_system);
+        let target_abs = match target {
+            SelectedTarget::Body(idx) => {
+                game.solar_system.body_position(idx)
+            }
+            SelectedTarget::Vessel(id) => {
+                if let Some(v) = game.flight.inactive_vessels.iter().find(|v| v.id == id) {
+                    v.ship.absolute_position(&game.solar_system)
+                } else {
+                    // Target vessel no longer exists; clear target
+                    render_state.selected_target = None;
+                    render_state.selected_target_name.clear();
+                    render_state.selected_target_angle = None;
+                    [0.0, 0.0]
+                }
+            }
+        };
+        if render_state.selected_target.is_some() {
+            let dx = target_abs[0] - ship_abs[0];
+            let dy = target_abs[1] - ship_abs[1];
+            render_state.selected_target_angle = Some(dy.atan2(dx));
+        }
+    } else {
+        render_state.selected_target_angle = None;
     }
 
     // --- Transfer planner computation ---
@@ -1955,15 +1975,17 @@ fn render_flight_frame(
         render_state.transfer_hohmann_targets = transfer::hohmann_targets(soi, &game.solar_system.bodies);
         render_state.transfer_interplanetary_targets = transfer::lambert_targets(soi, &game.solar_system.bodies);
 
-        // Auto-select navigation target in planner (syncs whenever nav target is valid)
+        // Auto-select navigation target in planner if it's valid for the current mode.
+        // Don't force mode changes — respect the user's mode choice.
         if let Some(SelectedTarget::Body(idx)) = render_state.selected_target {
             if render_state.transfer_selected_target != Some(idx) {
-                if render_state.transfer_hohmann_targets.iter().any(|(i, _)| *i == idx) {
+                let current_targets = if render_state.transfer_planner_mode == 0 {
+                    &render_state.transfer_hohmann_targets
+                } else {
+                    &render_state.transfer_interplanetary_targets
+                };
+                if current_targets.iter().any(|(i, _)| *i == idx) {
                     render_state.transfer_selected_target = Some(idx);
-                    render_state.transfer_planner_mode = 0;
-                } else if render_state.transfer_interplanetary_targets.iter().any(|(i, _)| *i == idx) {
-                    render_state.transfer_selected_target = Some(idx);
-                    render_state.transfer_planner_mode = 1;
                 }
             }
         }
@@ -2022,8 +2044,8 @@ fn render_flight_frame(
                             required_phase_angle: h.required_phase_angle.to_degrees(),
                             time_to_window: h.time_to_window,
                             departure_position_angle: h.departure_position_angle,
-                            prograde_dv: h.departure_delta_v,
-                            radial_dv: 0.0,
+                            prograde_dv: h.departure_prograde,
+                            radial_dv: h.departure_radial,
                             valid: true,
                         }
                     })
@@ -2050,7 +2072,8 @@ fn render_flight_frame(
                         let tgt_orbit = bodies[target_idx].orbit.unwrap();
                         let grandparent_mass = bodies[parent_idx].mass;
                         let planet_mass = bodies[soi].mass;
-                        let parking_radius = ship_orbit.orbit.semi_major_axis;
+                        let ship_orbit_copy = ship_orbit.orbit;
+                        let ship_ma = ship_orbit.mean_anomaly;
                         let sim_time_now = game.solar_system.time;
                         let target = target_idx;
 
@@ -2065,7 +2088,7 @@ fn render_flight_frame(
                         std::thread::spawn(move || {
                             if let Some(grid) = transfer::compute_porkchop_grid(
                                 dep_orbit, tgt_orbit, grandparent_mass, planet_mass,
-                                sim_time_now, parking_radius, target,
+                                sim_time_now, ship_orbit_copy, ship_ma, target,
                             ) {
                                 let _ = tx.send(grid);
                             }
@@ -2196,18 +2219,18 @@ fn render_flight_frame(
                 // Past the burn start point — stop warping
                 render_state.warp_to_node = false;
                 game.warp_index = 0;
-            } else if effective_time / WARP_LEVELS[5] < 0.5 {
-                // Even minimum on-rails warp (100x) would arrive in < 0.5 real seconds
+            } else if effective_time / WARP_LEVELS[5] < 0.25 {
+                // Even minimum on-rails warp (100x) would arrive in < 0.25 real seconds
                 // Drop to 1x and stop auto-warp
                 render_state.warp_to_node = false;
                 game.warp_index = 0;
             } else {
                 // Find the highest warp level where we won't overshoot
-                // (effective_time / warp_level >= 0.5 real seconds remaining)
+                // (effective_time / warp_level >= 0.25 real seconds remaining)
                 // Minimum auto-warp: index 5 (100x)
                 let mut best_index = 5; // 100x minimum
                 for i in (5..WARP_LEVELS.len()).rev() {
-                    if effective_time / WARP_LEVELS[i] >= 0.5 {
+                    if effective_time / WARP_LEVELS[i] >= 0.25 {
                         best_index = i;
                         break;
                     }

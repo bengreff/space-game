@@ -7,9 +7,11 @@ The transfer planner provides Hohmann and Lambert transfer calculations for plan
 ## Modes
 
 ### Hohmann Mode
-- Computes circular coplanar Hohmann transfers to sibling bodies (same SOI parent as ship).
+- Computes coplanar Hohmann transfers to sibling bodies (same SOI parent as ship).
+- Works for eccentric starting orbits (e < 0.95) using the Lambert solver internally. Phase angle timing determines the departure window (synodic period), then Lambert computes the exact transfer trajectory from the ship's actual position to the target body's arrival position. Delta-v is decomposed into prograde and radial components at the burn point using the ship's actual velocity vector. This handles arbitrary eccentricities naturally — no apsis assumptions required.
 - Displays departure delta-v, arrival delta-v, transfer time, phase angle, and time to window.
-- "Create Node" places a prograde maneuver node at the computed departure position.
+- "Create Node" places a maneuver node with prograde and radial components at the computed departure position.
+- Returns None for near-hyperbolic orbits (e >= 0.95).
 
 ### Lambert Mode (Porkchop Plot)
 - Computes interplanetary Lambert transfers to bodies orbiting the same grandparent (e.g., Earth→Mars via Sun).
@@ -39,13 +41,16 @@ For each grid point:
 1. Get departure body position at `dep_time` and target body position at `dep_time + tof`.
 2. Solve Lambert problem (universal variable formulation with Stumpff functions).
 3. Compute v-infinity: `v_inf = v_lambert - v_planet`.
-4. Compute ejection delta-v via vis-viva: `v_ejection = sqrt(v_inf^2 + 2*mu/r_parking)`, `dv = v_ejection - v_circular`.
+4. Compute ejection delta-v using actual ship orbit state at each departure time: propagate the ship's mean anomaly forward, compute actual radius and speed via eccentric anomaly and vis-viva, then `v_ejection = sqrt(v_inf^2 + 2*mu/r_actual)`, `dv = v_ejection - v_actual`.
 
 ### Full Interplanetary Computation (Selected Point)
 1. Initial Lambert solve for approximate v-infinity.
-2. Compute hyperbolic escape time from parking orbit to SOI boundary.
+2. Compute hyperbolic escape time from parking orbit periapsis to SOI boundary.
 3. Re-solve Lambert with corrected departure time (at SOI exit) for accurate v-infinity direction.
 4. Compute ejection angle using hyperbolic turn angle at finite SOI distance.
+5. Convert ejection position angle to true anomaly on the parking orbit to find actual radius at ejection point.
+6. Compute ejection delta-v using actual radius and velocity (vis-viva) at the ejection point, with prograde/radial decomposition.
+7. Returns None for near-hyperbolic parking orbits (e >= 0.95).
 
 ## Color Scale
 - `normalized = (dv - min_dv) / (max_dv - min_dv)`, clamped to [0, 1].

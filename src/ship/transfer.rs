@@ -5,7 +5,9 @@ use std::f64::consts::{PI, TAU};
 
 /// Result of a Hohmann transfer calculation
 pub struct HohmannResult {
-    pub departure_delta_v: f64,       // m/s prograde
+    pub departure_delta_v: f64,       // m/s total magnitude
+    pub departure_prograde: f64,      // m/s prograde component
+    pub departure_radial: f64,        // m/s radial component (cancel radial velocity)
     pub arrival_delta_v: f64,         // m/s (info only)
     pub transfer_time: f64,           // seconds
     pub required_phase_angle: f64,    // radians
@@ -72,7 +74,12 @@ pub fn lambert_targets(ship_soi: usize, bodies: &[CelestialBody]) -> Vec<(usize,
         .collect()
 }
 
-/// Compute a Hohmann transfer to a sibling body
+/// Compute a Hohmann-like transfer to a sibling body using the Lambert solver.
+///
+/// Uses phase angle timing to find the departure window, then solves the Lambert
+/// problem for the exact transfer trajectory. This handles arbitrary eccentricities
+/// naturally — the delta-v is computed from the actual velocity difference at the
+/// burn point, with proper prograde/radial decomposition.
 pub fn compute_hohmann(
     ship_orbit: &Orbit,
     ship_retrograde: bool,
@@ -82,45 +89,23 @@ pub fn compute_hohmann(
     sim_time: f64,
 ) -> Option<HohmannResult> {
     let mu = G * parent_mass;
-
-    let r1 = ship_orbit.semi_major_axis;
+    let e = ship_orbit.eccentricity;
+    let a = ship_orbit.semi_major_axis;
     let r2 = target_orbit.semi_major_axis;
 
-    if r1 <= 0.0 || r2 <= 0.0 || mu <= 0.0 {
+    if a <= 0.0 || r2 <= 0.0 || mu <= 0.0 {
         return None;
     }
 
-    // Transfer orbit semi-major axis
-    let a_t = (r1 + r2) / 2.0;
+    // Reject near-hyperbolic/hyperbolic orbits
+    if e >= 0.95 {
+        return None;
+    }
 
-    // Departure delta-v (tangential burn)
-    let v_circ1 = (mu / r1).sqrt();
-    let v_transfer_departure = (mu * (2.0 / r1 - 1.0 / a_t)).sqrt();
-    let departure_dv = v_transfer_departure - v_circ1;
-
-    // Arrival delta-v
-    let v_circ2 = (mu / r2).sqrt();
-    let v_transfer_arrival = (mu * (2.0 / r2 - 1.0 / a_t)).sqrt();
-    let arrival_dv = (v_circ2 - v_transfer_arrival).abs();
-
-    // Transfer time (half orbit)
-    let transfer_time = PI * (a_t.powi(3) / mu).sqrt();
-
-    // Target's angular velocity
-    let omega_target = target_orbit.mean_motion(parent_mass);
-
-    // Required phase angle: where target must be relative to ship at departure
-    // so that target arrives at the transfer orbit's destination when ship does
-    let required_phase = if r2 > r1 {
-        // Transfer to higher orbit
-        PI - omega_target * transfer_time
-    } else {
-        // Transfer to lower orbit
-        -(PI - omega_target * transfer_time)
-    };
-
-    // Normalize to [-PI, PI]
-    let required_phase = normalize_angle(required_phase);
+    // --- Phase angle timing (approximate, using Hohmann transfer time) ---
+    let r1_approx = a; // Use SMA as approximate departure radius for timing
+    let a_t_approx = (r1_approx + r2) / 2.0;
+    let transfer_time_approx = PI * (a_t_approx.powi(3) / mu).sqrt();
 
     // Current phase angle: target position - ship position
     let ship_ea = ship_orbit.solve_kepler(ship_mean_anomaly);
@@ -134,13 +119,21 @@ pub fn compute_hohmann(
 
     let current_phase = normalize_angle(target_angle - ship_angle);
 
-    // Time to window from synodic period
-    // Use signed rate: phase = (target_angle - ship_angle) changes at (omega_target - omega_ship_signed)
+    let omega_target = target_orbit.mean_motion(parent_mass);
     let omega_ship = ship_orbit.mean_motion(parent_mass);
     let omega_ship_signed = if ship_retrograde { -omega_ship } else { omega_ship };
+
+    let required_phase_approx = if r2 > r1_approx {
+        PI - omega_target * transfer_time_approx
+    } else {
+        -(PI - omega_target * transfer_time_approx)
+    };
+    let required_phase_approx = normalize_angle(required_phase_approx);
+
+    // Time to window from synodic period
     let synodic_rate_signed = omega_target - omega_ship_signed;
     let time_to_window = if synodic_rate_signed.abs() > 1e-15 {
-        let phase_diff = normalize_angle(required_phase - current_phase);
+        let phase_diff = normalize_angle(required_phase_approx - current_phase);
         let t = phase_diff / synodic_rate_signed;
         let synodic_period = TAU / synodic_rate_signed.abs();
         t.rem_euclid(synodic_period)
@@ -148,18 +141,86 @@ pub fn compute_hohmann(
         0.0
     };
 
-    // Where to place the departure node: propagate ship's mean anomaly forward
-    // Return the inertial position angle (not true anomaly) so it's independent of arg_peri,
-    // which is ill-defined for near-circular parking orbits.
-    let departure_ma = ship_mean_anomaly + omega_ship * time_to_window;
-    let direction = if ship_retrograde { -1.0 } else { 1.0 };
-    let departure_ma = departure_ma * direction;
+    // --- Compute departure state ---
+    let departure_ma = ship_mean_anomaly + omega_ship_signed * time_to_window;
     let departure_ea = ship_orbit.solve_kepler(departure_ma);
     let departure_ta = ship_orbit.true_anomaly(departure_ea);
     let departure_position = departure_ta + ship_orbit.argument_of_periapsis;
 
+    // Ship position at departure (relative to parent)
+    let r1 = if e < 1.0 {
+        a * (1.0 - e * departure_ea.cos())
+    } else {
+        a.abs() * (e * departure_ea.cosh() - 1.0)
+    };
+    let ship_pos = [
+        r1 * departure_position.cos(),
+        r1 * departure_position.sin(),
+    ];
+
+    // Ship velocity at departure
+    let ship_vel = ship_orbit.velocity_from_mean_anomaly_with_direction(
+        departure_ma, parent_mass, ship_retrograde,
+    );
+
+    // --- Compute target position at arrival ---
+    // Arrival is at departure_time + transfer_time
+    // Use actual departure radius for more accurate transfer time
+    let a_t = (r1 + r2) / 2.0;
+    let transfer_time = PI * (a_t.powi(3) / mu).sqrt();
+
+    let arrival_time = sim_time + time_to_window + transfer_time;
+    let target_pos = target_orbit.position_at(arrival_time, parent_mass);
+
+    // --- Solve Lambert for the exact transfer ---
+    let lambert = solve_lambert_2d(
+        ship_pos, target_pos, transfer_time, mu, !ship_retrograde,
+    )?;
+
+    // --- Delta-v decomposition into prograde/radial ---
+    // Delta-v vector in inertial frame
+    let dv_x = lambert.v1[0] - ship_vel[0];
+    let dv_y = lambert.v1[1] - ship_vel[1];
+    let total_dv = (dv_x * dv_x + dv_y * dv_y).sqrt();
+
+    // Prograde direction = velocity direction (tangent to orbit)
+    let v_mag = (ship_vel[0] * ship_vel[0] + ship_vel[1] * ship_vel[1]).sqrt();
+    let (prograde_dv, radial_dv) = if v_mag > 1e-10 {
+        let pro_hat = [ship_vel[0] / v_mag, ship_vel[1] / v_mag];
+        // Radial outward = perpendicular to prograde, pointing away from parent
+        // For prograde (CCW): radial_out = rotate pro_hat by -90° = [pro_hat[1], -pro_hat[0]]
+        // For retrograde (CW): radial_out = rotate pro_hat by +90° = [-pro_hat[1], pro_hat[0]]
+        let rad_hat = if ship_retrograde {
+            [-pro_hat[1], pro_hat[0]]
+        } else {
+            [pro_hat[1], -pro_hat[0]]
+        };
+        let pro = dv_x * pro_hat[0] + dv_y * pro_hat[1];
+        let rad = dv_x * rad_hat[0] + dv_y * rad_hat[1];
+        (pro, rad)
+    } else {
+        (total_dv, 0.0)
+    };
+
+    // Arrival delta-v (Lambert arrival velocity vs target circular velocity)
+    let target_vel = target_orbit.velocity_from_mean_anomaly(
+        target_orbit.mean_anomaly_at(arrival_time, parent_mass), parent_mass,
+    );
+    let arr_dv_x = lambert.v2[0] - target_vel[0];
+    let arr_dv_y = lambert.v2[1] - target_vel[1];
+    let arrival_dv = (arr_dv_x * arr_dv_x + arr_dv_y * arr_dv_y).sqrt();
+
+    // Phase angle at the actual departure time
+    let target_ma_at_dep = target_orbit.mean_anomaly_at(sim_time + time_to_window, parent_mass);
+    let target_ea_at_dep = target_orbit.solve_kepler(target_ma_at_dep);
+    let target_ta_at_dep = target_orbit.true_anomaly(target_ea_at_dep);
+    let target_angle_at_dep = target_ta_at_dep + target_orbit.argument_of_periapsis;
+    let required_phase = normalize_angle(target_angle_at_dep - departure_position);
+
     Some(HohmannResult {
-        departure_delta_v: departure_dv,
+        departure_delta_v: total_dv,
+        departure_prograde: prograde_dv,
+        departure_radial: radial_dv,
         arrival_delta_v: arrival_dv,
         transfer_time,
         required_phase_angle: required_phase,
@@ -396,8 +457,13 @@ pub fn compute_interplanetary(
     let target_orbit = bodies[target_body].orbit.as_ref()?;
 
     let mu_planet = G * bodies[ship_soi_body].mass;
-    let r_parking = ship_orbit.semi_major_axis;
-    if r_parking <= 0.0 {
+    let a_parking = ship_orbit.semi_major_axis;
+    let e_parking = ship_orbit.eccentricity;
+    if a_parking <= 0.0 {
+        return None;
+    }
+    // Reject near-hyperbolic/hyperbolic parking orbits
+    if e_parking >= 0.95 {
         return None;
     }
 
@@ -418,13 +484,15 @@ pub fn compute_interplanetary(
         (vx.powi(2) + vy.powi(2)).sqrt()
     };
 
-    // --- Step 2: Compute escape time (LEO burn to SOI exit on hyperbolic trajectory) ---
+    // --- Step 2: Compute escape time (parking orbit burn to SOI exit on hyperbolic trajectory) ---
     // The ship takes hours/days to escape from parking orbit to the SOI boundary.
     // During this time the departure planet moves in its orbit, changing the required
     // v_inf direction. We correct for this by solving Lambert for the SOI exit time.
+    // Use periapsis as approximate escape radius (conservative; actual radius computed later).
+    let r_periapsis = a_parking * (1.0 - e_parking);
     let soi_radius = bodies[ship_soi_body].soi_radius;
     let escape_time = compute_hyperbolic_escape_time(
-        v_inf_initial_mag, r_parking, soi_radius, mu_planet,
+        v_inf_initial_mag, r_periapsis, soi_radius, mu_planet,
     );
 
     // --- Step 3: Re-solve Lambert for effective departure (SOI exit time) ---
@@ -455,28 +523,15 @@ pub fn compute_interplanetary(
     ];
     let arrival_v_infinity = (arr_v_inf[0].powi(2) + arr_v_inf[1].powi(2)).sqrt();
 
-    // Ejection burn from parking orbit
-    let v_parking = (mu_planet / r_parking).sqrt();
-    let v_ejection = (v_inf_mag.powi(2) + 2.0 * mu_planet / r_parking).sqrt();
-    let ejection_dv = (v_ejection - v_parking).abs();
-
     // Ejection angle calculation: find the position on the parking orbit where a
-    // purely prograde burn produces an escape trajectory with the desired v_infinity direction.
+    // burn produces an escape trajectory with the desired v_infinity direction.
     //
-    // A prograde burn on a circular orbit keeps the burn point as periapsis of the
-    // resulting hyperbola. We need to find the burn position (arg of periapsis of the
-    // hyperbola) such that at the SOI exit, the velocity direction matches what Lambert needs.
-    //
-    // The velocity direction at true anomaly ta on a prograde hyperbola with arg_peri ω is:
-    //   vel_angle = ω + atan2(e + cos(ta), -sin(ta))
-    // Setting vel_angle = v_inf_angle and solving for ω gives the burn position.
-    //
-    // Using the actual SOI exit true anomaly (finite distance) instead of the asymptotic
-    // turn angle acos(-1/e) accounts for Earth's gravity still curving the trajectory
-    // at the SOI boundary.
+    // For the turn angle geometry, use periapsis radius (the hyperbolic escape
+    // trajectory's periapsis is approximately at the burn point's radius).
+    let r_burn_approx = r_periapsis; // conservative estimate for geometry
 
-    // Hyperbolic eccentricity of the ejection orbit
-    let e_hyp = 1.0 + r_parking * v_inf_mag.powi(2) / mu_planet;
+    // Hyperbolic eccentricity of the ejection orbit (using periapsis as burn point)
+    let e_hyp = 1.0 + r_burn_approx * v_inf_mag.powi(2) / mu_planet;
 
     // True anomaly at SOI exit on the escape hyperbola
     let a_hyp = mu_planet / v_inf_mag.powi(2);
@@ -485,29 +540,49 @@ pub fn compute_interplanetary(
     let ta_exit = cos_ta_exit.clamp(-1.0, 1.0).acos();
 
     // Turn angle from periapsis to the velocity direction at SOI exit
-    // (replaces the asymptotic theta_inf = acos(-1/e) with the finite-distance version)
     let turn_angle = (e_hyp + ta_exit.cos()).atan2(-ta_exit.sin());
 
     // V-infinity direction in planet-centered frame (velocity at SOI exit from Lambert)
     let v_inf_angle = v_inf[1].atan2(v_inf[0]);
 
     // Ejection position angle (where on the orbit to burn)
-    // burn_position = v_inf_angle - turn_angle (prograde)
-    // burn_position = v_inf_angle + turn_angle (retrograde)
     let ejection_position_angle = if ship_retrograde {
         v_inf_angle + turn_angle
     } else {
         v_inf_angle - turn_angle
     };
 
-    // Return the inertial position angle directly (not true anomaly).
-    // Converting to true anomaly here would use ship_orbit.argument_of_periapsis, which is
-    // ill-defined for near-circular parking orbits. The caller converts to true anomaly
-    // using the trajectory segment's arg_peri at node creation time.
+    // --- Actual radius and velocity at ejection point on parking orbit ---
+    // Convert ejection inertial angle to true anomaly on the parking orbit
+    let ejection_ta = ejection_position_angle - ship_orbit.argument_of_periapsis;
+    let r_at_ejection = a_parking * (1.0 - e_parking * e_parking)
+        / (1.0 + e_parking * ejection_ta.cos());
 
-    // Prograde-only: full ejection dv is prograde
-    let ejection_prograde = ejection_dv;
-    let ejection_radial = 0.0;
+    // Ship's actual speed at ejection point (vis-viva)
+    let v_at_ejection = (mu_planet * (2.0 / r_at_ejection - 1.0 / a_parking)).sqrt();
+
+    // Escape speed needed (energy conservation — exact regardless of orbit shape)
+    let v_escape = (v_inf_mag.powi(2) + 2.0 * mu_planet / r_at_ejection).sqrt();
+    let ejection_dv = (v_escape - v_at_ejection).abs();
+
+    // Decompose into prograde/radial: compute tangential and radial velocity
+    // components at ejection point, then delta-v is approximately prograde
+    // (escape burn is mostly tangential) with a radial correction
+    let h_parking = (mu_planet * a_parking * (1.0 - e_parking * e_parking)).sqrt();
+    let v_tangential_at_ejection = h_parking / r_at_ejection;
+    let v_radial_at_ejection = {
+        let vr_sq = v_at_ejection * v_at_ejection - v_tangential_at_ejection * v_tangential_at_ejection;
+        if vr_sq > 0.0 {
+            let sign = ejection_ta.sin();
+            vr_sq.sqrt() * sign.signum()
+        } else {
+            0.0
+        }
+    };
+
+    // Escape velocity is approximately tangential at the burn point
+    let ejection_prograde = v_escape - v_tangential_at_ejection;
+    let ejection_radial = -v_radial_at_ejection;
 
     // Phase angles between planets at current time (not departure time)
     let dep_ma_now = departure_orbit.mean_anomaly_at(sim_time, grandparent_mass);
@@ -622,7 +697,8 @@ pub fn compute_porkchop_grid(
     grandparent_mass: f64,
     planet_mass: f64,
     sim_time: f64,
-    parking_radius: f64,
+    ship_orbit: Orbit,
+    ship_mean_anomaly: f64,
     target_idx: usize,
 ) -> Option<crate::render::PorkchopGrid> {
     use crate::render::{PorkchopGrid, PorkchopPoint};
@@ -656,20 +732,35 @@ pub fn compute_porkchop_grid(
     let cols: usize = 60;
     let rows: usize = 50;
 
-    // Precompute per-column departure positions and velocities
+    // Precompute per-column departure positions, velocities, and ship parking orbit state
     // (same departure time for every row, avoids redundant Kepler solves)
     let mut dep_positions: Vec<[f64; 2]> = Vec::with_capacity(cols);
     let mut dep_velocities: Vec<[f64; 2]> = Vec::with_capacity(cols);
     let mut dep_times: Vec<f64> = Vec::with_capacity(cols);
+    // Per-column: ship's actual radius and speed at each departure time
+    let mut ship_radii: Vec<f64> = Vec::with_capacity(cols);
+    let mut ship_speeds: Vec<f64> = Vec::with_capacity(cols);
+
+    let a_ship = ship_orbit.semi_major_axis;
+    let e_ship = ship_orbit.eccentricity;
+    let omega_ship = ship_orbit.mean_motion(planet_mass);
+
     for col in 0..cols {
         let dep_time = dep_start + (col as f64 / cols as f64) * (dep_end - dep_start);
         dep_times.push(dep_time);
         dep_positions.push(departure_orbit.position_at(dep_time, grandparent_mass));
         let dep_ma = departure_orbit.mean_anomaly_at(dep_time, grandparent_mass);
         dep_velocities.push(departure_orbit.velocity_from_mean_anomaly(dep_ma, grandparent_mass));
-    }
 
-    let v_parking = (mu_planet / parking_radius).sqrt();
+        // Ship's parking orbit state at this departure time
+        let dt = dep_time - sim_time;
+        let ma_at_dep = ship_mean_anomaly + omega_ship * dt;
+        let ea_at_dep = ship_orbit.solve_kepler(ma_at_dep);
+        let r_at_dep = a_ship * (1.0 - e_ship * ea_at_dep.cos());
+        let v_at_dep = (mu_planet * (2.0 / r_at_dep - 1.0 / a_ship)).sqrt();
+        ship_radii.push(r_at_dep);
+        ship_speeds.push(v_at_dep);
+    }
 
     let mut points: Vec<Option<PorkchopPoint>> = Vec::with_capacity(cols * rows);
     let mut min_dv = f64::MAX;
@@ -699,9 +790,11 @@ pub fn compute_porkchop_grid(
                 let v_inf_y = lambert.v1[1] - planet_vel[1];
                 let v_inf_sq = v_inf_x * v_inf_x + v_inf_y * v_inf_y;
 
-                // Ejection delta-v from parking orbit using vis-viva
-                let v_ejection = (v_inf_sq + 2.0 * mu_planet / parking_radius).sqrt();
-                let ejection_dv = v_ejection - v_parking;
+                // Ejection delta-v from parking orbit using vis-viva at actual radius
+                let r_col = ship_radii[col];
+                let v_col = ship_speeds[col];
+                let v_ejection = (v_inf_sq + 2.0 * mu_planet / r_col).sqrt();
+                let ejection_dv = v_ejection - v_col;
 
                 if !ejection_dv.is_finite() || ejection_dv < 0.0 {
                     return None;

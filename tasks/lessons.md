@@ -5,3 +5,21 @@
 **Mistake**: Implemented multiple features and bug fixes across a session, then tried to batch-update all spec files at the end. This resulted in code changes being committed without corresponding spec updates, and some changes being missed entirely.
 
 **Rule**: Update the spec file as the LAST step of each individual task, before moving to the next task. The task is: implement code -> update spec -> done. Never defer spec updates.
+
+## Coordinate Frame Consistency (2026-03-20)
+
+**Mistake**: In `check_soi_transition_precise` (physics-mode SOI entry), computed ship position in absolute coordinates (`solar_system.body_position(soi_body) + rel_pos`) but compared against child body position in parent-relative coordinates (`get_body_position_at_time` returns orbit position relative to parent). The ~1 AU offset made child SOI entry impossible in physics mode.
+
+**Rule**: When computing distances between objects, verify both positions are in the same reference frame. `rel_position` is relative to SOI body; `get_body_position_at_time` returns position relative to parent. When the SOI body IS the parent, both frames match — use `rel_pos - child_pos` directly without converting to absolute.
+
+## Retrograde Mean Anomaly Propagation (2026-03-20)
+
+**Mistake**: Used `departure_ma = (ship_ma + omega * t) * direction` which multiplies the entire accumulated mean anomaly by -1 for retrograde, instead of propagating with negative omega: `departure_ma = ship_ma + omega_signed * t`.
+
+**Rule**: For retrograde orbit propagation, negate the rate (omega), not the result. Mean anomaly decreases over time for retrograde orbits.
+
+## Hohmann Transfer on Eccentric Orbits (2026-03-20)
+
+**Mistake**: Tried to fix Hohmann transfers on eccentric orbits by constraining departure to apsides. Two problems: (1) for near-circular orbits, `argument_of_periapsis` is arbitrary so the node was at a meaningless fixed angle; (2) for eccentric orbits, snapping to an apsis doesn't account for the actual transfer geometry.
+
+**Rule**: When classical Hohmann assumptions break down (non-circular orbits), use the Lambert solver instead of patching formulas. Lambert naturally handles arbitrary eccentricities by solving for the exact velocity at the actual burn point. Use phase angle timing for the departure window, then Lambert for the exact delta-v.
