@@ -266,31 +266,22 @@ impl Ship {
                 continue;
             }
 
+            // child_pos is relative to its parent (= our SOI body), matching prev_rel_pos frame
             let child_pos_start = self.get_body_position_at_time(i, solar_system.time, solar_system);
             let child_pos_end = self.get_body_position_at_time(i, solar_system.time + dt, solar_system);
-            let soi_body_pos = solar_system.body_position(self.soi_body);
 
-            let prev_abs_pos = [
-                soi_body_pos[0] + prev_rel_pos[0],
-                soi_body_pos[1] + prev_rel_pos[1],
-            ];
-            let curr_abs_pos = [
-                soi_body_pos[0] + self.rel_position[0],
-                soi_body_pos[1] + self.rel_position[1],
-            ];
-
-            let prev_dx = prev_abs_pos[0] - child_pos_start[0];
-            let prev_dy = prev_abs_pos[1] - child_pos_start[1];
+            let prev_dx = prev_rel_pos[0] - child_pos_start[0];
+            let prev_dy = prev_rel_pos[1] - child_pos_start[1];
             let prev_dist_to_child = (prev_dx * prev_dx + prev_dy * prev_dy).sqrt();
 
-            let curr_dx = curr_abs_pos[0] - child_pos_end[0];
-            let curr_dy = curr_abs_pos[1] - child_pos_end[1];
+            let curr_dx = self.rel_position[0] - child_pos_end[0];
+            let curr_dy = self.rel_position[1] - child_pos_end[1];
             let curr_dist_to_child = (curr_dx * curr_dx + curr_dy * curr_dy).sqrt();
 
             if curr_dist_to_child < body.soi_radius && prev_dist_to_child >= body.soi_radius {
                 let crossing_fraction = self.find_soi_entry_fraction_moving(
-                    prev_abs_pos,
-                    curr_abs_pos,
+                    prev_rel_pos,
+                    self.rel_position,
                     child_pos_start,
                     child_pos_end,
                     body.soi_radius,

@@ -1753,8 +1753,8 @@ pub fn generate_fairing_shell_vertices(
     }
 
     // Vertical seam line down the center of the shell
-    if shape.vertices.len() >= 1 {
-        let shell_top_y = base_top + shape.vertices.last().unwrap().1 as f32 * gs;
+    if let Some(last) = shape.vertices.last() {
+        let shell_top_y = base_top + last.1 as f32 * gs;
         let line_half_t = 0.008_f32;
         vertices.push(Vertex::new([x - line_half_t, base_top], line_color));
         vertices.push(Vertex::new([x + line_half_t, base_top], line_color));
@@ -1928,8 +1928,8 @@ pub fn generate_flight_fairing_shell(
     }
 
     // Vertical center seam
-    if !shape.vertices.is_empty() {
-        let shell_top_y = base_top + shape.vertices.last().unwrap().1 as f32 * gs;
+    if let Some(last) = shape.vertices.last() {
+        let shell_top_y = base_top + last.1 as f32 * gs;
         let lt = 0.008_f32;
         vertices.push(Vertex::new([part_x - lt, base_top], line_color));
         vertices.push(Vertex::new([part_x + lt, base_top], line_color));
@@ -1965,7 +1965,8 @@ pub fn part_at_screen_pos(
         let cx = part.position[0];
 
         // Check if point is within the shell envelope
-        let tip_y = base_top_y + shape.vertices.last().unwrap().1 * gs;
+        let Some(last_vert) = shape.vertices.last() else { continue; };
+        let tip_y = base_top_y + last_vert.1 * gs;
         if world_y >= base_top_y && world_y <= tip_y {
             // Interpolate half-width at this y
             let mut prev_hw = base_half_w;

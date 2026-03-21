@@ -1,5 +1,4 @@
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 
 /// Atmosphere data for a celestial body
 #[derive(Clone, Copy, Debug)]
@@ -126,7 +125,14 @@ impl Orbit {
     /// For elliptical orbits: M = E - e*sin(E)
     /// For hyperbolic orbits: M = e*sinh(H) - H
     pub fn solve_kepler(&self, mean_anomaly: f64) -> f64 {
-        let e = self.eccentricity;
+        // Clamp eccentricity away from exactly 1.0 to avoid numerical singularity
+        let e = if self.eccentricity >= 0.9999 && self.eccentricity < 1.0 {
+            0.9999
+        } else if self.eccentricity >= 1.0 && self.eccentricity < 1.0001 {
+            1.0001
+        } else {
+            self.eccentricity
+        };
 
         if e < 1.0 {
             // Elliptical orbit
@@ -171,7 +177,14 @@ impl Orbit {
 
     /// Calculate true anomaly from eccentric/hyperbolic anomaly
     pub fn true_anomaly(&self, anomaly: f64) -> f64 {
-        let e = self.eccentricity;
+        // Clamp eccentricity away from exactly 1.0 to avoid division by zero
+        let e = if self.eccentricity >= 0.9999 && self.eccentricity < 1.0 {
+            0.9999
+        } else if self.eccentricity >= 1.0 && self.eccentricity < 1.0001 {
+            1.0001
+        } else {
+            self.eccentricity
+        };
 
         if e < 1.0 {
             // Elliptical: tan(ν/2) = sqrt((1+e)/(1-e)) * tan(E/2)
@@ -326,146 +339,21 @@ fn calculate_soi(semi_major_axis: f64, mass: f64, parent_mass: f64) -> f64 {
     semi_major_axis * (mass / parent_mass).powf(0.4)
 }
 
-// === RON loading types ===
-
-#[derive(Deserialize)]
-struct BodyDefinitionFile {
-    bodies: Vec<BodyDefinition>,
-}
-
-#[derive(Deserialize)]
-struct BodyDefinition {
-    name: String,
-    description: String,
-    mass: f64,
-    radius: f64,
-    color: [f32; 4],
-    parent: Option<String>,
-    orbit: Option<OrbitDefinition>,
-    atmosphere: Option<AtmosphereDefinition>,
-    sidereal_period: Option<f64>,
-    #[serde(default)]
-    accretion_disc: Option<AccretionDiscDefinition>,
-    #[serde(default)]
-    galactic_mass_profile: bool,
-}
-
-#[derive(Deserialize)]
-struct OrbitDefinition {
-    semi_major_axis: f64,
-    eccentricity: f64,
-    argument_of_periapsis: f64,
-    mean_anomaly_at_epoch: f64,
-}
-
-#[derive(Deserialize)]
-struct AtmosphereDefinition {
-    surface_pressure: f64,
-    scale_height: f64,
-    color: [f32; 3],
-}
-
-#[derive(Deserialize)]
-struct AccretionDiscDefinition {
-    inner_radius: f64,
-    outer_radius: f64,
-    color_inner: [f32; 3],
-    color_outer: [f32; 3],
-}
-
 /// Solar system with all planets and major moons
 pub struct SolarSystem {
     pub bodies: Vec<CelestialBody>,
     pub time: f64, // seconds
+    /// Cached index of the Sun
+    pub sun_index: usize,
+    /// Cached index of Earth (launchpad body)
+    pub earth_index: usize,
+    /// Cached index of the Moon
+    pub moon_index: usize,
 }
 
 impl SolarSystem {
     pub fn new() -> Self {
-        let system = match Self::load_from_file("data/bodies/solar_system.ron") {
-            Ok(system) => {
-                log::info!("Loaded {} bodies from solar_system.ron", system.bodies.len());
-                system
-            }
-            Err(e) => {
-                log::warn!("Failed to load solar_system.ron ({}), using hardcoded fallback", e);
-                Self::new_hardcoded()
-            }
-        };
-        system
-    }
-
-    fn load_from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let data = std::fs::read_to_string(path)?;
-        let file: BodyDefinitionFile = ron::from_str(&data)?;
-
-        // First pass: build name → index map and collect scaled masses
-        let mut name_to_index: HashMap<String, usize> = HashMap::new();
-        for (i, def) in file.bodies.iter().enumerate() {
-            name_to_index.insert(def.name.clone(), i);
-        }
-
-        // Second pass: build CelestialBody vec
-        let mut bodies = Vec::with_capacity(file.bodies.len());
-        for def in &file.bodies {
-            let mass = def.mass * PHYSICS_SCALE * PHYSICS_SCALE;
-            let radius = def.radius * PHYSICS_SCALE;
-
-            let parent_idx = def.parent.as_ref().map(|name| {
-                *name_to_index.get(name).unwrap_or_else(|| panic!("Unknown parent body: {}", name))
-            });
-
-            let orbit = def.orbit.as_ref().map(|o| Orbit {
-                semi_major_axis: o.semi_major_axis * PHYSICS_SCALE,
-                eccentricity: o.eccentricity,
-                argument_of_periapsis: o.argument_of_periapsis,
-                mean_anomaly_at_epoch: o.mean_anomaly_at_epoch,
-            });
-
-            let soi_radius = match (parent_idx, &orbit) {
-                (Some(pi), Some(o)) => {
-                    let parent_mass = if file.bodies[pi].galactic_mass_profile {
-                        galactic_enclosed_mass(o.semi_major_axis)
-                    } else {
-                        file.bodies[pi].mass * PHYSICS_SCALE * PHYSICS_SCALE
-                    };
-                    let soi = calculate_soi(o.semi_major_axis, mass, parent_mass);
-                    // Stars/black holes orbiting the galactic center have vastly oversized
-                    // SOIs (~1 ly) that overlap neighbors; shrink to ~0.05 ly for gameplay.
-                    if file.bodies[pi].galactic_mass_profile { soi / 20.0 } else { soi }
-                }
-                _ => f64::INFINITY,
-            };
-
-            let atmosphere = def.atmosphere.as_ref().map(|a| Atmosphere {
-                surface_pressure: a.surface_pressure,
-                scale_height: a.scale_height,
-                color: a.color,
-            });
-
-            let accretion_disc = def.accretion_disc.as_ref().map(|d| AccretionDisc {
-                inner_radius: d.inner_radius * PHYSICS_SCALE,
-                outer_radius: d.outer_radius * PHYSICS_SCALE,
-                color_inner: d.color_inner,
-                color_outer: d.color_outer,
-            });
-
-            bodies.push(CelestialBody {
-                name: def.name.clone(),
-                description: def.description.clone(),
-                mass,
-                radius,
-                color: def.color,
-                parent: parent_idx,
-                orbit,
-                soi_radius,
-                atmosphere,
-                sidereal_period: def.sidereal_period,
-                accretion_disc,
-                galactic_mass_profile: def.galactic_mass_profile,
-            });
-        }
-
-        Ok(Self { bodies, time: 0.0 })
+        Self::new_hardcoded()
     }
 
     fn new_hardcoded() -> Self {
@@ -993,7 +881,11 @@ impl SolarSystem {
             galactic_mass_profile: false,
         });
 
-        Self { bodies, time: 0.0 }
+        let sun_index = bodies.iter().position(|b| b.name == "Sun").expect("Sun not found");
+        let earth_index = bodies.iter().position(|b| b.name == "Earth").expect("Earth not found");
+        let moon_index = bodies.iter().position(|b| b.name == "Moon").expect("Moon not found");
+
+        Self { bodies, time: 0.0, sun_index, earth_index, moon_index }
     }
 
     /// Get world position of a body at current time

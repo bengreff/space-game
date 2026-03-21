@@ -200,6 +200,7 @@ impl Ship {
                                 sub_retro = new_ret;
                                 sub_mass = new_mass;
                             } else {
+                                log::warn!("Galactic subdivision: orbit recalculation failed at r={:.3e}", r_new);
                                 break;
                             }
                         }

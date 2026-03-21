@@ -1,6 +1,12 @@
 mod camera;
+mod editor_render;
+mod flight;
+mod formatting;
 mod geometry;
+mod interaction;
 mod maneuver;
+mod menus;
+mod scene;
 pub mod sprites;
 mod state;
 pub mod textures;

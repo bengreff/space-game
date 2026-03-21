@@ -240,7 +240,7 @@ pub struct Ship {
 impl Ship {
     /// Create a ship spawned on Earth's surface (Earth is at index 4)
     pub fn spawn_on_earth(solar_system: &SolarSystem) -> Self {
-        let earth_index = 4;
+        let earth_index = solar_system.earth_index;
         let earth = &solar_system.bodies[earth_index];
         let earth_radius = earth.radius;
         let earth_mass = earth.mass;
@@ -449,7 +449,7 @@ impl Ship {
 
         // Semi-major axis from vis-viva: 1/a = 2/r - v²/μ
         let inv_a = 2.0 / r - v2 / mu;
-        if inv_a.abs() < 1e-20 {
+        if inv_a.abs() < 1e-10 {
             return true; // parabolic - will hit surface
         }
         let a = 1.0 / inv_a;
@@ -504,7 +504,7 @@ impl Ship {
 
         // Semi-major axis from vis-viva: 1/a = 2/r - v²/μ
         let inv_a = 2.0 / r - v2 / mu;
-        if inv_a.abs() < 1e-20 {
+        if inv_a.abs() < 1e-10 {
             return true; // parabolic - will hit surface
         }
         let a = 1.0 / inv_a;
@@ -628,10 +628,7 @@ impl Ship {
             let direction = if ship_orbit.retrograde { -1.0 } else { 1.0 };
             ship_orbit.mean_anomaly += direction * mean_motion * dt;
 
-            ship_orbit.mean_anomaly %= std::f64::consts::TAU;
-            if ship_orbit.mean_anomaly < 0.0 {
-                ship_orbit.mean_anomaly += std::f64::consts::TAU;
-            }
+            ship_orbit.mean_anomaly = ship_orbit.mean_anomaly.rem_euclid(std::f64::consts::TAU);
 
             self.rel_position = ship_orbit.orbit.position_from_mean_anomaly(
                 ship_orbit.mean_anomaly,
@@ -988,7 +985,7 @@ impl Ship {
         surface_angle: f64,
         vessel: Option<&VesselPhysicsData>,
     ) {
-        use crate::game::{LAUNCHPAD_BODY_INDEX, LAUNCHPAD_SURFACE_ANGLE, LAUNCHPAD_HEIGHT, LAUNCHPAD_BOTTOM_WIDTH};
+        use crate::game::{LAUNCHPAD_SURFACE_ANGLE, LAUNCHPAD_HEIGHT, LAUNCHPAD_BOTTOM_WIDTH};
 
         let body = &solar_system.bodies[body_index];
         let body_radius = body.radius;
@@ -1009,7 +1006,7 @@ impl Ship {
             .unwrap_or(SHIP_SIZE / 2.0);
 
         // Account for launchpad height
-        let launchpad_offset = if body_index == LAUNCHPAD_BODY_INDEX {
+        let launchpad_offset = if body_index == solar_system.earth_index {
             let angle_diff = surface_angle - LAUNCHPAD_SURFACE_ANGLE;
             let angle_diff = angle_diff - (angle_diff / std::f64::consts::TAU).round() * std::f64::consts::TAU;
             let half_angle = (LAUNCHPAD_BOTTOM_WIDTH * 0.5) / body_radius;
@@ -1065,7 +1062,7 @@ impl Ship {
 
     /// Check for collisions with bodies
     fn check_and_handle_collisions(&mut self, solar_system: &SolarSystem, vessel: Option<&VesselPhysicsData>) {
-        use crate::game::{LAUNCHPAD_BODY_INDEX, LAUNCHPAD_SURFACE_ANGLE,
+        use crate::game::{LAUNCHPAD_SURFACE_ANGLE,
                           LAUNCHPAD_HEIGHT, LAUNCHPAD_BOTTOM_WIDTH};
 
         let ship_radius = vessel
@@ -1090,7 +1087,7 @@ impl Ship {
             let dist = (dx * dx + dy * dy).sqrt();
 
             // Check launchpad collision (raised surface)
-            if i == LAUNCHPAD_BODY_INDEX {
+            if i == solar_system.earth_index {
                 let lp_collision_dist = body.radius + LAUNCHPAD_HEIGHT + ship_radius;
                 if dist < lp_collision_dist {
                     let surface_angle = dy.atan2(dx);
@@ -1277,6 +1274,10 @@ impl Ship {
             return 0.0;
         }
 
+        if total_accel < 1e-12 {
+            return 0.0; // No torque available — cannot rotate
+        }
+
         let stopping_dist = vel.powi(2) / (2.0 * total_accel);
         let going_right_way = (angle_diff > 0.0 && vel >= 0.0) || (angle_diff < 0.0 && vel <= 0.0);
         let should_brake = going_right_way && stopping_dist >= angle_diff.abs() * 0.5;
@@ -1322,6 +1323,8 @@ impl Ship {
             // Close enough and nearly stopped - snap to target
             self.rotational_velocity = 0.0;
             self.rotation = target_angle;
+        } else if total_accel < 1e-12 {
+            // No torque available — cannot rotate, do nothing
         } else {
             // Calculate stopping distance at current velocity: s = v²/(2a)
             let stopping_dist = vel.powi(2) / (2.0 * total_accel);

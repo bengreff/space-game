@@ -63,11 +63,9 @@ pub struct QuicksaveInfo {
 
 impl SaveGame {
     /// Snapshot the current game state into a SaveGame.
-    /// `active_maneuver_nodes` are the current flight-mode maneuver nodes.
     /// The active vessel is put on-rails before saving.
     pub fn from_game(
         game: &Game,
-        active_maneuver_nodes: &[ManeuverNode],
         save_name: &str,
     ) -> Self {
         let mut vessels = Vec::new();
@@ -81,7 +79,7 @@ impl SaveGame {
             name: game.flight.active_vessel_name.clone(),
             ship: active_ship,
             vessel: game.flight.vessel.clone(),
-            maneuver_nodes: active_maneuver_nodes.to_vec(),
+            maneuver_nodes: game.flight.active_maneuver_nodes.clone(),
             is_debris: false,
         });
 
@@ -107,7 +105,7 @@ impl SaveGame {
         SaveGame {
             version: SAVE_VERSION,
             name: save_name.to_string(),
-            simulation_time: game.simulation_time,
+            simulation_time: game.time(),
             vessels,
             next_vessel_id: game.flight.next_vessel_id,
             debris_counter: game.flight.debris_counter,
@@ -420,10 +418,9 @@ impl SaveGame {
     }
 
     /// Restore this save game's state into the given Game.
-    /// Returns the active vessel's maneuver nodes (to load into render_state).
-    pub fn restore_to_game(self, game: &mut Game) -> Vec<ManeuverNode> {
+    /// Active vessel's maneuver nodes are loaded into `game.flight.active_maneuver_nodes`.
+    pub fn restore_to_game(self, game: &mut Game) {
         // Restore simulation time
-        game.simulation_time = self.simulation_time;
         game.solar_system.time = self.simulation_time;
 
         // Restore editor vessel name
@@ -434,7 +431,6 @@ impl SaveGame {
 
         // Restore vessels
         let mut vessels_iter = self.vessels.into_iter();
-        let mut active_nodes = Vec::new();
 
         // First vessel is the active one
         if let Some(active) = vessels_iter.next() {
@@ -442,7 +438,7 @@ impl SaveGame {
             game.flight.vessel = active.vessel;
             game.flight.active_vessel_id = active.id;
             game.flight.active_vessel_name = active.name;
-            active_nodes = active.maneuver_nodes;
+            game.flight.active_maneuver_nodes = active.maneuver_nodes;
         }
 
         // Remaining are inactive
@@ -459,8 +455,6 @@ impl SaveGame {
 
         game.flight.next_vessel_id = self.next_vessel_id;
         game.flight.debris_counter = self.debris_counter;
-
-        active_nodes
     }
 }
 

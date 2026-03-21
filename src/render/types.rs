@@ -305,29 +305,30 @@ impl ManeuverNode {
         (self.remaining_delta_v.prograde.powi(2) + self.remaining_delta_v.radial_out.powi(2)).sqrt()
     }
 
-    /// Calculate world position from stored orbit parameters and current parent position
-    pub fn world_pos(&self, current_parent_x: f64, current_parent_y: f64) -> [f64; 2] {
+    /// Orbit-relative offset (without parent position) for two-step precision rendering
+    pub fn orbit_offset(&self) -> [f64; 2] {
         let e = self.eccentricity;
         let ta = self.true_anomaly;
         let arg_peri = self.argument_of_periapsis;
 
         let r = if e >= 1.0 {
-            // Hyperbolic
             let a_abs = self.semi_major_axis.abs();
             let p = a_abs * (e * e - 1.0);
             let denom = 1.0 + e * ta.cos();
             if denom <= 0.001 { self.semi_major_axis.abs() } else { p / denom }
         } else {
-            // Elliptical
             let p = self.semi_major_axis * (1.0 - e * e);
             p / (1.0 + e * ta.cos())
         };
 
         let angle = ta + arg_peri;
-        [
-            current_parent_x + r * angle.cos(),
-            current_parent_y + r * angle.sin(),
-        ]
+        [r * angle.cos(), r * angle.sin()]
+    }
+
+    /// Calculate world position from stored orbit parameters and current parent position
+    pub fn world_pos(&self, current_parent_x: f64, current_parent_y: f64) -> [f64; 2] {
+        let off = self.orbit_offset();
+        [current_parent_x + off[0], current_parent_y + off[1]]
     }
 
     /// Calculate velocity at this point on the orbit (unscaled, m/s)

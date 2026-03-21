@@ -511,24 +511,9 @@ impl RenderState {
         &self.maneuver_nodes
     }
 
-    /// Swap maneuver nodes (for vessel switching). Returns the old nodes.
-    pub fn swap_maneuver_nodes(&mut self, new_nodes: Vec<ManeuverNode>) -> Vec<ManeuverNode> {
-        let old = std::mem::replace(&mut self.maneuver_nodes, new_nodes);
-        self.selected_maneuver_node = None;
-        self.dragging_maneuver_node = None;
-        self.predicted_trajectories.clear();
-        old
-    }
-
     /// Get current trajectory for external processing
     pub fn get_current_trajectory(&self) -> &[super::types::OrbitSegmentData] {
         &self.current_trajectory
-    }
-
-    /// Get world position for a maneuver node (calculated from stored orbit + current parent position)
-    pub(super) fn maneuver_node_world_position(&self, node: &ManeuverNode) -> Option<[f64; 2]> {
-        let parent = self.bodies.get(node.parent_idx)?;
-        Some(node.world_pos(parent.x, parent.y))
     }
 
     /// Get the current autopilot target

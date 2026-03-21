@@ -122,16 +122,18 @@ src/
 │
 └── render/              # Flight rendering and HUD
     ├── camera.rs        # Camera struct (position, zoom, body tracking)
+    ├── editor_render.rs # render_editor(), set_editor_camera(), egui_context()
+    ├── flight.rs        # render() — flight HUD (egui), velocity, orbit info, staging
+    ├── formatting.rs    # format_duration, format_distance, format_mass, blackbody_color, etc.
     ├── geometry.rs      # create_circle(), create_ring(), create_ship_triangle()
+    ├── interaction.rs   # update_hover, body_at_screen_pos, focus_on_body, update_tracking
     ├── maneuver.rs      # Maneuver node management (create/delete/drag/burn)
+    ├── menus.rs         # render_main_menu, render_title_screen, render_tracking_station
+    ├── scene.rs         # Geometry generation: update_bodies, add_*_vertices
     ├── types.rs         # ShipRenderData, ShipPartRenderData, StagedPartInfo
     │                    # ManeuverNode, ManeuverDeltaV, OrbitRenderData
     │                    # Vertex struct (position + color, bytemuck)
-    └── state.rs         # RenderState: wgpu setup, MSAA pipeline (3649 lines - largest file)
-                         # Flight HUD (egui): velocity, altitude, orbit info, fuel, staging
-                         # Body/orbit/ship rendering, maneuver node UI
-                         # Flight staging panel with drag-and-drop (FlightStageDrag)
-                         # render_editor() and render_flight() entry points
+    └── state.rs         # RenderState struct, new(), resize(), wgpu/egui setup
 ```
 
 ```
@@ -148,7 +150,7 @@ data/
 
 ### Solar System
 - Bodies are **hardcoded** in `src/bodies.rs`. The `data/bodies/` RON files are stale/unused.
-- **Earth** is body index 3 (`LAUNCHPAD_BODY_INDEX` in game.rs) and is the home world.
+- Body indices are **dynamic** — looked up by name at init. Use `solar_system.earth_index`, `solar_system.sun_index`, `solar_system.moon_index`.
 - Real-world values: Earth radius 6,371 km, orbital velocity 7.8 km/s, Moon at 384,400 km.
 - Gravitational constant `G = 6.67430e-11`.
 
@@ -210,7 +212,7 @@ data/
 ## Common Patterns
 
 - `main.rs` orchestrates: it calls `render_flight_frame()` or `render_editor_frame()` based on game mode, handles input dispatch, and bridges data between Game/RenderState.
-- `render/state.rs` is the largest file (~3650 lines). It owns the wgpu state, egui context, and all flight UI rendering. Changes to flight UI happen here.
+- `render/` is split across modules: `state.rs` (struct + setup), `flight.rs` (HUD), `scene.rs` (geometry), `menus.rs` (title/tracking station), `interaction.rs` (hover/click), `editor_render.rs` (editor). All are `impl RenderState` blocks.
 - Editor UI is in `editor/ui.rs`. Editor vertex generation is in `editor/render.rs`.
 - Data flows: EditorState -> Blueprint -> FlightVessel (on launch). FlightVessel -> ShipRenderData -> RenderState (each frame for display).
 - `RenderState` has request fields (e.g., `staging_reorder`, `engine_toggle_request`) that main.rs reads and applies to the vessel each frame.

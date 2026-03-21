@@ -1387,15 +1387,16 @@ impl FlightVessel {
         vessel_rotation: f64,
         body_radius: f64,
         body_index: usize,
+        earth_index: usize,
     ) -> Option<f64> {
-        use crate::game::{LAUNCHPAD_BODY_INDEX, LAUNCHPAD_SURFACE_ANGLE,
+        use crate::game::{LAUNCHPAD_SURFACE_ANGLE,
                           LAUNCHPAD_HEIGHT, LAUNCHPAD_TOP_WIDTH, LAUNCHPAD_BOTTOM_WIDTH};
 
         let cos_r = vessel_rotation.cos();
         let sin_r = vessel_rotation.sin();
 
         // Launchpad collision parameters
-        let has_launchpad = body_index == LAUNCHPAD_BODY_INDEX;
+        let has_launchpad = body_index == earth_index;
         let lp_top_half = LAUNCHPAD_TOP_WIDTH * 0.5;
         let lp_bot_half = LAUNCHPAD_BOTTOM_WIDTH * 0.5;
         let lp_surface_radius = body_radius + LAUNCHPAD_HEIGHT;

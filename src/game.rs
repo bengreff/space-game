@@ -5,7 +5,6 @@ use crate::render::ManeuverNode;
 use crate::ship::{Ship, ShipInput};
 
 /// Launchpad constants
-pub const LAUNCHPAD_BODY_INDEX: usize = 4; // Earth
 pub const LAUNCHPAD_SURFACE_ANGLE: f64 = std::f64::consts::FRAC_PI_2;
 pub const LAUNCHPAD_HEIGHT: f64 = 10.0; // meters
 pub const LAUNCHPAD_TOP_WIDTH: f64 = 100.0; // meters
@@ -54,6 +53,8 @@ pub struct FlightState {
     // Active vessel identity
     pub active_vessel_id: VesselId,
     pub active_vessel_name: String,
+    /// Maneuver nodes owned by the active vessel
+    pub active_maneuver_nodes: Vec<ManeuverNode>,
 
     // Inactive vessels (on-rails only)
     pub inactive_vessels: Vec<TrackedVessel>,
@@ -70,10 +71,38 @@ impl FlightState {
             vessel: None,
             active_vessel_id: 0,
             active_vessel_name: "Ship".to_string(),
+            active_maneuver_nodes: Vec::new(),
             inactive_vessels: Vec::new(),
             next_vessel_id: 1,
             debris_counter: 0,
         }
+    }
+
+    /// Package the active vessel into a TrackedVessel (for shelving/switching).
+    pub fn active_as_tracked(&self, solar_system: &SolarSystem) -> TrackedVessel {
+        let mut saved_ship = self.ship.clone();
+        saved_ship.enter_rails_mode(solar_system);
+
+        TrackedVessel {
+            id: self.active_vessel_id,
+            name: self.active_vessel_name.clone(),
+            ship: saved_ship,
+            vessel: self.vessel.clone(),
+            maneuver_nodes: self.active_maneuver_nodes.clone(),
+            is_debris: false,
+        }
+    }
+
+    /// Load a TrackedVessel as the active vessel.
+    pub fn load_as_active(&mut self, tv: TrackedVessel, solar_system: &SolarSystem) {
+        self.ship = tv.ship;
+        self.ship.exit_rails_mode(solar_system);
+        self.vessel = tv.vessel;
+        self.active_vessel_id = tv.id;
+        self.active_vessel_name = tv.name;
+        self.active_maneuver_nodes = tv.maneuver_nodes;
+        self.ship_input = ShipInput::default();
+        self.tracking_ship = true;
     }
 
     /// Total number of vessels (active + inactive)
@@ -92,15 +121,13 @@ impl FlightState {
     }
 
     /// Switch to a different vessel by ID.
-    /// `current_maneuver_nodes` are saved with the current active vessel.
-    /// Returns the new active vessel's maneuver nodes (to load into render_state).
+    /// Maneuver nodes are saved/restored via `active_maneuver_nodes`.
     pub fn switch_to_vessel(
         &mut self,
         target_id: VesselId,
-        current_maneuver_nodes: Vec<ManeuverNode>,
         solar_system: &SolarSystem,
         part_defs: &PartDefinitions,
-    ) -> Result<Vec<ManeuverNode>, String> {
+    ) -> Result<(), String> {
         // Find target in inactive vessels
         let target_pos = self.inactive_vessels.iter()
             .position(|v| v.id == target_id)
@@ -109,74 +136,43 @@ impl FlightState {
         let target = self.inactive_vessels.remove(target_pos);
 
         // Save current active vessel as inactive
-        let mut saved_ship = self.ship.clone();
-        saved_ship.enter_rails_mode(solar_system);
-
         let is_debris = self.vessel.as_ref()
             .map_or(false, |v| !v.has_control(part_defs));
-        self.inactive_vessels.push(TrackedVessel {
-            id: self.active_vessel_id,
-            name: self.active_vessel_name.clone(),
-            ship: saved_ship,
-            vessel: self.vessel.take(),
-            maneuver_nodes: current_maneuver_nodes,
-            is_debris,
-        });
+        let mut saved = self.active_as_tracked(solar_system);
+        saved.is_debris = is_debris;
+        saved.vessel = self.vessel.take(); // Take instead of clone for active
+        self.inactive_vessels.push(saved);
 
         // Load target as active
-        self.ship = target.ship;
-        self.ship.exit_rails_mode(solar_system);
-        self.vessel = target.vessel;
-        self.active_vessel_id = target.id;
-        self.active_vessel_name = target.name;
-        self.ship_input = ShipInput::default();
-        self.tracking_ship = true;
+        self.load_as_active(target, solar_system);
 
-        Ok(target.maneuver_nodes)
+        Ok(())
     }
 
     /// Save the active vessel into inactive_vessels (for leaving flight mode).
     /// The active vessel is put on rails first.
     pub fn shelve_active_vessel(
         &mut self,
-        current_maneuver_nodes: Vec<ManeuverNode>,
         solar_system: &SolarSystem,
     ) {
-        let mut saved_ship = self.ship.clone();
-        saved_ship.enter_rails_mode(solar_system);
-
-        self.inactive_vessels.push(TrackedVessel {
-            id: self.active_vessel_id,
-            name: self.active_vessel_name.clone(),
-            ship: saved_ship,
-            vessel: self.vessel.clone(),
-            maneuver_nodes: current_maneuver_nodes,
-            is_debris: false, // Active vessel always has control
-        });
+        let saved = self.active_as_tracked(solar_system);
+        self.inactive_vessels.push(saved);
     }
 
     /// Load a vessel from inactive_vessels as the active vessel (for entering flight mode).
-    /// Returns the vessel's maneuver nodes (to load into render_state).
     pub fn activate_vessel(
         &mut self,
         target_id: VesselId,
         solar_system: &SolarSystem,
-    ) -> Result<Vec<ManeuverNode>, String> {
+    ) -> Result<(), String> {
         let target_pos = self.inactive_vessels.iter()
             .position(|v| v.id == target_id)
             .ok_or_else(|| format!("Vessel {} not found", target_id))?;
 
         let target = self.inactive_vessels.remove(target_pos);
+        self.load_as_active(target, solar_system);
 
-        self.ship = target.ship;
-        self.ship.exit_rails_mode(solar_system);
-        self.vessel = target.vessel;
-        self.active_vessel_id = target.id;
-        self.active_vessel_name = target.name;
-        self.ship_input = ShipInput::default();
-        self.tracking_ship = true;
-
-        Ok(target.maneuver_nodes)
+        Ok(())
     }
 
     /// Create a debris vessel from extracted decoupled parts.
@@ -349,12 +345,13 @@ impl FlightState {
     /// Remove inactive vessels that are landed on the launchpad.
     /// Called before launching a new vessel to clear the pad.
     pub fn recover_vessels_on_launchpad(&mut self, solar_system: &crate::bodies::SolarSystem) {
-        let earth_radius = solar_system.bodies[LAUNCHPAD_BODY_INDEX].radius;
+        let earth_index = solar_system.earth_index;
+        let earth_radius = solar_system.bodies[earth_index].radius;
         let half_angle = (LAUNCHPAD_BOTTOM_WIDTH * 0.5) / earth_radius;
 
         self.inactive_vessels.retain(|v| {
-            let dominated_by_earth = v.ship.soi_body == LAUNCHPAD_BODY_INDEX;
-            let is_landed = matches!(v.ship.state, crate::ship::ShipState::Landed { body_index, .. } if body_index == LAUNCHPAD_BODY_INDEX);
+            let dominated_by_earth = v.ship.soi_body == earth_index;
+            let is_landed = matches!(v.ship.state, crate::ship::ShipState::Landed { body_index, .. } if body_index == earth_index);
             if dominated_by_earth && is_landed {
                 let angle = v.ship.rel_position[1].atan2(v.ship.rel_position[0]);
                 let angle_diff = angle - LAUNCHPAD_SURFACE_ANGLE;
@@ -371,8 +368,8 @@ impl FlightState {
 
 /// Returns true if the given body supports vessel recovery (i.e. has infrastructure).
 /// Currently only Earth. Future colonies will add more indices.
-pub fn is_recoverable_body(body_index: usize) -> bool {
-    body_index == LAUNCHPAD_BODY_INDEX
+pub fn is_recoverable_body(body_index: usize, solar_system: &crate::bodies::SolarSystem) -> bool {
+    body_index == solar_system.earth_index
 }
 
 /// Central game state container
@@ -380,8 +377,6 @@ pub struct Game {
     pub mode: GameMode,
     pub paused: bool,
     pub warp_index: usize,
-    /// Elapsed simulation seconds since game epoch (Jan 1, 2030 00:00 UTC)
-    pub simulation_time: f64,
     pub solar_system: SolarSystem,
     pub flight: FlightState,
     pub editor: EditorState,
@@ -424,7 +419,6 @@ impl Game {
             mode: GameMode::TitleScreen,
             paused: false,
             warp_index: 0,
-            simulation_time: 0.0,
             solar_system,
             flight,
             editor,
@@ -447,7 +441,6 @@ impl Game {
 
     /// Reset game state for a new game
     pub fn reset_for_new_game(&mut self, name: String) {
-        self.simulation_time = 0.0;
         self.solar_system.time = 0.0;
         self.warp_index = 0;
         let ship = Ship::spawn_on_earth(&self.solar_system);
@@ -457,6 +450,11 @@ impl Game {
         self.mode = GameMode::MainMenu;
         self.paused = false;
         log::info!("Started new game: {:?}", self.save_name);
+    }
+
+    /// Get the current simulation time (seconds since epoch)
+    pub fn time(&self) -> f64 {
+        self.solar_system.time
     }
 
     /// Switch to main menu
@@ -510,7 +508,7 @@ impl Game {
         }
 
         // Get spawn position (on launchpad)
-        let earth_idx = LAUNCHPAD_BODY_INDEX;
+        let earth_idx = self.solar_system.earth_index;
         let earth = &self.solar_system.bodies[earth_idx];
 
         // Surface angle (spawn at launchpad location)

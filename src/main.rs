@@ -116,8 +116,8 @@ fn compute_view_soi_body(game: &Game, render_state: &RenderState) -> Option<usiz
 /// Save the current game and return to the title screen
 fn save_and_quit_to_title(game: &mut Game, render_state: &mut RenderState) {
     if let Some(ref name) = game.save_name {
-        let nodes = render_state.maneuver_nodes.clone();
-        let save = SaveGame::from_game(game, &nodes, name);
+        game.flight.active_maneuver_nodes = render_state.maneuver_nodes.clone();
+        let save = SaveGame::from_game(game, name);
         if let Err(e) = save.write_to_file() {
             log::error!("Failed to save game: {}", e);
         }
@@ -180,7 +180,7 @@ fn main() {
 
     // Initial camera: focus on Sun, zoomed out to see all planets
     {
-        let sun_pos = game.solar_system.body_position(1);
+        let sun_pos = game.solar_system.body_position(game.solar_system.sun_index);
         render_state.camera.position[0] = sun_pos[0] * SCALE * BODY_SCALE;
         render_state.camera.position[1] = sun_pos[1] * SCALE * BODY_SCALE;
         render_state.camera.body_center = render_state.camera.position;
@@ -199,8 +199,8 @@ fn main() {
                         WindowEvent::CloseRequested => {
                             // Save before closing
                             if let Some(ref name) = game.save_name {
-                                let nodes = render_state.maneuver_nodes.clone();
-                                let save = SaveGame::from_game(&game, &nodes, name);
+                                game.flight.active_maneuver_nodes = render_state.maneuver_nodes.clone();
+                                let save = SaveGame::from_game(&game, name);
                                 if let Err(e) = save.write_to_file() {
                                     log::error!("Failed to save on close: {}", e);
                                 } else {
@@ -272,8 +272,8 @@ fn main() {
 
                             // Auto-save check
                             if game.save_name.is_some() && last_autosave.elapsed() >= AUTOSAVE_INTERVAL {
-                                let nodes = render_state.maneuver_nodes.clone();
-                                let save = SaveGame::from_game(&game, &nodes, game.save_name.as_ref().unwrap());
+                                game.flight.active_maneuver_nodes = render_state.maneuver_nodes.clone();
+                                let save = SaveGame::from_game(&game, game.save_name.as_ref().unwrap());
                                 if let Err(e) = save.write_to_file() {
                                     log::error!("Auto-save failed: {}", e);
                                 } else {
@@ -455,6 +455,9 @@ fn render_flight_frame(
     // Use actual frame time, clamped to avoid spiral-of-death on hitches
     let dt = (frame_dt as f64).clamp(0.0001, 0.1);
 
+    // Sync earth_index for render state
+    render_state.earth_index = game.solar_system.earth_index;
+
     // Check if the vessel has a functioning command pod
     let has_control = game.flight.vessel.as_ref()
         .map_or(true, |v| v.has_control(&game.part_definitions));
@@ -512,7 +515,6 @@ fn render_flight_frame(
         }
 
         game.solar_system.update(dt * time_warp);
-        game.simulation_time += dt * time_warp;
 
         // Determine autopilot state and desired direction (before gimbal update)
         // No control → force autopilot off
@@ -651,7 +653,7 @@ fn render_flight_frame(
             // Power update: compute sun distance and update electricity
             {
                 let ship_abs = game.flight.ship.absolute_position(&game.solar_system);
-                let sun_pos = game.solar_system.body_position(1); // Sun is index 1
+                let sun_pos = game.solar_system.body_position(game.solar_system.sun_index);
                 let dx = ship_abs[0] - sun_pos[0];
                 let dy = ship_abs[1] - sun_pos[1];
                 let sun_distance_m = (dx * dx + dy * dy).sqrt();
@@ -723,9 +725,10 @@ fn render_flight_frame(
                     game.flight.ship.rotation,
                     soi_body.radius,
                     game.flight.ship.soi_body,
+                    game.solar_system.earth_index,
                 ) {
                     // If landing on launchpad, account for its height
-                    let launchpad_offset = if game.flight.ship.soi_body == sunscatter::game::LAUNCHPAD_BODY_INDEX {
+                    let launchpad_offset = if game.flight.ship.soi_body == game.solar_system.earth_index {
                         let angle_diff = surface_angle - sunscatter::game::LAUNCHPAD_SURFACE_ANGLE;
                         let angle_diff = angle_diff - (angle_diff / std::f64::consts::TAU).round() * std::f64::consts::TAU;
                         let half_angle = (sunscatter::game::LAUNCHPAD_BOTTOM_WIDTH * 0.5)
@@ -1034,6 +1037,7 @@ fn render_flight_frame(
 
         // Smooth interpolation with angle wrapping
         let mut diff = target_rotation - render_state.camera.rotation;
+        if !diff.is_finite() { diff = 0.0; }
         while diff > std::f32::consts::PI {
             diff -= std::f32::consts::TAU;
         }
@@ -1049,6 +1053,7 @@ fn render_flight_frame(
         }
 
         // Normalize to [-PI, PI]
+        if !render_state.camera.rotation.is_finite() { render_state.camera.rotation = 0.0; }
         while render_state.camera.rotation > std::f32::consts::PI {
             render_state.camera.rotation -= std::f32::consts::TAU;
         }
@@ -1240,7 +1245,7 @@ fn render_flight_frame(
                     parent_idx: seg.parent_idx,
                     render_scale: SCALE * BODY_SCALE,
                     start_time: seg.start_time,
-                    base_epoch: game.simulation_time,
+                    base_epoch: game.time(),
                 }
             }).collect::<Vec<_>>()
         })
@@ -1255,7 +1260,7 @@ fn render_flight_frame(
     // Sun distance for solar panel output display
     let sun_distance_m = {
         let ship_abs = game.flight.ship.absolute_position(&game.solar_system);
-        let sun_pos = game.solar_system.body_position(1);
+        let sun_pos = game.solar_system.body_position(game.solar_system.sun_index);
         let dx = ship_abs[0] - sun_pos[0];
         let dy = ship_abs[1] - sun_pos[1];
         (dx * dx + dy * dy).sqrt()
@@ -1852,7 +1857,7 @@ fn render_flight_frame(
                         (sample_ma - start_ma).abs()
                     };
                     let travel_time = if n > 0.0 { delta_ma / n } else { 0.0 };
-                    let abs_time = game.simulation_time + seg.start_time + travel_time;
+                    let abs_time = game.time() + seg.start_time + travel_time;
 
                     // Target position relative to shared parent at abs_time
                     let target_pos = match target {
@@ -1934,9 +1939,6 @@ fn render_flight_frame(
 
     let accretion_discs = build_accretion_disc_data(game);
     render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions), &background_vessels, &accretion_discs, in_galaxy_view);
-
-    // Update simulation time for node epoch computation
-    render_state.simulation_time = game.simulation_time;
 
     // Compute target angle for navigation target
     if let Some(target) = render_state.selected_target {
@@ -2179,7 +2181,7 @@ fn render_flight_frame(
                     // The epoch gives the intended arrival time; we count how many
                     // complete orbits fit between now and the epoch, then add
                     // the within-orbit time for a drift-free countdown.
-                    let epoch_remaining = first_node.epoch - game.simulation_time;
+                    let epoch_remaining = first_node.epoch - game.time();
                     let full_orbits = if epoch_remaining > time_one_pass + orbital_period * 0.5 {
                         ((epoch_remaining - time_one_pass) / orbital_period).round() as u64
                     } else {
@@ -2241,7 +2243,7 @@ fn render_flight_frame(
     }
 
     let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
-    let date_str = sunscatter::game::format_date(game.simulation_time);
+    let date_str = sunscatter::game::format_date(game.time());
 
     // Determine if the ship can safely exit flight (go to main menu)
     // Cannot exit if in atmosphere or in landing zone while suborbital (and not landed)
@@ -2252,7 +2254,7 @@ fn render_flight_frame(
              && game.flight.ship.is_suborbital(&game.solar_system))
     );
     let can_recover = match game.flight.ship.state {
-        ShipState::Landed { body_index, .. } => sunscatter::game::is_recoverable_body(body_index),
+        ShipState::Landed { body_index, .. } => sunscatter::game::is_recoverable_body(body_index, &game.solar_system),
         _ => false,
     };
 
@@ -2267,21 +2269,22 @@ fn render_flight_frame(
             match pause_action {
                 PauseAction::MainMenu => {
                     // Save active vessel to inactive list before leaving flight
-                    let nodes = render_state.swap_maneuver_nodes(Vec::new());
-                    game.flight.shelve_active_vessel(nodes, &game.solar_system);
+                    game.flight.active_maneuver_nodes = std::mem::take(&mut render_state.maneuver_nodes);
+                    game.flight.shelve_active_vessel(&game.solar_system);
                     game.enter_main_menu();
                 }
                 PauseAction::RecoverVessel => {
                     // Discard maneuver nodes (vessel is recovered, not shelved)
-                    render_state.swap_maneuver_nodes(Vec::new());
+                    render_state.maneuver_nodes.clear();
+                    game.flight.active_maneuver_nodes.clear();
                     game.flight.vessel = None;
                     log::info!("Recovered vessel: {} (id={})", game.flight.active_vessel_name, game.flight.active_vessel_id);
                     game.enter_main_menu();
                 }
                 PauseAction::Quicksave => {
                     if let Some(ref name) = game.save_name {
-                        let nodes = render_state.maneuver_nodes.clone();
-                        let save = SaveGame::from_game(game, &nodes, name);
+                        game.flight.active_maneuver_nodes = render_state.maneuver_nodes.clone();
+                        let save = SaveGame::from_game(game, name);
                         match save.write_quicksave() {
                             Ok(index) => log::info!("Quicksaved #{}", index),
                             Err(e) => log::error!("Quicksave failed: {}", e),
@@ -2293,8 +2296,8 @@ fn render_flight_frame(
                     if let Some(ref name) = game.save_name {
                         match SaveGame::load_quicksave(name, &filename) {
                             Ok(save) => {
-                                let active_nodes = save.restore_to_game(game);
-                                render_state.swap_maneuver_nodes(active_nodes);
+                                save.restore_to_game(game);
+                                render_state.maneuver_nodes = game.flight.active_maneuver_nodes.clone();
                                 game.paused = false;
                                 render_state.show_quicksave_list = false;
                             }
@@ -2306,8 +2309,8 @@ fn render_flight_frame(
                     if let Some(ref name) = game.save_name {
                         match SaveGame::load_launch_save(name) {
                             Ok(save) => {
-                                let active_nodes = save.restore_to_game(game);
-                                render_state.swap_maneuver_nodes(active_nodes);
+                                save.restore_to_game(game);
+                                render_state.maneuver_nodes = game.flight.active_maneuver_nodes.clone();
                                 game.has_launch_save = true;
                                 game.paused = false;
                                 log::info!("Reverted to launch");
@@ -2338,7 +2341,7 @@ fn render_flight_frame(
         if let Some(segment) = render_state.current_trajectory.first() {
             let ta = sunscatter::ship::transfer::normalize_angle(position_angle - segment.argument_of_periapsis);
             let dv = sunscatter::render::ManeuverDeltaV { prograde, radial_out: radial };
-            let epoch = game.simulation_time + time_to_window;
+            let epoch = game.time() + time_to_window;
             let seg = segment.clone();
             render_state.create_maneuver_node_with_epoch(ta, &seg, dv, epoch);
         }
@@ -2466,7 +2469,7 @@ fn render_flight_frame(
     // Process debug teleport to LEO
     if render_state.debug_teleport_leo {
         render_state.debug_teleport_leo = false;
-        let earth_idx = sunscatter::game::LAUNCHPAD_BODY_INDEX;
+        let earth_idx = game.solar_system.earth_index;
         let earth = &game.solar_system.bodies[earth_idx];
         let leo_alt = 4.0e5; // 400 km
         let r = earth.radius + leo_alt;
@@ -2647,7 +2650,7 @@ fn render_editor_frame(
                     }
                     // Create launch save for "Revert to Launch"
                     if let Some(ref name) = game.save_name {
-                        let save = SaveGame::from_game(game, &[], name);
+                        let save = SaveGame::from_game(game, name);
                         match save.write_launch_save() {
                             Ok(()) => {
                                 game.has_launch_save = true;
@@ -2955,7 +2958,7 @@ fn render_title_screen_frame(
     elwt: &winit::event_loop::EventLoopWindowTarget<()>,
 ) {
     // Static camera on Sun — no time advancement
-    let sun_pos = game.solar_system.body_position(1);
+    let sun_pos = game.solar_system.body_position(game.solar_system.sun_index);
     render_state.camera.position[0] = sun_pos[0] * SCALE * BODY_SCALE;
     render_state.camera.position[1] = sun_pos[1] * SCALE * BODY_SCALE;
     render_state.camera.body_center = render_state.camera.position;
@@ -3109,7 +3112,7 @@ fn render_title_screen_frame(
                     match SaveGame::load_from_file(save_id) {
                         Ok(save) => {
                             let save_name = save.name.clone();
-                            let _active_nodes = save.restore_to_game(game);
+                            save.restore_to_game(game);
                             game.save_name = Some(save_name);
                             game.mode = GameMode::MainMenu;
                             game.paused = false;
@@ -3146,7 +3149,6 @@ fn render_main_menu_frame(
         let dt = 1.0 / 60.0;
         let time_warp = WARP_LEVELS[game.warp_index];
         game.solar_system.update(dt * time_warp);
-        game.simulation_time += dt * time_warp;
 
         // Propagate all vessels on rails (no active vessel while not in flight)
         let dt_sim = dt * time_warp;
@@ -3164,7 +3166,7 @@ fn render_main_menu_frame(
     }
 
     // Camera follows the Sun AFTER the simulation update so positions match
-    let sun_pos = game.solar_system.body_position(1);
+    let sun_pos = game.solar_system.body_position(game.solar_system.sun_index);
     render_state.camera.position[0] = sun_pos[0] * SCALE * BODY_SCALE;
     render_state.camera.position[1] = sun_pos[1] * SCALE * BODY_SCALE;
     render_state.camera.body_center = render_state.camera.position;
@@ -3182,7 +3184,7 @@ fn render_main_menu_frame(
     render_state.update_bodies_orbits_and_ship(&bodies, &orbits, None, SCALE, None);
 
     let paused = game.paused;
-    let date_str = sunscatter::game::format_date(game.simulation_time);
+    let date_str = sunscatter::game::format_date(game.time());
 
     match render_state.render_main_menu(WARP_LEVELS, game.warp_index, &date_str, |ctx| {
         let mut action = MainMenuAction::None;
@@ -3239,9 +3241,9 @@ fn render_main_menu_frame(
                 MainMenuAction::Editor => game.enter_editor(),
                 MainMenuAction::TrackingStation => {
                     game.enter_tracking_station();
-                    render_state.focus_on_body(sunscatter::game::LAUNCHPAD_BODY_INDEX);
+                    render_state.focus_on_body(game.solar_system.earth_index);
                     // Zoom so Earth fills ~half the screen
-                    let earth_radius_world = game.solar_system.bodies[sunscatter::game::LAUNCHPAD_BODY_INDEX].radius * SCALE * BODY_SCALE;
+                    let earth_radius_world = game.solar_system.bodies[game.solar_system.earth_index].radius * SCALE * BODY_SCALE;
                     render_state.camera.zoom = (0.25 / earth_radius_world) as f32;
                 },
                 MainMenuAction::Quit => {
@@ -3265,7 +3267,6 @@ fn render_tracking_station_frame(
         let dt = 1.0 / 60.0;
         let time_warp = WARP_LEVELS[game.warp_index];
         game.solar_system.update(dt * time_warp);
-        game.simulation_time += dt * time_warp;
 
         // Propagate all vessels on rails (no active vessel while not in flight)
         let dt_sim = dt * time_warp;
@@ -3310,7 +3311,7 @@ fn render_tracking_station_frame(
         } else {
             // Tracked vessel was destroyed, focus on Earth
             render_state.tracked_vessel = None;
-            render_state.focus_on_body(sunscatter::game::LAUNCHPAD_BODY_INDEX);
+            render_state.focus_on_body(game.solar_system.earth_index);
         }
     }
 
@@ -3318,7 +3319,7 @@ fn render_tracking_station_frame(
     render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &tracking_vessels, &accretion_discs, in_galaxy_view);
 
     let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
-    let date_str = sunscatter::game::format_date(game.simulation_time);
+    let date_str = sunscatter::game::format_date(game.time());
     let active_id = game.flight.active_vessel_id;
 
     // Build body info data for the info panel
@@ -3360,8 +3361,8 @@ fn render_tracking_station_frame(
                 sunscatter::render::TrackingStationAction::FlyVessel(id) => {
                     // Pull vessel from inactive list and enter flight
                     match game.flight.activate_vessel(id, &game.solar_system) {
-                        Ok(new_nodes) => {
-                            render_state.swap_maneuver_nodes(new_nodes);
+                        Ok(()) => {
+                            render_state.maneuver_nodes = game.flight.active_maneuver_nodes.clone();
                             game.warp_index = 0;
                         }
                         Err(e) => log::error!("Failed to activate vessel: {}", e),
@@ -3388,7 +3389,7 @@ fn render_tracking_station_frame(
                     // If we were tracking the deleted vessel, stop tracking
                     if render_state.tracked_vessel == Some(id) {
                         render_state.tracked_vessel = None;
-                        render_state.focus_on_body(sunscatter::game::LAUNCHPAD_BODY_INDEX);
+                        render_state.focus_on_body(game.solar_system.earth_index);
                     }
                 }
                 sunscatter::render::TrackingStationAction::None => {}
@@ -3769,10 +3770,10 @@ fn switch_to_next_vessel_by_id(game: &mut Game, render_state: &mut RenderState, 
         return;
     }
 
-    let old_nodes = render_state.swap_maneuver_nodes(Vec::new());
-    match game.flight.switch_to_vessel(target_id, old_nodes, &game.solar_system, &game.part_definitions) {
-        Ok(new_nodes) => {
-            render_state.swap_maneuver_nodes(new_nodes);
+    game.flight.active_maneuver_nodes = std::mem::take(&mut render_state.maneuver_nodes);
+    match game.flight.switch_to_vessel(target_id, &game.solar_system, &game.part_definitions) {
+        Ok(()) => {
+            render_state.maneuver_nodes = game.flight.active_maneuver_nodes.clone();
             render_state.tracked_body = None;
             game.warp_index = 0;
             log::info!("Switched to vessel: {} (id={})", game.flight.active_vessel_name, target_id);

@@ -183,7 +183,12 @@ impl Ship {
             // For prograde hyperbolic: incoming leg has ta < 0, outgoing has ta > 0
             // For retrograde hyperbolic: incoming leg has ta > 0, outgoing has ta < 0
             // The geometric ta calculation gives the "unsigned" angle, so we need to fix the sign
-            if retrograde {
+            if radial_velocity.abs() < 1e-10 {
+                // At periapsis: true anomaly should be near 0
+                if true_anomaly.abs() > std::f64::consts::FRAC_PI_2 {
+                    true_anomaly = -true_anomaly;
+                }
+            } else if retrograde {
                 // Retrograde: outgoing (receding) should have negative ta
                 if radial_velocity > 0.0 && true_anomaly > 0.0 {
                     true_anomaly = -true_anomaly;

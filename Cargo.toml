@@ -3,6 +3,7 @@ name = "sunscatter"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+default-run = "sunscatter"
 
 [dependencies]
 # Rendering
