@@ -3342,6 +3342,9 @@ fn render_tracking_station_frame(
             orbit_semi_major_axis_m: body.orbit.as_ref().map(|o| o.semi_major_axis),
             orbit_eccentricity: body.orbit.as_ref().map(|o| o.eccentricity),
             orbit_period_s,
+            mineable_resources: body.mineable_resources.clone(),
+            atmospheric_resources: body.atmospheric_resources.clone(),
+            habitability_score: body.habitability_score,
         }
     }).collect();
 

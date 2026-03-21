@@ -1,7 +1,9 @@
 use serde::{Serialize, Deserialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::colony::{ColonyManager, Company, ScienceState};
 use crate::game::{Game, VesselId, TrackedVessel};
 use crate::parts::{FlightVessel, VesselBlueprint};
 use crate::render::ManeuverNode;
@@ -31,6 +33,17 @@ pub struct SaveGame {
     pub debris_counter: u32,
     pub blueprints: Vec<VesselBlueprint>,
     pub editor_vessel_name: String,
+    // Colony system state (all default for backward compat with old saves)
+    #[serde(default)]
+    pub colonies: ColonyManager,
+    #[serde(default)]
+    pub company: Company,
+    #[serde(default)]
+    pub science: ScienceState,
+    #[serde(default)]
+    pub tech_unlocked: HashSet<String>,
+    #[serde(default)]
+    pub tech_line_tiers: HashMap<String, u32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -111,6 +124,11 @@ impl SaveGame {
             debris_counter: game.flight.debris_counter,
             blueprints,
             editor_vessel_name: game.editor.vessel_name.clone(),
+            colonies: game.colony_manager.clone(),
+            company: game.company.clone(),
+            science: game.science.clone(),
+            tech_unlocked: game.tech_tree.unlocked.clone(),
+            tech_line_tiers: game.tech_tree.line_tiers.clone(),
         }
     }
 
@@ -188,9 +206,9 @@ impl SaveGame {
         let save: SaveGame = ron::from_str(&content)
             .map_err(|e| format!("Failed to parse launch save: {}", e))?;
 
-        if save.version != SAVE_VERSION {
+        if save.version > SAVE_VERSION {
             return Err(format!(
-                "Save version mismatch: expected {}, got {}",
+                "Save version too new: max supported {}, got {}",
                 SAVE_VERSION, save.version
             ));
         }
@@ -222,9 +240,9 @@ impl SaveGame {
         let save: SaveGame = ron::from_str(&content)
             .map_err(|e| format!("Failed to parse save file: {}", e))?;
 
-        if save.version != SAVE_VERSION {
+        if save.version > SAVE_VERSION {
             return Err(format!(
-                "Save version mismatch: expected {}, got {}",
+                "Save version too new: max supported {}, got {}",
                 SAVE_VERSION, save.version
             ));
         }
@@ -244,9 +262,9 @@ impl SaveGame {
         let save: SaveGame = ron::from_str(&content)
             .map_err(|e| format!("Failed to parse quicksave: {}", e))?;
 
-        if save.version != SAVE_VERSION {
+        if save.version > SAVE_VERSION {
             return Err(format!(
-                "Save version mismatch: expected {}, got {}",
+                "Save version too new: max supported {}, got {}",
                 SAVE_VERSION, save.version
             ));
         }
@@ -455,6 +473,12 @@ impl SaveGame {
 
         game.flight.next_vessel_id = self.next_vessel_id;
         game.flight.debris_counter = self.debris_counter;
+
+        // Restore colony state
+        game.colony_manager = self.colonies;
+        game.company = self.company;
+        game.science = self.science;
+        game.tech_tree.apply_save_state(self.tech_unlocked, self.tech_line_tiers);
     }
 }
 

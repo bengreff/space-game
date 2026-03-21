@@ -1,4 +1,5 @@
 use serde::{Serialize, Deserialize};
+use crate::colony::ResourceType;
 
 /// Atmosphere data for a celestial body
 #[derive(Clone, Copy, Debug)]
@@ -58,6 +59,10 @@ pub struct CelestialBody {
     pub sidereal_period: Option<f64>,  // Rotation period in seconds (None = tidally locked / negligible)
     pub accretion_disc: Option<AccretionDisc>, // Accretion disc (e.g., for black holes)
     pub galactic_mass_profile: bool, // If true, effective_mass_at(r) uses enclosed galactic mass model
+    // Colony-related fields
+    pub mineable_resources: Vec<ResourceType>,
+    pub atmospheric_resources: Vec<ResourceType>,
+    pub habitability_score: u32,
 }
 
 impl CelestialBody {
@@ -380,6 +385,9 @@ impl SolarSystem {
                 color_outer: [0.8, 0.08, 0.02],
             }),
             galactic_mass_profile: true,
+            mineable_resources: vec![],
+            atmospheric_resources: vec![],
+            habitability_score: 0,
         });
 
         // === SUN (index 1) ===
@@ -406,6 +414,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![],
+            atmospheric_resources: vec![],
+            habitability_score: 0,
         });
 
         // === MERCURY (index 2) ===
@@ -429,6 +440,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::MetalOre, ResourceType::Regolith, ResourceType::RareEarthElements, ResourceType::UraniumOre],
+            atmospheric_resources: vec![],
+            habitability_score: 8,
         });
 
         // === VENUS (index 3) ===
@@ -456,6 +470,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::MetalOre],
+            atmospheric_resources: vec![ResourceType::AtmosphericCo2],
+            habitability_score: 3,
         });
 
         // === EARTH (index 4) ===
@@ -484,6 +501,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![],
+            atmospheric_resources: vec![],
+            habitability_score: 100,
         });
 
         // === MOON (index 5) ===
@@ -507,6 +527,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::MetalOre, ResourceType::Regolith, ResourceType::Water, ResourceType::RareEarthElements, ResourceType::UraniumOre],
+            atmospheric_resources: vec![],
+            habitability_score: 15,
         });
 
         // === MARS (index 6) ===
@@ -535,6 +558,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::MetalOre, ResourceType::Water, ResourceType::LithiumOre, ResourceType::RareEarthElements, ResourceType::UraniumOre],
+            atmospheric_resources: vec![ResourceType::AtmosphericCo2],
+            habitability_score: 30,
         });
 
         // === PHOBOS (index 7) ===
@@ -558,6 +584,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::Regolith, ResourceType::Water],
+            atmospheric_resources: vec![],
+            habitability_score: 12,
         });
 
         // === DEIMOS (index 8) ===
@@ -581,6 +610,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::Regolith, ResourceType::Water],
+            atmospheric_resources: vec![],
+            habitability_score: 12,
         });
 
         // === JUPITER (index 9) ===
@@ -609,6 +641,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![],
+            atmospheric_resources: vec![ResourceType::GasGiantAtmosphere],
+            habitability_score: 0,
         });
 
         // === IO (index 10) ===
@@ -632,6 +667,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::MetalOre, ResourceType::Regolith, ResourceType::UraniumOre],
+            atmospheric_resources: vec![],
+            habitability_score: 2,
         });
 
         // === EUROPA (index 11) ===
@@ -655,6 +693,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::Water],
+            atmospheric_resources: vec![],
+            habitability_score: 5,
         });
 
         // === GANYMEDE (index 12) ===
@@ -678,6 +719,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::MetalOre, ResourceType::Regolith, ResourceType::Water, ResourceType::UraniumOre],
+            atmospheric_resources: vec![],
+            habitability_score: 10,
         });
 
         // === CALLISTO (index 13) ===
@@ -701,6 +745,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::Regolith, ResourceType::Water],
+            atmospheric_resources: vec![],
+            habitability_score: 15,
         });
 
         // === SATURN (index 14) ===
@@ -729,6 +776,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![],
+            atmospheric_resources: vec![ResourceType::GasGiantAtmosphere],
+            habitability_score: 0,
         });
 
         // === TITAN (index 15) ===
@@ -756,6 +806,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::Water, ResourceType::Hydrocarbons],
+            atmospheric_resources: vec![],
+            habitability_score: 25,
         });
 
         // === RHEA (index 16) ===
@@ -779,6 +832,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::Regolith, ResourceType::Water],
+            atmospheric_resources: vec![],
+            habitability_score: 10,
         });
 
         // === IAPETUS (index 17) ===
@@ -802,6 +858,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::Regolith, ResourceType::Water],
+            atmospheric_resources: vec![],
+            habitability_score: 8,
         });
 
         // === DIONE (index 18) ===
@@ -825,6 +884,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::Regolith, ResourceType::Water],
+            atmospheric_resources: vec![],
+            habitability_score: 10,
         });
 
         // === URANUS (index 19) ===
@@ -852,6 +914,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![],
+            atmospheric_resources: vec![ResourceType::GasGiantAtmosphere],
+            habitability_score: 0,
         });
 
         // === NEPTUNE (index 20) ===
@@ -879,6 +944,9 @@ impl SolarSystem {
             sidereal_period: None,
             accretion_disc: None,
             galactic_mass_profile: false,
+            mineable_resources: vec![],
+            atmospheric_resources: vec![ResourceType::GasGiantAtmosphere],
+            habitability_score: 0,
         });
 
         let sun_index = bodies.iter().position(|b| b.name == "Sun").expect("Sun not found");

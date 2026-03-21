@@ -1,4 +1,5 @@
 use crate::bodies::SolarSystem;
+use crate::colony::{ColonyManager, Company, ScienceState, TechTree};
 use crate::editor::EditorState;
 use crate::parts::{BlueprintRegistry, FlightVessel, PartDefinitions};
 use crate::render::ManeuverNode;
@@ -388,6 +389,11 @@ pub struct Game {
     pub has_launch_save: bool,
     /// Title screen UI state
     pub title_screen: TitleScreenUiState,
+    // Colony system state
+    pub colony_manager: ColonyManager,
+    pub company: Company,
+    pub science: ScienceState,
+    pub tech_tree: TechTree,
 }
 
 impl Game {
@@ -415,6 +421,13 @@ impl Game {
         // Create editor state
         let editor = EditorState::new();
 
+        // Load tech tree
+        let tech_tree = TechTree::load("data/tech/tree.ron")
+            .unwrap_or_else(|e| {
+                log::error!("Failed to load tech tree: {}", e);
+                TechTree::default()
+            });
+
         Self {
             mode: GameMode::TitleScreen,
             paused: false,
@@ -427,6 +440,10 @@ impl Game {
             save_name: None,
             has_launch_save: false,
             title_screen: TitleScreenUiState::default(),
+            colony_manager: ColonyManager::new(),
+            company: Company::default(),
+            science: ScienceState::default(),
+            tech_tree,
         }
     }
 
@@ -449,6 +466,15 @@ impl Game {
         self.save_name = Some(name);
         self.mode = GameMode::MainMenu;
         self.paused = false;
+        // Reset colony state
+        self.colony_manager = ColonyManager::new();
+        self.company = Company::default();
+        self.science = ScienceState::default();
+        self.tech_tree = TechTree::load("data/tech/tree.ron")
+            .unwrap_or_else(|e| {
+                log::error!("Failed to load tech tree: {}", e);
+                TechTree::default()
+            });
         log::info!("Started new game: {:?}", self.save_name);
     }
 

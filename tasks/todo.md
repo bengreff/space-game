@@ -125,6 +125,37 @@
 
 ---
 
+# Colony Foundation Data Model (Layer 0)
+
+## Implementation
+- [x] Step 1: `src/colony/mod.rs` + `src/colony/resources.rs` — ResourceType (26 variants), ResourceInventory, Company
+- [x] Step 2: `src/colony/buildings.rs` — BuildingType (22 variants), FactoryRecipe (15 variants), BuildingInstance, Colony, ColonyManager
+- [x] Step 3: `src/colony/tech.rs` — TechNodeData, TechLineData, TechTree, DiscoveryTracker, ScienceState
+- [x] Step 4: `data/tech/tree.ron` — 39 tech nodes, 11 efficiency lines, default unlocked parts
+- [x] Step 5: Extend CelestialBody — mineable_resources, atmospheric_resources, habitability_score for all 21 bodies
+- [x] Step 6: Wire into Game struct — colony_manager, company, science, tech_tree fields
+- [x] Step 7: Extend save system — new fields with #[serde(default)], version check `>` instead of `!=`
+- [x] Step 8: Build verification + spec
+
+## Files Changed
+- `src/colony/mod.rs` — NEW: re-exports
+- `src/colony/resources.rs` — NEW: ResourceType, ResourceInventory, Company
+- `src/colony/buildings.rs` — NEW: BuildingType, FactoryRecipe, BuildingInstance, Colony, ColonyManager
+- `src/colony/tech.rs` — NEW: TechNodeData, TechLineData, TechTree, DiscoveryTracker, ScienceState
+- `data/tech/tree.ron` — NEW: tech tree data file
+- `src/bodies.rs` — 3 new fields on CelestialBody, populated for all 21 bodies
+- `src/game.rs` — 4 new fields, import colony module, init in new()/reset_for_new_game()
+- `src/save.rs` — 5 new SaveGame fields with serde(default), version check relaxed
+- `src/lib.rs` — `pub mod colony;`
+- `openspec/specs/game/colony/foundation/spec.md` — NEW: foundation spec
+
+## Verification
+- [x] `cargo build` — compiles clean, no warnings
+- [ ] Visual test: existing saves load cleanly (colony fields default)
+- [ ] Visual test: new game starts with empty colony state
+
+---
+
 # Porkchop Plot for Lambert Transfer Planner
 
 ## Implementation

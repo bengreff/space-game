@@ -1,3 +1,5 @@
+use crate::colony::ResourceType;
+
 /// Margin from hyperbolic asymptote for trajectory endpoint rendering
 pub const HYPERBOLIC_RENDER_MARGIN: f64 = 0.01;
 
@@ -432,6 +434,9 @@ pub struct BodyInfoData {
     pub orbit_semi_major_axis_m: Option<f64>,
     pub orbit_eccentricity: Option<f64>,
     pub orbit_period_s: Option<f64>,
+    pub mineable_resources: Vec<ResourceType>,
+    pub atmospheric_resources: Vec<ResourceType>,
+    pub habitability_score: u32,
 }
 
 /// A single point in the porkchop plot grid

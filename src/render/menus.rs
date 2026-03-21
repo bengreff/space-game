@@ -405,6 +405,36 @@ impl RenderState {
                                         ui.label(format!("Period: {}", format_duration(period)));
                                     }
                                 }
+
+                                // Colony info
+                                if !info.mineable_resources.is_empty() || !info.atmospheric_resources.is_empty() || info.habitability_score > 0 {
+                                    ui.add_space(4.0);
+                                    ui.separator();
+                                    ui.label(egui::RichText::new("Colony Prospects").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                                    ui.add_space(2.0);
+
+                                    ui.label(format!("Habitability: {}/100", info.habitability_score));
+
+                                    if !info.mineable_resources.is_empty() {
+                                        ui.add_space(4.0);
+                                        ui.label(egui::RichText::new("Mineable Resources")
+                                            .size(12.0)
+                                            .color(egui::Color32::from_rgb(180, 180, 180)));
+                                        for res in &info.mineable_resources {
+                                            ui.label(format!("  {}", res.display_name()));
+                                        }
+                                    }
+
+                                    if !info.atmospheric_resources.is_empty() {
+                                        ui.add_space(4.0);
+                                        ui.label(egui::RichText::new("Atmospheric Resources")
+                                            .size(12.0)
+                                            .color(egui::Color32::from_rgb(180, 180, 180)));
+                                        for res in &info.atmospheric_resources {
+                                            ui.label(format!("  {}", res.display_name()));
+                                        }
+                                    }
+                                }
                             });
                         });
                 }

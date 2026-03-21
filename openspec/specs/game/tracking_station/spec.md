@@ -45,8 +45,12 @@ The tracking station provides a solar system observatory view. It renders all ce
   - "Physical Properties" subheading: radius (auto-scaled units), surface gravity (m/s^2), mass (scientific notation)
   - Atmosphere section: surface pressure (Pa/kPa/atm) and visible height, or "No atmosphere" in gray
   - "Orbit" section (hidden for root body): semi-major axis, eccentricity, orbital period
+  - "Colony Prospects" section (hidden if body has no resources and habitability 0):
+    - Habitability score (X/100)
+    - "Mineable Resources" list (if any) — resource display names, indented
+    - "Atmospheric Resources" list (if any) — resource display names, indented
 - Orbital period computed as `T = 2pi * sqrt(a^3 / mu)` where `mu = G * parent_mass`
-- `BodyInfoData` struct passed from `main.rs`, built from `SolarSystem.bodies`
+- `BodyInfoData` struct passed from `main.rs`, built from `SolarSystem.bodies` and `CelestialBody` colony fields
 
 ### Camera Controls
 - Left-click drag: pan camera (clears body and vessel tracking)
