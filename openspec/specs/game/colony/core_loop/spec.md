@@ -75,7 +75,7 @@ Set by `main.rs` before render, processed after render.
 
 ### Orchestrator: `Game::update_colonies(dt_sim)`
 
-Called from all three frame renderers (flight, main menu, tracking station) inside `if !game.paused`.
+Called from all frame renderers (flight, tracking station, colony, colony overview, management, tech tree) inside `if !game.paused`. R&D science (`game.update_rd_science(dt_sim)`) and contract checking (`game.check_contracts()`) are also called in every frame's simulation block, immediately before `update_colonies`.
 
 Batch ticking: `total_days = dt_sim / 86400`, `num_ticks = ceil(total_days).clamp(1, 1000)`, `days_per_tick = total_days / num_ticks`.
 
@@ -155,38 +155,55 @@ Full-screen colony management as a dedicated `GameMode::Colony`. Uses `ColonyScr
 ### ColonyScreenAction
 ```
 None, QueueBuilding(body_index, BuildingType),
-AddMineAssignment(body_index, ResourceType), RemoveMineAssignment(body_index, ResourceType),
-AddCollectorAssignment(body_index, ResourceType), RemoveCollectorAssignment(body_index, ResourceType),
-AddFactoryAssignment(body_index, FactoryRecipe), RemoveFactoryAssignment(body_index, FactoryRecipe),
+AddMineAssignment(body_index, ResourceType, count), RemoveMineAssignment(body_index, ResourceType, count),
+AddCollectorAssignment(body_index, ResourceType, count), RemoveCollectorAssignment(body_index, ResourceType, count),
+AddFactoryAssignment(body_index, FactoryRecipe, count), RemoveFactoryAssignment(body_index, FactoryRecipe, count),
 ReturnToFlight, GoToTrackingStation, GoToMainMenu, ChangeWarp(idx), SwitchColony(body_index),
 DebugAddResource(body_index, ResourceType, kg), DebugAddBuilding(body_index, BuildingType),
 DebugAddCrew(body_index, count)
 ```
 
-Add/Remove assignment actions find the first unassigned/assigned building of the appropriate type and toggle its assignment. DebugAddResource routes Food to `colony.food_stored` instead of resource inventory. DebugAddCrew caps at `crew_capacity()`.
+Add/Remove assignment actions carry a `u32` count parameter specifying how many buildings to assign/unassign in one action (see Batch Assignment below). DebugAddResource routes Food to `colony.food_stored` instead of resource inventory. DebugAddCrew caps at `crew_capacity()`.
 
 ### render_colony_screen()
 Full-screen egui layout called from `RenderState::render_colony()`. Accepts `solar_power_factor: f64` parameter for power display calculations.
 
+#### Layout Architecture
+
+Card-based UI with centralized color constants and extracted helper functions:
+
+- **Color constants**: `COLOR_GREEN`, `COLOR_RED`, `COLOR_YELLOW`, `COLOR_ORANGE`, `COLOR_DEG_YELLOW`, `COLOR_GRAY`, `CARD_BG`
+- **UI helpers**: `card_frame()` (dark card with rounded corners), `section_heading()` (14pt white strong), `status_indicator()` (label + value vertical pair)
+- **Pre-computed data**: `ResourceRates` struct with production/consumption HashMaps, computed once by `compute_resource_rates()` before UI layout
+- **Typography**: 14pt section headings, 12pt body labels, 11pt grid/table content
+
+Panels:
 - **Top panel**: Colony name heading, colony selector ComboBox (when multiple colonies), time warp buttons, date
-- **Central panel**: ScrollArea with sections: Overview, Power, Buildings, Maintenance, Construction, Resources, Debug
+- **Central panel**: ScrollArea with card-framed sections
 - **Pause overlay**: "Return to Flight" (if came from flight), "Tracking Station", "Main Menu"
 
-#### Overview
-- Colony name, location, crew count with capacity ("Crew: X / Y")
-- Crew death indicator (if crisis active)
-- Food with capacity ("Food: X / Y (Z days)")
-- Storage utilization
+#### Card Sections
 
-#### Power section
-Production breakdown by building type: e.g. "Small Solar Farm (3x): 30.0 MW" (solar scaled by `solar_power_factor` and degradation, reactors by degradation).
+Each section rendered by a dedicated helper function, wrapped in `card_frame()` (fill `CARD_BG`, 12px inner margin, 6px rounding, 4px vertical outer margin).
 
-Demand breakdown by building type and factory recipe: e.g. "Habitat (2x): 20.0 kW", "Factory — Metal Smelting (2x): 300.0 kW".
+**1. Overview card** — `render_overview_card()`
+- Colony name (14pt strong heading), location (12pt gray)
+- 2-column grid: Crew, Food (with days and capacity), Storage
+- Crisis alert at bottom (red strong, only if `crew_at_crisis_start` is Some)
 
-Allocation summary: habitat power %, building power %, net surplus/deficit with color coding.
+**2. Power card** — `render_power_card()`
+- Net power summary at top (green/red, 12pt strong)
+- Allocation warnings inline: Habitat % | Buildings %
+- Combined production + demand striped grid (3 cols: Source, Count, Output/Draw) with green production and orange demand, separator row between sections
 
-#### Buildings
-Buildings grouped by type with `"Name (Nx)"` format. No inline degradation display.
+**3. Buildings card** — `render_buildings_card()`
+- Batch size selector (11pt selectable labels: 10/100/1000/All)
+- Building counts grid (excluding mines/factories/collectors)
+- Mines sub-section with 13pt strong sub-heading, +/- buttons per resource
+- Atmospheric Collectors sub-section (same pattern)
+- Factories sub-section with recipe tooltips
+
+**Batch Assignment**: Options: `10 | 100 | 1000 | All`. Default is 10. `All` (stored as 0) assigns/unassigns all available. Persists via `egui::Id("colony_batch_size")` in `ctx.data_temp`. Effective count is `min(batch_size, available)` (or all when batch_size == 0).
 
 **Mines** use +/- buttons grouped by resource:
 ```
@@ -195,37 +212,34 @@ Mines (5x):
   Water: 1      [−] [+]
   Unassigned: 1
 ```
-Only shows mineable resources from `body_mineable`. [+] shows tooltip "Produces 2,000 kg/day". [−] only if count > 0. [+] only if unassigned mines exist.
+Only shows mineable resources from `body_mineable`. [+] tooltip "Produces 2,000 kg/day".
 
-**Atmospheric Collectors** use +/- buttons grouped by resource (same pattern as mines):
-```
-Atmospheric Collectors (2x):
-  Atmospheric CO₂: 1  [−] [+]
-  Unassigned: 1
-```
-Only shows atmospheric resources from `body_atmospheric`. [+] shows tooltip "Produces 10,000 kg/day".
+**Atmospheric Collectors** same pattern. [+] tooltip "Produces 10,000 kg/day".
 
-**Factories** use +/- buttons grouped by recipe:
-```
-Factories (4x):
-  Metal Smelting: 2  [−] [+]
-  Electrolysis: 1    [−] [+]
-  Unassigned: 1
-```
-Shows all recipes (count > 0 or unassigned > 0). [+] tooltip shows recipe details (inputs → outputs, batch time, power).
+**Factories** same pattern. [+] tooltip shows recipe details (inputs → outputs, batch time, power).
 
-#### Maintenance
-Resource consumption table (per 30 days, in stock, days left). Robot capacity display. Degraded buildings shown in yellow: "Name — X% degraded" / "Name (Nx) — X% degraded".
+**4. Construction card** — `render_construction_card()`
+- Progress bars (green fill) per queue item
+- "Queue:" ComboBox for adding buildings with tech gating (`tech_tree.is_building_available(bt)`)
 
-#### Resources
-Grid with columns: Resource, Amount, Production, Consumption. Food row included (from `colony.food_stored`). Production rates in green, consumption rates in orange.
+**5. Maintenance card** — `render_maintenance_card()`
+- Striped grid (4 cols: Resource, Per 30d, In stock, Days left) with colored days
+- Total maintenance, robot capacity summary
+- Degraded buildings in yellow (`COLOR_DEG_YELLOW`)
+
+**6. Resources card** — `render_resources_card()`
+- Full-width card (`ui.set_min_width(ui.available_width())`)
+- Striped grid (5 cols: Resource, Amount, Production, Consumption, Days left)
+- Food row from `colony.food_stored`, production green, consumption orange
+- Days left = `amount / (consumption - production)` when net negative; green infinity when net positive; blank when no rates
+- Days left colored: red < 10d, yellow < 30d, white otherwise
+- Uses pre-computed `ResourceRates`
 
 Rate sources:
 - **Production**: mines (2,000 kg/day × power_fraction × (1−degradation)), atmospheric collectors (10,000 kg/day × power_fraction × (1−degradation)), factory outputs, greenhouse food
-- **Consumption**: maintenance costs (per 30d / 30), factory inputs, food (0.5 kg/crew/day)
+- **Consumption**: maintenance costs (per 30d / 30), factory inputs, reactor fuel, food (0.5 kg/crew/day)
 
-#### Debug section
-Collapsing header (closed by default):
+**7. Debug section** — `CollapsingHeader` (no card frame, closed by default)
 - **Add Resource**: ComboBox (all ResourceType including Food) + DragValue + "Add" button
 - **Add Building**: ComboBox + "Add" button → instantly adds operational building
 - **Add Crew**: DragValue + "Add" button (capped at crew_capacity)
@@ -241,10 +255,11 @@ Uses egui `data_temp` for persistent ComboBox/DragValue state.
 ### Entry Points
 - **Flight HUD**: "Open Colony" button (replaces old popup toggle) when landed on a body with a colony. Sets `open_colony_request` on RenderState. `main.rs` calls `game.enter_colony(bi, GameMode::Flight)`.
 - **Tracking Station**: "Colonies" section in sidebar listing all colonies with "Open" buttons. `TrackingStationAction::OpenColony(body_index)`. `main.rs` calls `game.enter_colony(bi, GameMode::TrackingStation)`.
+- **Colony Overview**: "Open" buttons per colony. `ColonyOverviewAction::OpenColony(body_index)`. `main.rs` calls `game.enter_colony(bi, GameMode::ColonyOverview)`.
 
 ### Navigation Flow
 - `Game::enter_colony(body_index, from_mode)` — stores view state, sets `GameMode::Colony`
-- `Game::leave_colony()` — returns to `colony_return_mode` (Flight or TrackingStation)
+- `Game::leave_colony()` — returns to `colony_return_mode` (Flight, TrackingStation, or ColonyOverview)
 - Pause menu in colony screen: can go to tracking station, main menu, or return to flight
 
 ### Request Processing (main.rs)
