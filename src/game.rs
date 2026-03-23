@@ -1,5 +1,5 @@
 use crate::bodies::SolarSystem;
-use crate::colony::{ColonyManager, Company, ScienceState, TechTree};
+use crate::colony::{ColonyManager, Company, Notification, ScienceState, TechTree};
 use crate::editor::EditorState;
 use crate::parts::{BlueprintRegistry, FlightVessel, PartDefinitions};
 use crate::render::ManeuverNode;
@@ -19,6 +19,7 @@ pub enum GameMode {
     Editor,
     Flight,
     TrackingStation,
+    Colony,
 }
 
 /// UI state for the title screen dialogs
@@ -27,6 +28,8 @@ pub struct TitleScreenUiState {
     pub show_new_game: bool,
     pub show_load_game: bool,
     pub new_game_name: String,
+    /// Cached save file list, populated once when load dialog opens.
+    pub save_list: Vec<crate::save::SaveFileInfo>,
 }
 
 /// Unique identifier for a vessel (active or inactive)
@@ -394,6 +397,12 @@ pub struct Game {
     pub company: Company,
     pub science: ScienceState,
     pub tech_tree: TechTree,
+    /// Colony notifications (persisted in saves)
+    pub notifications: Vec<Notification>,
+    /// Body index of the colony currently being viewed in Colony mode
+    pub colony_view_body_index: Option<usize>,
+    /// Which mode to return to when leaving Colony mode
+    pub colony_return_mode: Option<GameMode>,
 }
 
 impl Game {
@@ -444,6 +453,9 @@ impl Game {
             company: Company::default(),
             science: ScienceState::default(),
             tech_tree,
+            notifications: Vec::new(),
+            colony_view_body_index: None,
+            colony_return_mode: None,
         }
     }
 
@@ -470,6 +482,9 @@ impl Game {
         self.colony_manager = ColonyManager::new();
         self.company = Company::default();
         self.science = ScienceState::default();
+        self.notifications = Vec::new();
+        self.colony_view_body_index = None;
+        self.colony_return_mode = None;
         self.tech_tree = TechTree::load("data/tech/tree.ron")
             .unwrap_or_else(|e| {
                 log::error!("Failed to load tech tree: {}", e);
@@ -511,6 +526,24 @@ impl Game {
         self.mode = GameMode::TrackingStation;
         self.paused = false;
         log::info!("Entered tracking station");
+    }
+
+    /// Switch to colony management screen
+    pub fn enter_colony(&mut self, body_index: usize, from_mode: GameMode) {
+        self.colony_view_body_index = Some(body_index);
+        self.colony_return_mode = Some(from_mode);
+        self.mode = GameMode::Colony;
+        self.paused = false;
+        log::info!("Entered colony screen for body {}", body_index);
+    }
+
+    /// Leave colony management screen, returning to the previous mode
+    pub fn leave_colony(&mut self) {
+        let return_mode = self.colony_return_mode.take().unwrap_or(GameMode::TrackingStation);
+        self.colony_view_body_index = None;
+        self.mode = return_mode;
+        self.paused = false;
+        log::info!("Left colony screen, returning to {:?}", return_mode);
     }
 
     /// Get current time warp multiplier
@@ -687,6 +720,137 @@ impl Game {
         if self.paused {
             self.warp_index = 0;
         }
+    }
+
+    /// Establish a colony on the given body using cargo container contents.
+    pub fn establish_colony(&mut self, body_index: usize) -> Result<(), String> {
+        use crate::colony::{BuildingInstance, BuildingType, Colony, ResourceType};
+        use crate::colony::notification::{Notification, NotificationKind};
+        use crate::ship::ShipState;
+
+        // Validate: ship must be landed on the target body
+        match self.flight.ship.state {
+            ShipState::Landed { body_index: landed_bi, .. } if landed_bi == body_index => {}
+            _ => return Err("Ship is not landed on this body".to_string()),
+        }
+
+        // Check no existing colony
+        if self.colony_manager.has_colony(body_index) {
+            return Err("A colony already exists on this body".to_string());
+        }
+
+        // Check not Earth
+        if body_index == self.solar_system.earth_index {
+            return Err("Cannot establish a colony on Earth".to_string());
+        }
+
+        // Check not a gas giant
+        if self.solar_system.bodies[body_index].is_gas_giant {
+            return Err("Cannot establish a surface colony on a gas giant".to_string());
+        }
+
+        // Check vessel has minimum colony buildings in cargo
+        let vessel = self.flight.vessel.as_mut()
+            .ok_or("No vessel available")?;
+        if !vessel.has_colony_buildings() {
+            return Err("Cargo must contain at least a Habitat and Small Solar Farm".to_string());
+        }
+
+        // Get crew capacity
+        let crew = vessel.total_crew_capacity(&self.part_definitions);
+
+        // Extract all cargo from containers (empties them, doesn't destroy parts)
+        let (building_names, resources, food_kg) = vessel.extract_all_cargo(&self.part_definitions);
+
+        // Create colony
+        let body_name = self.solar_system.bodies[body_index].name.clone();
+        let mut colony = Colony::new(body_index, format!("{} Colony", body_name));
+
+        // Add buildings from cargo as operational
+        for name in &building_names {
+            if let Some(bt) = BuildingType::from_display_name(name) {
+                colony.buildings.push(BuildingInstance::new(bt));
+            }
+        }
+
+        // Add a stockpile if none was included
+        if !building_names.iter().any(|n| n == "Stockpile") {
+            colony.buildings.push(BuildingInstance::new(BuildingType::Stockpile));
+        }
+
+        // Transfer resources from cargo to colony
+        for (name, amount) in &resources {
+            if let Some(rt) = ResourceType::from_display_name(name) {
+                colony.resources.add(rt, *amount);
+            }
+        }
+
+        // Set food and crew
+        colony.food_stored = food_kg;
+        // Pre-stock food from Habitats (1,000 kg each)
+        let habitat_count = colony.buildings.iter()
+            .filter(|b| b.building_type == BuildingType::Habitat).count();
+        colony.food_stored += habitat_count as f64 * 1_000.0;
+        colony.crew = crew;
+
+        self.colony_manager.add_colony(colony);
+
+        // Push notification
+        let colony_name = format!("{} Colony", body_name);
+        self.notifications.push(Notification {
+            kind: NotificationKind::ColonyEstablished { colony_name },
+            time: self.solar_system.time,
+            read: false,
+        });
+
+        log::info!("Colony established on {} with {} crew, {} buildings from cargo",
+            body_name, crew, building_names.len());
+        Ok(())
+    }
+
+    /// Update all colonies for the given simulation time step.
+    pub fn update_colonies(&mut self, dt_sim: f64) {
+        if dt_sim <= 0.0 {
+            return;
+        }
+
+        let total_days = dt_sim / 86400.0;
+        let num_ticks = (total_days.ceil() as usize).clamp(1, 1000);
+        let days_per_tick = total_days / num_ticks as f64;
+
+        let mut notifications = Vec::new();
+        let sim_time = self.solar_system.time;
+
+        // Track previous lab science for delta computation
+        let prev_lab_science: Vec<f64> = self.colony_manager.colonies.iter()
+            .map(|c| c.lab_science_extracted)
+            .collect();
+
+        for _ in 0..num_ticks {
+            for colony in &mut self.colony_manager.colonies {
+                crate::colony::simulation::simulate_colony_tick(
+                    colony,
+                    days_per_tick,
+                    &self.solar_system,
+                    &mut notifications,
+                    sim_time,
+                    &self.tech_tree,
+                );
+            }
+        }
+
+        // Compute science deltas and add to available science
+        for (i, colony) in self.colony_manager.colonies.iter().enumerate() {
+            if i < prev_lab_science.len() {
+                let delta = colony.lab_science_extracted - prev_lab_science[i];
+                if delta > 0.0 {
+                    self.science.available += delta;
+                    self.science.cumulative_lab += delta;
+                }
+            }
+        }
+
+        self.notifications.extend(notifications);
     }
 }
 

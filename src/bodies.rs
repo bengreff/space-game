@@ -63,6 +63,7 @@ pub struct CelestialBody {
     pub mineable_resources: Vec<ResourceType>,
     pub atmospheric_resources: Vec<ResourceType>,
     pub habitability_score: u32,
+    pub is_gas_giant: bool,
 }
 
 impl CelestialBody {
@@ -98,6 +99,24 @@ impl CelestialBody {
         const C_SQ: f64 = 2.998e8 * 2.998e8;
         let r_s = 2.0 * G * self.mass / C_SQ;
         r_s / self.radius > 0.01
+    }
+
+    /// Science value for landing on this body. Used by colony science labs.
+    pub fn landing_science_value(&self) -> f64 {
+        match self.name.as_str() {
+            "Moon" => 10.0,
+            "Mars" => 50.0,
+            "Mercury" => 30.0,
+            "Venus" => 40.0,
+            "Phobos" | "Deimos" => 20.0,
+            "Io" => 35.0,
+            "Europa" => 60.0,
+            "Ganymede" => 45.0,
+            "Callisto" => 40.0,
+            "Titan" => 70.0,
+            "Rhea" | "Dione" | "Iapetus" => 25.0,
+            _ => 5.0,
+        }
     }
 
     /// Surface rotational velocity at a given distance from body center (m/s)
@@ -388,6 +407,7 @@ impl SolarSystem {
             mineable_resources: vec![],
             atmospheric_resources: vec![],
             habitability_score: 0,
+            is_gas_giant: false,
         });
 
         // === SUN (index 1) ===
@@ -417,6 +437,7 @@ impl SolarSystem {
             mineable_resources: vec![],
             atmospheric_resources: vec![],
             habitability_score: 0,
+            is_gas_giant: false,
         });
 
         // === MERCURY (index 2) ===
@@ -443,6 +464,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::MetalOre, ResourceType::Regolith, ResourceType::RareEarthElements, ResourceType::UraniumOre],
             atmospheric_resources: vec![],
             habitability_score: 8,
+            is_gas_giant: false,
         });
 
         // === VENUS (index 3) ===
@@ -473,6 +495,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::MetalOre],
             atmospheric_resources: vec![ResourceType::AtmosphericCo2],
             habitability_score: 3,
+            is_gas_giant: false,
         });
 
         // === EARTH (index 4) ===
@@ -504,6 +527,7 @@ impl SolarSystem {
             mineable_resources: vec![],
             atmospheric_resources: vec![],
             habitability_score: 100,
+            is_gas_giant: false,
         });
 
         // === MOON (index 5) ===
@@ -530,6 +554,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::MetalOre, ResourceType::Regolith, ResourceType::Water, ResourceType::RareEarthElements, ResourceType::UraniumOre],
             atmospheric_resources: vec![],
             habitability_score: 15,
+            is_gas_giant: false,
         });
 
         // === MARS (index 6) ===
@@ -561,6 +586,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::MetalOre, ResourceType::Water, ResourceType::LithiumOre, ResourceType::RareEarthElements, ResourceType::UraniumOre],
             atmospheric_resources: vec![ResourceType::AtmosphericCo2],
             habitability_score: 30,
+            is_gas_giant: false,
         });
 
         // === PHOBOS (index 7) ===
@@ -587,6 +613,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::Regolith, ResourceType::Water],
             atmospheric_resources: vec![],
             habitability_score: 12,
+            is_gas_giant: false,
         });
 
         // === DEIMOS (index 8) ===
@@ -613,6 +640,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::Regolith, ResourceType::Water],
             atmospheric_resources: vec![],
             habitability_score: 12,
+            is_gas_giant: false,
         });
 
         // === JUPITER (index 9) ===
@@ -644,6 +672,7 @@ impl SolarSystem {
             mineable_resources: vec![],
             atmospheric_resources: vec![ResourceType::GasGiantAtmosphere],
             habitability_score: 0,
+            is_gas_giant: true,
         });
 
         // === IO (index 10) ===
@@ -670,6 +699,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::MetalOre, ResourceType::Regolith, ResourceType::UraniumOre],
             atmospheric_resources: vec![],
             habitability_score: 2,
+            is_gas_giant: false,
         });
 
         // === EUROPA (index 11) ===
@@ -696,6 +726,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::Water],
             atmospheric_resources: vec![],
             habitability_score: 5,
+            is_gas_giant: false,
         });
 
         // === GANYMEDE (index 12) ===
@@ -722,6 +753,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::MetalOre, ResourceType::Regolith, ResourceType::Water, ResourceType::UraniumOre],
             atmospheric_resources: vec![],
             habitability_score: 10,
+            is_gas_giant: false,
         });
 
         // === CALLISTO (index 13) ===
@@ -748,6 +780,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::Regolith, ResourceType::Water],
             atmospheric_resources: vec![],
             habitability_score: 15,
+            is_gas_giant: false,
         });
 
         // === SATURN (index 14) ===
@@ -779,6 +812,7 @@ impl SolarSystem {
             mineable_resources: vec![],
             atmospheric_resources: vec![ResourceType::GasGiantAtmosphere],
             habitability_score: 0,
+            is_gas_giant: true,
         });
 
         // === TITAN (index 15) ===
@@ -809,6 +843,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::Water, ResourceType::Hydrocarbons],
             atmospheric_resources: vec![],
             habitability_score: 25,
+            is_gas_giant: false,
         });
 
         // === RHEA (index 16) ===
@@ -835,6 +870,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::Regolith, ResourceType::Water],
             atmospheric_resources: vec![],
             habitability_score: 10,
+            is_gas_giant: false,
         });
 
         // === IAPETUS (index 17) ===
@@ -861,6 +897,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::Regolith, ResourceType::Water],
             atmospheric_resources: vec![],
             habitability_score: 8,
+            is_gas_giant: false,
         });
 
         // === DIONE (index 18) ===
@@ -887,6 +924,7 @@ impl SolarSystem {
             mineable_resources: vec![ResourceType::Regolith, ResourceType::Water],
             atmospheric_resources: vec![],
             habitability_score: 10,
+            is_gas_giant: false,
         });
 
         // === URANUS (index 19) ===
@@ -917,6 +955,7 @@ impl SolarSystem {
             mineable_resources: vec![],
             atmospheric_resources: vec![ResourceType::GasGiantAtmosphere],
             habitability_score: 0,
+            is_gas_giant: true,
         });
 
         // === NEPTUNE (index 20) ===
@@ -947,6 +986,7 @@ impl SolarSystem {
             mineable_resources: vec![],
             atmospheric_resources: vec![ResourceType::GasGiantAtmosphere],
             habitability_score: 0,
+            is_gas_giant: true,
         });
 
         let sun_index = bodies.iter().position(|b| b.name == "Sun").expect("Sun not found");

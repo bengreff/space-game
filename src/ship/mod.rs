@@ -40,6 +40,7 @@ pub struct VesselPhysicsData {
     pub moment_of_inertia: f64,
     pub rcs_torque: f64,       // kN·m from RCS thrusters
     pub gimbal_torque: f64,    // kN·m from gimbaled engines (signed: + = CCW)
+    pub max_gimbal_torque: f64, // kN·m max possible at full deflection (always positive)
     pub vessel_half_width: f64, // meters (half-width for cross-section)
     pub rcs_translation_force: f64, // kN total from all RCS thrusters for translation
     pub parachute_drag_width: f64, // meters, total deployed parachute width
@@ -580,6 +581,15 @@ impl Ship {
             self.cached_orbit = Some(ship_orbit);
             self.on_rails = true;
             self.rotational_velocity = 0.0;
+        }
+    }
+
+    /// Ensure this ship is on-rails with a valid cached orbit.
+    /// Handles the case where on_rails is true but cached_orbit is None
+    /// (after deserialization, since cached_orbit is serde-skipped).
+    pub fn ensure_on_rails(&mut self, solar_system: &SolarSystem) {
+        if !self.on_rails || self.cached_orbit.is_none() {
+            self.enter_rails_mode(solar_system);
         }
     }
 
@@ -1263,9 +1273,10 @@ impl Ship {
         let rw_accel = vessel
             .map(|v| if v.moment_of_inertia > 0.0 { v.rcs_torque / v.moment_of_inertia } else { ROTATION_ACCEL })
             .unwrap_or(ROTATION_ACCEL);
-        // Gimbal torque is applied at 0.5x in update_flying, so use that for stopping distance
+        // Use max gimbal torque (full deflection) so autopilot can bootstrap from neutral gimbal.
+        // Applied at 0.5x in update_flying, so match that here.
         let gimbal_accel = vessel
-            .map(|v| if v.moment_of_inertia > 0.0 { v.gimbal_torque.abs() * 0.5 / v.moment_of_inertia } else { 0.0 })
+            .map(|v| if v.moment_of_inertia > 0.0 { v.max_gimbal_torque * 0.5 / v.moment_of_inertia } else { 0.0 })
             .unwrap_or(0.0);
         let total_accel = rw_accel + gimbal_accel;
         let threshold = 0.002;
@@ -1311,10 +1322,9 @@ impl Ship {
         let rw_accel = vessel
             .map(|v| if v.moment_of_inertia > 0.0 { v.rcs_torque / v.moment_of_inertia } else { ROTATION_ACCEL })
             .unwrap_or(ROTATION_ACCEL);
-        // Include gimbal torque in total available acceleration for braking calculations
-        // Gimbal is applied at 0.5x in update_flying, so match that here
+        // Use max gimbal torque for braking calculations (matches autopilot_desired_direction)
         let gimbal_accel = vessel
-            .map(|v| if v.moment_of_inertia > 0.0 { v.gimbal_torque.abs() * 0.5 / v.moment_of_inertia } else { 0.0 })
+            .map(|v| if v.moment_of_inertia > 0.0 { v.max_gimbal_torque * 0.5 / v.moment_of_inertia } else { 0.0 })
             .unwrap_or(0.0);
         let total_accel = rw_accel + gimbal_accel;
         let threshold = 0.002; // ~0.1 degrees

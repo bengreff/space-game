@@ -1,65 +1,74 @@
-// Cargo Containers — store food and supplies for long-duration missions
+// Cargo Container Part Definitions
+// General-purpose cargo containers: store food, resources, and pre-assembled colony buildings by mass.
+//
+// Capacity uses same grid_area formula as fuel tanks: w^1.5 * h / sqrt(5)
+// Cargo density: 1,500 kg per grid_area unit (~2.3x kerolox, dense packed metal equipment)
 
 (
     parts: [
-        // Tiny Cargo Container
         (
-            id: "cargo_tiny",
+            id: "cargo_container_tiny",
             name: "Tiny Cargo Container",
-            description: "A minimal cargo pod for 50 kg of supplies. Good for small probes needing extra food reserves.",
-            category: Utility,
-            mass: 0.02,
-            cost: 50,
+            description: "A small cargo pod for carrying supplies, resources, or pre-assembled colony buildings.",
+            category: Cargo,
+            mass: 0.05,
+            cost: 500,
             size: Tiny,
             shape: Rectangle,
             grid_width: 1.0,
             grid_height: 2.0,
-            resources: {"food": 50.0},
+            cargo: Some((
+                capacity_kg: 1342.0,
+            )),
+            resources: {},
         ),
-
-        // Small Cargo Container
         (
-            id: "cargo_small",
+            id: "cargo_container_small",
             name: "Small Cargo Container",
-            description: "A small cargo module holding 500 kg of food. Enough to extend a small crew's mission by months.",
-            category: Utility,
-            mass: 0.15,
-            cost: 200,
+            description: "A cargo container for carrying supplies, resources, or pre-assembled colony buildings.",
+            category: Cargo,
+            mass: 0.3,
+            cost: 2000,
             size: Small,
             shape: Rectangle,
             grid_width: 3.0,
             grid_height: 3.0,
-            resources: {"food": 500.0},
+            cargo: Some((
+                capacity_kg: 10455.0,
+            )),
+            resources: {},
         ),
-
-        // Medium Cargo Container
         (
-            id: "cargo_medium",
+            id: "cargo_container_medium",
             name: "Medium Cargo Container",
-            description: "A medium cargo module with 2000 kg of food storage. Suitable for interplanetary transfers.",
-            category: Utility,
-            mass: 0.5,
-            cost: 600,
+            description: "A large cargo container capable of carrying a starter colony kit (Habitat + Solar Farm).",
+            category: Cargo,
+            mass: 1.0,
+            cost: 8000,
             size: Medium,
             shape: Rectangle,
             grid_width: 5.0,
             grid_height: 4.0,
-            resources: {"food": 2000.0},
+            cargo: Some((
+                capacity_kg: 30000.0,
+            )),
+            resources: {},
         ),
-
-        // Large Cargo Container
         (
-            id: "cargo_large",
+            id: "cargo_container_large",
             name: "Large Cargo Container",
-            description: "A massive cargo hold storing 8000 kg of food. Designed for colony ships and long expeditions.",
-            category: Utility,
-            mass: 1.5,
-            cost: 1500,
+            description: "A massive cargo container for heavy freight and large-scale colony supply missions.",
+            category: Cargo,
+            mass: 3.0,
+            cost: 25000,
             size: Large,
             shape: Rectangle,
             grid_width: 9.0,
             grid_height: 5.0,
-            resources: {"food": 8000.0},
+            cargo: Some((
+                capacity_kg: 90561.0,
+            )),
+            resources: {},
         ),
     ],
 )

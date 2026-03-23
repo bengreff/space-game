@@ -1,4 +1,5 @@
 mod camera;
+mod colony_ui;
 mod editor_render;
 mod flight;
 mod formatting;
@@ -15,6 +16,7 @@ mod types;
 pub use camera::{Camera, CameraUniform};
 pub use geometry::{create_circle, create_ring, create_ship_triangle};
 pub use state::RenderState;
+pub use colony_ui::ColonyScreenAction;
 pub use types::{
     BodyData, BodyInfoData, MainMenuAction, ManeuverDeltaV, ManeuverNode, OrbitRenderData,
     OrbitSegmentData, PauseAction, PorkchopGrid, PorkchopPoint, RcsNozzleState, SelectedTarget,

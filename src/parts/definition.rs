@@ -64,6 +64,7 @@ pub enum PartCategory {
     Utility,
     Electricity,
     Interstellar,
+    Cargo,
 }
 
 impl PartCategory {
@@ -77,6 +78,7 @@ impl PartCategory {
             PartCategory::Utility => "Utility",
             PartCategory::Electricity => "Electricity",
             PartCategory::Interstellar => "Interstellar",
+            PartCategory::Cargo => "Cargo",
         }
     }
 
@@ -90,6 +92,7 @@ impl PartCategory {
             PartCategory::Utility,
             PartCategory::Electricity,
             PartCategory::Interstellar,
+            PartCategory::Cargo,
         ]
     }
 }
@@ -389,6 +392,12 @@ pub struct RcsData {
     pub torque_multiplier: Option<f64>,
 }
 
+/// Cargo container data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CargoData {
+    pub capacity_kg: f64,
+}
+
 /// A part definition loaded from RON files
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartDefinition {
@@ -430,6 +439,8 @@ pub struct PartDefinition {
     pub decoupler: Option<DecouplerData>,
     #[serde(default)]
     pub rcs: Option<RcsData>,
+    #[serde(default)]
+    pub cargo: Option<CargoData>,
     #[serde(default)]
     pub fairing: Option<FairingData>,
     #[serde(default)]

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::colony::{ColonyManager, Company, ScienceState};
+use crate::colony::{ColonyManager, Company, Notification, ScienceState};
 use crate::game::{Game, VesselId, TrackedVessel};
 use crate::parts::{FlightVessel, VesselBlueprint};
 use crate::render::ManeuverNode;
@@ -44,6 +44,11 @@ pub struct SaveGame {
     pub tech_unlocked: HashSet<String>,
     #[serde(default)]
     pub tech_line_tiers: HashMap<String, u32>,
+    #[serde(default)]
+    pub notifications: Vec<Notification>,
+    /// Editor blueprint at time of save (used by "Revert to Editor")
+    #[serde(default)]
+    pub editor_blueprint: Option<VesselBlueprint>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -58,6 +63,7 @@ pub struct SavedVessel {
 }
 
 /// Metadata about a save file (for the load game UI)
+#[derive(Debug, Clone)]
 pub struct SaveFileInfo {
     pub name: String,
     pub save_id: String,
@@ -129,6 +135,8 @@ impl SaveGame {
             science: game.science.clone(),
             tech_unlocked: game.tech_tree.unlocked.clone(),
             tech_line_tiers: game.tech_tree.line_tiers.clone(),
+            notifications: game.notifications.clone(),
+            editor_blueprint: game.editor.to_blueprint(&game.part_definitions).ok(),
         }
     }
 
@@ -479,6 +487,7 @@ impl SaveGame {
         game.company = self.company;
         game.science = self.science;
         game.tech_tree.apply_save_state(self.tech_unlocked, self.tech_line_tiers);
+        game.notifications = self.notifications;
     }
 }
 

@@ -69,6 +69,41 @@ impl ResourceType {
         }
     }
 
+    /// All resource types.
+    pub fn all() -> &'static [ResourceType] {
+        &[
+            Self::MetalOre, Self::Regolith, Self::Water, Self::LithiumOre,
+            Self::Hydrocarbons, Self::AtmosphericCo2, Self::GasGiantAtmosphere,
+            Self::RareEarthElements, Self::UraniumOre,
+            Self::StructuralMetal, Self::HighTempAlloys, Self::Electronics,
+            Self::Superconductors, Self::PrecisionInstruments,
+            Self::Rp1, Self::Methane, Self::LiquidHydrogen, Self::Lox,
+            Self::Xenon, Self::Deuterium, Self::Tritium, Self::EnrichedUranium,
+            Self::NuclearPulseUnits, Self::Helium3, Self::Antimatter,
+            Self::Food,
+        ]
+    }
+
+    /// Returns true for resources that are fully refined ship fuels
+    /// (loaded into fuel tanks, not cargo containers).
+    pub fn is_ship_fuel(&self) -> bool {
+        matches!(
+            self,
+            Self::Rp1
+                | Self::Methane
+                | Self::LiquidHydrogen
+                | Self::Lox
+                | Self::Xenon
+                | Self::Helium3
+                | Self::Antimatter
+        )
+    }
+
+    /// Look up a ResourceType by its display name.
+    pub fn from_display_name(name: &str) -> Option<ResourceType> {
+        Self::all().iter().find(|rt| rt.display_name() == name).copied()
+    }
+
     /// Earth purchase price in $/kg. None if the resource cannot be purchased on Earth.
     pub fn earth_price(&self) -> Option<f64> {
         match self {

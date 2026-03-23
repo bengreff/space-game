@@ -268,6 +268,12 @@ fn main() {
                                         &mut render_state,
                                     );
                                 }
+                                GameMode::Colony => {
+                                    render_colony_frame(
+                                        &mut game,
+                                        &mut render_state,
+                                    );
+                                }
                             }
 
                             // Auto-save check
@@ -285,7 +291,7 @@ fn main() {
 
                         WindowEvent::MouseInput { state, button, .. } => {
                             match game.mode {
-                                GameMode::TitleScreen | GameMode::MainMenu => {
+                                GameMode::TitleScreen | GameMode::MainMenu | GameMode::Colony => {
                                     // egui-only handling (buttons in menu)
                                 }
                                 GameMode::Flight => {
@@ -327,7 +333,7 @@ fn main() {
                             let y = position.y as f32;
 
                             match game.mode {
-                                GameMode::TitleScreen | GameMode::MainMenu => {
+                                GameMode::TitleScreen | GameMode::MainMenu | GameMode::Colony => {
                                     render_state.camera.last_mouse_pos = [x, y];
                                 }
                                 GameMode::Flight => {
@@ -364,7 +370,7 @@ fn main() {
                                 let zoom_factor = 1.0 + scroll_amount * 0.1;
 
                                 match game.mode {
-                                    GameMode::Flight | GameMode::TrackingStation => {
+                                    GameMode::Flight | GameMode::TrackingStation | GameMode::Colony => {
                                         render_state.camera.zoom_by(zoom_factor);
                                     }
                                     GameMode::TitleScreen | GameMode::MainMenu => {
@@ -409,7 +415,7 @@ fn main() {
                                 }
                             } else if !game.paused {
                                 match game.mode {
-                                    GameMode::TitleScreen | GameMode::MainMenu | GameMode::TrackingStation => {
+                                    GameMode::TitleScreen | GameMode::MainMenu | GameMode::TrackingStation | GameMode::Colony => {
                                         // No keyboard shortcuts in these modes
                                     }
                                     GameMode::Flight => {
@@ -548,6 +554,7 @@ fn render_flight_frame(
             moment_of_inertia: v.moment_of_inertia,
             rcs_torque: if rcs_enabled { v.compute_rcs_torque(&game.part_definitions) } else { 0.0 },
             gimbal_torque: v.compute_gimbal_torque(),
+            max_gimbal_torque: v.compute_max_gimbal_torque(),
             vessel_half_width: v.bounding_half_width(),
             rcs_translation_force: if rcs_enabled { v.compute_rcs_translation_force(&game.part_definitions) } else { 0.0 },
             parachute_drag_width: v.parachute_drag_width(),
@@ -782,9 +789,7 @@ fn render_flight_frame(
         // Propagate inactive vessels on rails
         let dt_sim = dt * time_warp;
         for vessel in &mut game.flight.inactive_vessels {
-            if !vessel.ship.on_rails {
-                vessel.ship.enter_rails_mode(&game.solar_system);
-            }
+            vessel.ship.ensure_on_rails(&game.solar_system);
             vessel.ship.update_on_rails(dt_sim, &game.solar_system);
         }
         // Delete vessels that entered atmosphere, hit surface, or whose orbit dips into atmosphere
@@ -812,6 +817,9 @@ fn render_flight_frame(
 
         // Delete debris vessels that are far from all controllable vessels
         game.flight.cleanup_distant_debris();
+
+        // Update colony simulation
+        game.update_colonies(dt_sim);
 
         // Collision detection: active vs inactive vessels during physics warp (1x-10x)
         // Uses oriented bounding box (OBB) collision via Separating Axis Theorem
@@ -883,6 +891,7 @@ fn render_flight_frame(
             moment_of_inertia: v.moment_of_inertia,
             rcs_torque: if rcs_enabled { v.compute_rcs_torque(&game.part_definitions) } else { 0.0 },
             gimbal_torque: v.compute_gimbal_torque(),
+            max_gimbal_torque: v.compute_max_gimbal_torque(),
             vessel_half_width: v.bounding_half_width(),
             rcs_translation_force: if rcs_enabled { v.compute_rcs_translation_force(&game.part_definitions) } else { 0.0 },
             parachute_drag_width: v.parachute_drag_width(),
@@ -911,6 +920,7 @@ fn render_flight_frame(
                     moment_of_inertia: v.moment_of_inertia,
                     rcs_torque: v.compute_rcs_torque(&game.part_definitions),
                     gimbal_torque: v.compute_gimbal_torque(),
+            max_gimbal_torque: v.compute_max_gimbal_torque(),
                     vessel_half_width: v.bounding_half_width(),
                     rcs_translation_force: v.compute_rcs_translation_force(&game.part_definitions),
                     parachute_drag_width: v.parachute_drag_width(),
@@ -2258,6 +2268,26 @@ fn render_flight_frame(
         _ => false,
     };
 
+    // Set colony-related render state
+    render_state.can_establish_colony = match game.flight.ship.state {
+        ShipState::Landed { body_index, .. } => {
+            render_state.landed_body_index = Some(body_index);
+            !game.colony_manager.has_colony(body_index)
+                && body_index != game.solar_system.earth_index
+                && !game.solar_system.bodies[body_index].is_gas_giant
+                && game.flight.vessel.as_ref().map_or(false, |v| v.has_colony_buildings())
+        }
+        _ => {
+            render_state.landed_body_index = None;
+            false
+        }
+    };
+    render_state.has_colonies = !game.colony_manager.colonies.is_empty();
+    render_state.vessel_has_cargo = game.flight.vessel.as_ref()
+        .map_or(false, |v| v.has_cargo(&game.part_definitions));
+    render_state.landed_body_has_colony = render_state.landed_body_index
+        .map_or(false, |bi| game.colony_manager.has_colony(bi));
+
     let pre_render_warp_index = game.warp_index;
     match render_state.render(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, can_exit_flight, can_recover, game.has_launch_save, cached_quicksaves) {
         Ok((new_warp_index, pause_action)) => {
@@ -2316,6 +2346,23 @@ fn render_flight_frame(
                                 log::info!("Reverted to launch");
                             }
                             Err(e) => log::error!("Failed to revert to launch: {}", e),
+                        }
+                    }
+                }
+                PauseAction::RevertToEditor => {
+                    if let Some(ref name) = game.save_name {
+                        match SaveGame::load_launch_save(name) {
+                            Ok(save) => {
+                                let blueprint = save.editor_blueprint.clone();
+                                save.restore_to_game(game);
+                                render_state.maneuver_nodes.clear();
+                                if let Some(bp) = blueprint {
+                                    game.editor.load_blueprint(&bp, &game.part_definitions);
+                                }
+                                game.enter_editor();
+                                log::info!("Reverted to editor");
+                            }
+                            Err(e) => log::error!("Failed to revert to editor: {}", e),
                         }
                     }
                 }
@@ -2487,12 +2534,100 @@ fn render_flight_frame(
         }
     }
 
+    // Process debug teleport to landed on body
+    if let Some(body_idx) = render_state.debug_teleport_body.take() {
+        let body = &game.solar_system.bodies[body_idx];
+        let surface_angle = std::f64::consts::FRAC_PI_2; // Top of body
+        let surface_distance = body.radius + 10.0; // 10m above surface
+        let spawn_position = [
+            surface_distance * surface_angle.cos(),
+            surface_distance * surface_angle.sin(),
+        ];
+
+        // Move ship into the target body's SOI
+        game.flight.ship.soi_body = body_idx;
+        game.flight.ship.rel_position = spawn_position;
+        game.flight.ship.rel_velocity = [0.0, 0.0];
+        game.flight.ship.rotation = surface_angle;
+        game.flight.ship.rotational_velocity = 0.0;
+        game.flight.ship.on_rails = false;
+        game.flight.ship.state = ShipState::Landed {
+            body_index: body_idx,
+            surface_angle,
+        };
+
+        if let Some(ref mut vessel) = game.flight.vessel {
+            vessel.rel_position = spawn_position;
+            vessel.rel_velocity = [0.0, 0.0];
+            vessel.rotation = surface_angle;
+        }
+        log::info!("Debug: teleported to landed on {}", body.name);
+    }
+
     // Process staging reorder request from flight staging panel
     if let Some(new_stages) = render_state.staging_reorder.take() {
         if let Some(ref mut vessel) = game.flight.vessel {
             vessel.stages = new_stages;
         }
     }
+
+    // Handle colony establishment request
+    if let Some(body_index) = render_state.establish_colony_request.take() {
+        match game.establish_colony(body_index) {
+            Ok(()) => {
+                render_state.has_colonies = true;
+                render_state.can_establish_colony = false;
+            }
+            Err(e) => log::error!("Failed to establish colony: {}", e),
+        }
+    }
+
+    // Handle cargo transfer to colony
+    if let Some(body_index) = render_state.transfer_cargo_request.take() {
+        if let Some(vessel) = game.flight.vessel.as_mut() {
+            let (building_names, resources, food_kg) = vessel.extract_all_cargo(&game.part_definitions);
+            if let Some(colony) = game.colony_manager.get_by_body_mut(body_index) {
+                // Add buildings
+                for name in &building_names {
+                    if let Some(bt) = sunscatter::colony::BuildingType::from_display_name(name) {
+                        colony.buildings.push(sunscatter::colony::BuildingInstance::new(bt));
+                    }
+                }
+                // Add resources
+                for (name, amount) in &resources {
+                    if let Some(rt) = sunscatter::colony::ResourceType::from_display_name(name) {
+                        colony.resources.add(rt, *amount);
+                    }
+                }
+                // Add food
+                colony.food_stored += food_kg;
+                log::info!("Transferred cargo to colony: {} buildings, {} resource types, {:.0} kg food",
+                    building_names.len(), resources.len(), food_kg);
+            } else {
+                log::error!("No colony on body {} to transfer cargo to", body_index);
+            }
+        }
+    }
+
+    // Handle open colony request from flight UI
+    if let Some(body_index) = render_state.open_colony_request.take() {
+        game.enter_colony(body_index, GameMode::Flight);
+    }
+
+    // Process notifications — warp-stopping notifications and toasts
+    for notif in &mut game.notifications {
+        if !notif.read && notif.kind.stops_warp() {
+            game.warp_index = 0;
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        } else if !notif.read {
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        }
+    }
+
+    // Expire old toasts (>5 seconds)
+    render_state.active_toasts.retain(|(_, t)| t.elapsed().as_secs_f32() < 5.0);
 
     // Per-part thermal destruction and vessel splitting
     let debris_list = if let Some(ref mut vessel) = game.flight.vessel {
@@ -2699,7 +2834,7 @@ fn render_editor_frame(
         }
         PauseAction::Resume | PauseAction::None | PauseAction::RecoverVessel
         | PauseAction::Quicksave | PauseAction::LoadQuicksave(_)
-        | PauseAction::RevertToLaunch => {}
+        | PauseAction::RevertToLaunch | PauseAction::RevertToEditor => {}
     }
 
     // Process any pending part deletions
@@ -2976,11 +3111,7 @@ fn render_title_screen_frame(
     let mut show_new_game = game.title_screen.show_new_game;
     let mut show_load_game = game.title_screen.show_load_game;
     let mut new_game_name = game.title_screen.new_game_name.clone();
-    let save_list = if show_load_game {
-        SaveGame::list_saves()
-    } else {
-        Vec::new()
-    };
+    let save_list = &game.title_screen.save_list;
 
     match render_state.render_title_screen(|ctx| {
         let mut action = TitleScreenAction::None;
@@ -3054,7 +3185,7 @@ fn render_title_screen_frame(
                                     ui.label(egui::RichText::new("No saves found").color(egui::Color32::GRAY));
                                 } else {
                                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                                        for save in &save_list {
+                                        for save in save_list {
                                             let label = format!(
                                                 "{} — {} vessels — {}",
                                                 save.name,
@@ -3131,6 +3262,13 @@ fn render_title_screen_frame(
 
             // Sync title_screen UI state back
             game.title_screen.show_new_game = show_new_game;
+            // Populate save list once when load dialog opens
+            if show_load_game && !game.title_screen.show_load_game {
+                game.title_screen.save_list = SaveGame::list_saves();
+            }
+            if !show_load_game {
+                game.title_screen.save_list.clear();
+            }
             game.title_screen.show_load_game = show_load_game;
             game.title_screen.new_game_name = new_game_name;
         }
@@ -3153,9 +3291,7 @@ fn render_main_menu_frame(
         // Propagate all vessels on rails (no active vessel while not in flight)
         let dt_sim = dt * time_warp;
         for vessel in &mut game.flight.inactive_vessels {
-            if !vessel.ship.on_rails {
-                vessel.ship.enter_rails_mode(&game.solar_system);
-            }
+            vessel.ship.ensure_on_rails(&game.solar_system);
             vessel.ship.update_on_rails(dt_sim, &game.solar_system);
         }
         game.flight.inactive_vessels.retain(|v| {
@@ -3163,6 +3299,9 @@ fn render_main_menu_frame(
                 || v.ship.below_landing_altitude(&game.solar_system);
             !(v.ship.periapsis_below_surface(&game.solar_system) && in_landing_zone)
         });
+
+        // Update colony simulation
+        game.update_colonies(dt_sim);
     }
 
     // Camera follows the Sun AFTER the simulation update so positions match
@@ -3256,6 +3395,19 @@ fn render_main_menu_frame(
         Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
         Err(e) => eprintln!("Main menu render error: {:?}", e),
     }
+
+    // Process colony notifications
+    for notif in &mut game.notifications {
+        if !notif.read && notif.kind.stops_warp() {
+            game.warp_index = 0;
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        } else if !notif.read {
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        }
+    }
+    render_state.active_toasts.retain(|(_, t)| t.elapsed().as_secs_f32() < 5.0);
 }
 
 /// Render a tracking station frame
@@ -3271,9 +3423,7 @@ fn render_tracking_station_frame(
         // Propagate all vessels on rails (no active vessel while not in flight)
         let dt_sim = dt * time_warp;
         for vessel in &mut game.flight.inactive_vessels {
-            if !vessel.ship.on_rails {
-                vessel.ship.enter_rails_mode(&game.solar_system);
-            }
+            vessel.ship.ensure_on_rails(&game.solar_system);
             vessel.ship.update_on_rails(dt_sim, &game.solar_system);
         }
         game.flight.inactive_vessels.retain(|v| {
@@ -3281,7 +3431,13 @@ fn render_tracking_station_frame(
                 || v.ship.below_landing_altitude(&game.solar_system);
             !(v.ship.periapsis_below_surface(&game.solar_system) && in_landing_zone)
         });
+
+        // Update colony simulation
+        game.update_colonies(dt_sim);
     }
+
+    // Set colony state for tracking station UI
+    render_state.has_colonies = !game.colony_manager.colonies.is_empty();
 
     let scaled_positions = compute_scaled_positions(game);
     let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
@@ -3320,7 +3476,6 @@ fn render_tracking_station_frame(
 
     let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
     let date_str = sunscatter::game::format_date(game.time());
-    let active_id = game.flight.active_vessel_id;
 
     // Build body info data for the info panel
     let body_info: Vec<BodyInfoData> = game.solar_system.bodies.iter().map(|body| {
@@ -3348,7 +3503,7 @@ fn render_tracking_station_frame(
         }
     }).collect();
 
-    match render_state.render_tracking_station(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, &tracking_vessels, active_id, &body_info) {
+    match render_state.render_tracking_station(&body_names, WARP_LEVELS, game.warp_index, game.paused, &date_str, &tracking_vessels, &body_info, &game.colony_manager) {
         Ok((new_warp_index, pause_action, ts_action)) => {
             game.warp_index = new_warp_index;
             match pause_action {
@@ -3357,7 +3512,7 @@ fn render_tracking_station_frame(
                 }
                 PauseAction::Resume | PauseAction::None | PauseAction::RecoverVessel
                 | PauseAction::Quicksave | PauseAction::LoadQuicksave(_)
-                | PauseAction::RevertToLaunch => {}
+                | PauseAction::RevertToLaunch | PauseAction::RevertToEditor => {}
             }
             // Handle tracking station actions
             match ts_action {
@@ -3395,6 +3550,12 @@ fn render_tracking_station_frame(
                         render_state.focus_on_body(game.solar_system.earth_index);
                     }
                 }
+                sunscatter::render::TrackingStationAction::FocusBody(bi) => {
+                    render_state.focus_on_body(bi);
+                }
+                sunscatter::render::TrackingStationAction::OpenColony(bi) => {
+                    game.enter_colony(bi, GameMode::TrackingStation);
+                }
                 sunscatter::render::TrackingStationAction::None => {}
             }
         }
@@ -3402,6 +3563,226 @@ fn render_tracking_station_frame(
         Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
         Err(e) => eprintln!("Tracking station render error: {:?}", e),
     }
+
+    // Process notifications
+    for notif in &mut game.notifications {
+        if !notif.read && notif.kind.stops_warp() {
+            game.warp_index = 0;
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        } else if !notif.read {
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        }
+    }
+    render_state.active_toasts.retain(|(_, t)| t.elapsed().as_secs_f32() < 5.0);
+}
+
+/// Render colony management screen
+fn render_colony_frame(
+    game: &mut Game,
+    render_state: &mut RenderState,
+) {
+    if !game.paused {
+        let dt = 1.0 / 60.0;
+        let time_warp = WARP_LEVELS[game.warp_index];
+        game.solar_system.update(dt * time_warp);
+
+        // Propagate all vessels on rails
+        let dt_sim = dt * time_warp;
+        for vessel in &mut game.flight.inactive_vessels {
+            vessel.ship.ensure_on_rails(&game.solar_system);
+            vessel.ship.update_on_rails(dt_sim, &game.solar_system);
+        }
+
+        // Update colony simulation
+        game.update_colonies(dt_sim);
+    }
+
+    // Camera: focus on colony body
+    let body_index = game.colony_view_body_index.unwrap_or(game.solar_system.earth_index);
+    let scaled_positions = compute_scaled_positions(game);
+    let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
+
+    // Track the colony body
+    render_state.tracked_body = Some(body_index);
+    render_state.update_tracking(&scaled_positions, SCALE);
+
+    let bodies = build_body_data(game, &scaled_positions, in_galaxy_view);
+    let orbits = build_orbit_data(game, &scaled_positions, render_state);
+    let accretion_discs = build_accretion_disc_data(game);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view);
+
+    let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
+    let date_str = sunscatter::game::format_date(game.time());
+
+    // Build colony data
+    let colony_body_hab: Vec<u32> = game.solar_system.bodies.iter().map(|b| b.habitability_score).collect();
+    let colony_body_mineable: Vec<Vec<sunscatter::colony::ResourceType>> = game.solar_system.bodies.iter().map(|b| b.mineable_resources.clone()).collect();
+    let colony_body_atmospheric: Vec<Vec<sunscatter::colony::ResourceType>> = game.solar_system.bodies.iter().map(|b| b.atmospheric_resources.clone()).collect();
+
+    // Check if we can return to flight (only if we came from flight)
+    let can_return_to_flight = game.colony_return_mode == Some(GameMode::Flight);
+
+    // Compute solar power factor for this body: (AU / sun_distance)^2
+    let au: f64 = 1.496e11;
+    let sun_dist = sunscatter::colony::simulation::sun_distance(body_index, &game.solar_system);
+    let solar_power_factor = (au / sun_dist).powi(2);
+
+    match render_state.render_colony(
+        &body_names,
+        WARP_LEVELS,
+        game.warp_index,
+        game.paused,
+        &date_str,
+        body_index,
+        &game.colony_manager,
+        &colony_body_hab,
+        &colony_body_mineable,
+        &colony_body_atmospheric,
+        can_return_to_flight,
+        solar_power_factor,
+    ) {
+        Ok((new_warp_index, action)) => {
+            game.warp_index = new_warp_index;
+            match action {
+                sunscatter::render::ColonyScreenAction::QueueBuilding(bi, bt) => {
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        let hab_score = game.solar_system.bodies[bi].habitability_score;
+                        if let Err(e) = colony.queue_building(bt, hab_score) {
+                            log::error!("Failed to queue building: {}", e);
+                        }
+                    }
+                }
+                sunscatter::render::ColonyScreenAction::AddMineAssignment(bi, resource) => {
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        // Find first unassigned mine and assign it
+                        if let Some(building) = colony.buildings.iter_mut().find(|b| {
+                            b.building_type == sunscatter::colony::BuildingType::Mine
+                                && b.assigned_resource.is_none()
+                        }) {
+                            building.assigned_resource = Some(resource);
+                        }
+                    }
+                }
+                sunscatter::render::ColonyScreenAction::RemoveMineAssignment(bi, resource) => {
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        // Find first mine assigned to this resource and unassign it
+                        if let Some(building) = colony.buildings.iter_mut().find(|b| {
+                            b.building_type == sunscatter::colony::BuildingType::Mine
+                                && b.assigned_resource == Some(resource)
+                        }) {
+                            building.assigned_resource = None;
+                        }
+                    }
+                }
+                sunscatter::render::ColonyScreenAction::AddCollectorAssignment(bi, resource) => {
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        if let Some(building) = colony.buildings.iter_mut().find(|b| {
+                            b.building_type == sunscatter::colony::BuildingType::AtmosphericCollector
+                                && b.assigned_resource.is_none()
+                        }) {
+                            building.assigned_resource = Some(resource);
+                        }
+                    }
+                }
+                sunscatter::render::ColonyScreenAction::RemoveCollectorAssignment(bi, resource) => {
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        if let Some(building) = colony.buildings.iter_mut().find(|b| {
+                            b.building_type == sunscatter::colony::BuildingType::AtmosphericCollector
+                                && b.assigned_resource == Some(resource)
+                        }) {
+                            building.assigned_resource = None;
+                        }
+                    }
+                }
+                sunscatter::render::ColonyScreenAction::AddFactoryAssignment(bi, recipe) => {
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        // Find first unassigned factory and assign it
+                        if let Some(building) = colony.buildings.iter_mut().find(|b| {
+                            b.building_type == sunscatter::colony::BuildingType::Factory
+                                && b.assigned_recipe.is_none()
+                        }) {
+                            building.assigned_recipe = Some(recipe);
+                        }
+                    }
+                }
+                sunscatter::render::ColonyScreenAction::RemoveFactoryAssignment(bi, recipe) => {
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        // Find first factory assigned to this recipe and unassign it
+                        if let Some(building) = colony.buildings.iter_mut().find(|b| {
+                            b.building_type == sunscatter::colony::BuildingType::Factory
+                                && b.assigned_recipe == Some(recipe)
+                        }) {
+                            building.assigned_recipe = None;
+                        }
+                    }
+                }
+                sunscatter::render::ColonyScreenAction::ReturnToFlight => {
+                    game.leave_colony();
+                }
+                sunscatter::render::ColonyScreenAction::GoToTrackingStation => {
+                    game.colony_view_body_index = None;
+                    game.colony_return_mode = None;
+                    game.enter_tracking_station();
+                }
+                sunscatter::render::ColonyScreenAction::GoToMainMenu => {
+                    game.colony_view_body_index = None;
+                    game.colony_return_mode = None;
+                    game.enter_main_menu();
+                }
+                sunscatter::render::ColonyScreenAction::ChangeWarp(idx) => {
+                    game.warp_index = idx;
+                }
+                sunscatter::render::ColonyScreenAction::SwitchColony(bi) => {
+                    game.colony_view_body_index = Some(bi);
+                    render_state.tracked_body = Some(bi);
+                }
+                sunscatter::render::ColonyScreenAction::DebugAddResource(bi, res, amount) => {
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        // Route Food to food_stored instead of resource inventory
+                        if res == sunscatter::colony::ResourceType::Food {
+                            colony.food_stored += amount;
+                        } else {
+                            colony.resources.add(res, amount);
+                        }
+                    }
+                }
+                sunscatter::render::ColonyScreenAction::DebugAddBuilding(bi, bt) => {
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        colony.buildings.push(sunscatter::colony::BuildingInstance::new(bt));
+                    }
+                }
+                sunscatter::render::ColonyScreenAction::DebugAddCrew(bi, count) => {
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        let cap = colony.crew_capacity();
+                        if cap > 0 {
+                            colony.crew = (colony.crew + count).min(cap);
+                        } else {
+                            colony.crew += count;
+                        }
+                    }
+                }
+                sunscatter::render::ColonyScreenAction::None => {}
+            }
+        }
+        Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
+        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(e) => eprintln!("Colony render error: {:?}", e),
+    }
+
+    // Process notifications
+    for notif in &mut game.notifications {
+        if !notif.read && notif.kind.stops_warp() {
+            game.warp_index = 0;
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        } else if !notif.read {
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        }
+    }
+    render_state.active_toasts.retain(|(_, t)| t.elapsed().as_secs_f32() < 5.0);
 }
 
 /// Handle flight mode mouse input
@@ -3945,13 +4326,13 @@ fn handle_tracking_station_cursor_moved(
     egui_consumed: bool,
 ) {
     if render_state.camera.is_dragging && !egui_consumed {
-        let dx = x - render_state.camera.last_mouse_pos[0];
-        let dy = y - render_state.camera.last_mouse_pos[1];
-        let scale = 2.0 / render_state.size.height as f32;
-        render_state.camera.pan(dx * scale, dy * scale);
-        // Panning breaks body and vessel tracking
-        render_state.tracked_body = None;
-        render_state.tracked_vessel = None;
+        // Only pan if not tracking anything; tracking holds camera on the object
+        if render_state.tracked_body.is_none() && render_state.tracked_vessel.is_none() {
+            let dx = x - render_state.camera.last_mouse_pos[0];
+            let dy = y - render_state.camera.last_mouse_pos[1];
+            let scale = 2.0 / render_state.size.height as f32;
+            render_state.camera.pan(dx * scale, dy * scale);
+        }
     }
 
     render_state.camera.last_mouse_pos = [x, y];

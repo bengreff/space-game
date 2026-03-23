@@ -145,12 +145,24 @@ pub struct RenderState {
     pub debug_menu_open: bool,
     pub debug_infinite_fuel: bool,
     pub debug_teleport_leo: bool,  // Request flag, consumed by main.rs
+    pub debug_teleport_body: Option<usize>,  // Request: teleport ship to landed on body
     // Body textures
     pub body_texture_bind_group: wgpu::BindGroup,
     pub body_texture_map: BodyTextureMap,
     // Sprite atlas
     pub sprite_atlas: super::sprites::SpriteAtlas,
     pub plume_start_time: std::time::Instant,
+    // Colony UI state
+    pub can_establish_colony: bool,
+    pub has_colonies: bool,
+    pub landed_body_index: Option<usize>,
+    pub establish_colony_request: Option<usize>,
+    pub transfer_cargo_request: Option<usize>,  // body_index to transfer cargo to
+    pub vessel_has_cargo: bool,  // Whether the vessel has non-empty cargo containers
+    pub landed_body_has_colony: bool,  // Whether the body we're landed on has a colony
+    pub open_colony_request: Option<usize>,  // body_index to open colony screen for
+    // Toast notifications
+    pub active_toasts: Vec<(String, std::time::Instant)>,
     // Egui state
     pub egui_ctx: egui::Context,
     pub egui_state: egui_winit::State,
@@ -521,6 +533,16 @@ impl RenderState {
             debug_menu_open: false,
             debug_infinite_fuel: false,
             debug_teleport_leo: false,
+            debug_teleport_body: None,
+            can_establish_colony: false,
+            has_colonies: false,
+            landed_body_index: None,
+            establish_colony_request: None,
+            transfer_cargo_request: None,
+            vessel_has_cargo: false,
+            landed_body_has_colony: false,
+            open_colony_request: None,
+            active_toasts: Vec::new(),
             body_texture_bind_group,
             body_texture_map,
             sprite_atlas,

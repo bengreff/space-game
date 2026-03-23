@@ -30,6 +30,39 @@ pub enum BuildingType {
 }
 
 impl BuildingType {
+    /// All building types.
+    pub fn all() -> &'static [BuildingType] {
+        &[
+            Self::Habitat,
+            Self::BasicGreenhouse,
+            Self::AdvancedGreenhouse,
+            Self::SmallSolarFarm,
+            Self::MediumSolarFarm,
+            Self::LargeSolarFarm,
+            Self::FissionReactor,
+            Self::FusionReactor,
+            Self::Mine,
+            Self::AtmosphericCollector,
+            Self::Factory,
+            Self::Launchpad,
+            Self::Railgun,
+            Self::LightConstructionRobot,
+            Self::ConstructionRobot,
+            Self::ScienceLab,
+            Self::Stockpile,
+            Self::FoodStorage,
+            Self::ParticleAcceleratorMk1,
+            Self::ParticleAcceleratorMk2,
+            Self::ParticleAcceleratorMk3,
+            Self::ParticleAcceleratorMk4,
+        ]
+    }
+
+    /// Look up a BuildingType by its display name.
+    pub fn from_display_name(name: &str) -> Option<BuildingType> {
+        Self::all().iter().find(|bt| bt.display_name() == name).copied()
+    }
+
     pub fn display_name(&self) -> &'static str {
         match self {
             Self::Habitat => "Habitat",
@@ -331,9 +364,14 @@ impl BuildingType {
         }
     }
 
-    /// Total build mass in kg (sum of build_cost amounts).
+    /// Total build mass in kg (sum of build_cost amounts + pre-stocked supplies).
+    /// Habitat includes 1,000 kg of pre-stocked food.
     pub fn total_build_mass(&self) -> f64 {
-        self.build_cost().iter().map(|(_, amt)| amt).sum()
+        let material_mass: f64 = self.build_cost().iter().map(|(_, amt)| amt).sum();
+        match self {
+            Self::Habitat => material_mass + 1_000.0,
+            _ => material_mass,
+        }
     }
 
     /// Whether this building's costs/power/maintenance are affected by the habitability multiplier.
@@ -561,6 +599,31 @@ pub struct Colony {
     pub is_orbital_station: bool,
     /// Cumulative science extracted by labs on this body.
     pub lab_science_extracted: f64,
+    /// Cumulative time (years) that labs have been running on this colony.
+    #[serde(default)]
+    pub lab_elapsed_years: f64,
+    /// Whether a food-depleted notification has already been sent (prevents spam).
+    #[serde(default)]
+    pub food_depleted_notified: bool,
+    /// Fraction of habitat power demand that is met (0.0–1.0).
+    #[serde(default = "default_one")]
+    pub habitat_power_fraction: f64,
+    /// Fraction of non-habitat building power demand that is met (0.0–1.0).
+    #[serde(default = "default_one")]
+    pub other_power_fraction: f64,
+    /// Whether a habitat-unpowered notification has been sent (dedup flag).
+    #[serde(default)]
+    pub habitat_unpowered_notified: bool,
+    /// Crew count when a food/power crisis began (for linear death rate).
+    #[serde(default)]
+    pub crew_at_crisis_start: Option<u32>,
+    /// Fractional death accumulator — deaths only applied when this reaches >= 1.0.
+    #[serde(default)]
+    pub crew_death_accumulator: f64,
+}
+
+fn default_one() -> f64 {
+    1.0
 }
 
 impl Colony {
@@ -577,7 +640,72 @@ impl Colony {
             construction_queue: Vec::new(),
             is_orbital_station: false,
             lab_science_extracted: 0.0,
+            lab_elapsed_years: 0.0,
+            food_depleted_notified: false,
+            habitat_power_fraction: 1.0,
+            other_power_fraction: 1.0,
+            habitat_unpowered_notified: false,
+            crew_at_crisis_start: None,
+            crew_death_accumulator: 0.0,
         }
+    }
+
+    /// Check whether the colony can queue a building (has enough resources).
+    pub fn can_queue_building(&self, bt: BuildingType, hab_score: u32) -> bool {
+        let costs = bt.build_cost();
+        let mult = if bt.affected_by_habitability() {
+            crate::colony::simulation::habitability_multiplier(hab_score)
+        } else {
+            1.0
+        };
+        costs.iter().all(|&(res, amount)| {
+            self.resources.get(res) >= amount * mult
+        })
+    }
+
+    /// Queue a building for construction, consuming resources from inventory.
+    pub fn queue_building(&mut self, bt: BuildingType, hab_score: u32) -> Result<(), String> {
+        let costs = bt.build_cost();
+        let mult = if bt.affected_by_habitability() {
+            crate::colony::simulation::habitability_multiplier(hab_score)
+        } else {
+            1.0
+        };
+
+        // Check resources
+        for &(res, amount) in &costs {
+            let needed = amount * mult;
+            if self.resources.get(res) < needed {
+                return Err(format!("Not enough {}", res.display_name()));
+            }
+        }
+
+        // Consume resources
+        let mut reserved = ResourceInventory::new();
+        for &(res, amount) in &costs {
+            let needed = amount * mult;
+            self.resources.remove(res, needed);
+            reserved.add(res, needed);
+        }
+
+        let total_mass = bt.total_build_mass() * mult;
+
+        self.construction_queue.push(ConstructionQueueItem {
+            building_type: bt,
+            reserved_resources: reserved,
+            mass_assembled: 0.0,
+            total_mass,
+        });
+
+        Ok(())
+    }
+
+    /// Days of food remaining at current crew level.
+    pub fn food_days_remaining(&self) -> f64 {
+        if self.crew == 0 {
+            return f64::INFINITY;
+        }
+        self.food_stored / (0.5 * self.crew as f64)
     }
 }
 

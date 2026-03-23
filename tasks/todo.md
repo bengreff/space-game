@@ -156,6 +156,61 @@
 
 ---
 
+# Colony Core Loop (Layer 1)
+
+## Implementation
+- [x] Task 1: Cargo containers & `PartCategory::Cargo` — `data/parts/cargo.ron`, `CargoData`
+- [x] Task 2: Gas Giant Flag — `is_gas_giant` on CelestialBody
+- [x] Task 3: Notification Infrastructure — NotificationKind, Notification, toast rendering
+- [x] Task 4: Colony Establishment via Cargo — establish_colony() extracts buildings/resources from cargo containers
+- [x] Task 5: Colony Simulation Core — simulate_colony_tick() with 8 subsystems, batch ticking
+- [x] Task 6: Construction Queue — queue_building(), can_queue_building(), robot throughput
+- [x] Task 7: Maintenance System — degradation, repair, robot capacity
+- [x] Task 8: Science Lab Simulation — lab_elapsed_years, exact extraction formula
+- [x] Task 9: Colony Management UI — render_colony_panel() free function, colony selector/overview/buildings/construction/resources
+- [x] Task 10: Main Loop Integration — update_colonies in all 3 frame renderers, notification/toast processing
+- [x] Task 11: Save System & Spec Updates — notifications in SaveGame, lab_elapsed_years field, spec
+- [x] Task 12: Camera Tracking Fix — skip panning when tracking body/vessel in tracking station
+- [x] Task 13: Cargo Manifest on Blueprint/PlacedPart — cargo_resources, cargo_buildings fields
+- [x] Task 14: FlightPart Cargo & from_blueprint() — cargo_buildings field, mass calculations include building mass
+- [x] Task 15: Editor Cargo Configuration UI — capacity bar, resource/building lists, add/remove, DragValue amounts
+- [x] Task 16: Cargo Transfer to Colony — "Transfer Cargo" button, extract_all_cargo() to colony
+
+## Files Changed
+- `src/colony/simulation.rs` — simulate_colony_tick, process_maintenance, process_construction, process_science_labs, habitability_multiplier
+- `src/colony/notification.rs` — NotificationKind, Notification
+- `src/colony/buildings.rs` — queue_building, can_queue_building, food_days_remaining, lab_elapsed_years, storage_capacity, all(), from_display_name()
+- `src/colony/mod.rs` — re-exports for simulation, notification
+- `src/render/colony_ui.rs` — NEW: render_colony_panel(), ColonyPanelActions
+- `src/render/flight.rs` — toast rendering, Colony button, Establish Colony button, Transfer Cargo button, colony panel call
+- `src/render/menus.rs` — Colony button in tracking station, colony panel call
+- `src/render/state.rs` — colony UI state fields, active_toasts, transfer_cargo_request, vessel_has_cargo, landed_body_has_colony
+- `src/game.rs` — notifications field, establish_colony() (cargo-based), update_colonies(), reset
+- `src/parts/definition.rs` — CargoData struct, PartCategory::Cargo
+- `src/parts/blueprint.rs` — cargo_resources, cargo_buildings on BlueprintPart and PlacedPart
+- `src/parts/vessel.rs` — cargo_buildings on FlightPart, has_colony_buildings(), extract_all_cargo(), has_cargo(), cargo_building_mass_tonnes()
+- `src/editor/ui.rs` — cargo configuration section in part info panel
+- `src/main.rs` — colony integration in all 3 frame renderers, request handling, camera tracking fix, cargo transfer handling
+- `src/save.rs` — notifications field with serde(default)
+- `src/bodies.rs` — is_gas_giant, landing_science_value()
+- `data/parts/cargo.ron` — cargo container definitions (4 sizes)
+- `openspec/specs/game/colony/core_loop/spec.md` — Layer 1 spec
+
+## Verification
+- [x] `cargo build` — compiles clean, no warnings
+- [ ] Visual test: Cargo containers appear in editor under Cargo category
+- [ ] Visual test: Cargo container info panel shows capacity bar, add resource/building dropdowns
+- [ ] Visual test: Load Habitat + SmallSolarFarm in Medium cargo → shows 24,000/50,000 kg
+- [ ] Visual test: Launch with cargo → cargo persists into flight
+- [ ] Visual test: Land with colony buildings in cargo → "Establish Colony" button visible
+- [ ] Visual test: Establish colony → cargo emptied, colony created with those buildings
+- [ ] Visual test: Land at existing colony with cargo → "Transfer Cargo" → resources appear in colony
+- [ ] Visual test: Camera tracks bodies in tracking station (no panning interrupts tracking)
+- [ ] Visual test: Colony panel shows buildings, resources, construction queue
+- [ ] Visual test: Save/load preserves cargo manifest and colony state
+
+---
+
 # Porkchop Plot for Lambert Transfer Planner
 
 ## Implementation

@@ -106,6 +106,8 @@ impl RenderState {
         let ship_is_landed = self.ship_is_landed;
         let mut staging_reorder_req: Option<Vec<Vec<usize>>> = None;
 
+        let active_toasts = self.active_toasts.clone();
+
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             // Time warp panel at top of screen
@@ -442,6 +444,44 @@ impl RenderState {
                         }
 
                     });
+
+                    // Colony buttons row (only when landed or colonies exist)
+                    let can_transfer = self.ship_is_landed && self.vessel_has_cargo
+                        && self.landed_body_has_colony;
+                    if self.can_establish_colony || self.landed_body_has_colony || can_transfer {
+                        ui.horizontal(|ui| {
+                            if self.can_establish_colony {
+                                let btn = egui::Button::new(
+                                    egui::RichText::new("Establish Colony").size(12.0)
+                                ).fill(egui::Color32::from_rgb(60, 130, 60));
+                                if ui.add(btn).clicked() {
+                                    if let Some(bi) = self.landed_body_index {
+                                        self.establish_colony_request = Some(bi);
+                                    }
+                                }
+                            }
+                            if can_transfer {
+                                let btn = egui::Button::new(
+                                    egui::RichText::new("Transfer Cargo").size(12.0)
+                                ).fill(egui::Color32::from_rgb(60, 100, 180));
+                                if ui.add(btn).clicked() {
+                                    if let Some(bi) = self.landed_body_index {
+                                        self.transfer_cargo_request = Some(bi);
+                                    }
+                                }
+                            }
+                            if self.landed_body_has_colony {
+                                let btn = egui::Button::new(
+                                    egui::RichText::new("Open Colony").size(12.0)
+                                ).fill(egui::Color32::from_rgb(80, 120, 60));
+                                if ui.add(btn).clicked() {
+                                    if let Some(bi) = self.landed_body_index {
+                                        self.open_colony_request = Some(bi);
+                                    }
+                                }
+                            }
+                        });
+                    }
                 });
 
             // Only draw label for hovered body
@@ -1957,6 +1997,23 @@ impl RenderState {
                         if ui.add(egui::Button::new("Set Orbit (LEO)").min_size(egui::vec2(160.0, 24.0))).clicked() {
                             self.debug_teleport_leo = true;
                         }
+
+                        ui.add_space(4.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+
+                        // Teleport to landed on any body
+                        ui.label("Land on body:");
+                        egui::ComboBox::from_id_source("debug_land_body")
+                            .selected_text("Select...")
+                            .width(160.0)
+                            .show_ui(ui, |ui| {
+                                for (i, name) in body_names.iter().enumerate() {
+                                    if ui.selectable_label(false, name).clicked() {
+                                        self.debug_teleport_body = Some(i);
+                                    }
+                                }
+                            });
                     });
             }
 
@@ -2016,6 +2073,13 @@ impl RenderState {
                                             if ui.add(revert_btn).clicked() {
                                                 pause_action = PauseAction::RevertToLaunch;
                                             }
+                                            ui.add_space(8.0);
+                                            let revert_editor_btn = egui::Button::new(
+                                                egui::RichText::new("Revert to Editor").size(18.0)
+                                            ).fill(egui::Color32::from_rgb(180, 120, 40));
+                                            if ui.add(revert_editor_btn).clicked() {
+                                                pause_action = PauseAction::RevertToEditor;
+                                            }
                                         }
                                         if can_recover {
                                             ui.add_space(8.0);
@@ -2042,6 +2106,9 @@ impl RenderState {
                             });
                     });
             }
+
+            // Toast notifications
+            render_toasts(ctx, &active_toasts);
         });
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
@@ -2218,5 +2285,39 @@ impl RenderState {
         output.present();
 
         Ok((new_warp_index, pause_action))
+    }
+}
+
+/// Render toast notifications as fading overlays at the top-center of the screen.
+pub(super) fn render_toasts(ctx: &egui::Context, toasts: &[(String, std::time::Instant)]) {
+    let now = std::time::Instant::now();
+    for (i, (msg, created)) in toasts.iter().enumerate() {
+        let elapsed = now.duration_since(*created).as_secs_f32();
+        if elapsed > 5.0 {
+            continue;
+        }
+        // Fade out over last second
+        let alpha = if elapsed > 4.0 {
+            ((5.0 - elapsed) * 255.0) as u8
+        } else {
+            255
+        };
+        let y_offset = 40.0 + i as f32 * 30.0;
+        egui::Area::new(egui::Id::new("toast").with(i))
+            .anchor(egui::Align2::CENTER_TOP, egui::Vec2::new(0.0, y_offset))
+            .interactable(false)
+            .show(ctx, |ui| {
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgba_unmultiplied(40, 40, 60, alpha))
+                    .inner_margin(egui::Margin::symmetric(12.0, 6.0))
+                    .rounding(egui::Rounding::same(4.0))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(msg)
+                                .color(egui::Color32::from_rgba_unmultiplied(255, 255, 200, alpha))
+                                .size(13.0),
+                        );
+                    });
+            });
     }
 }

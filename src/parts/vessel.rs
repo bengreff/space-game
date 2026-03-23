@@ -104,6 +104,9 @@ pub struct FlightPart {
     pub parachute_deploy_fraction: f64, // 0.0-1.0 animation
     pub parachute_deployed_width_m: f64, // meters (from ParachuteData)
     pub parachute_fully_deployed: bool, // true when altitude <= 2000m (full drag)
+
+    // Cargo container manifest
+    pub cargo_buildings: Vec<String>,  // BuildingType display names loaded in cargo
 }
 
 impl Default for FlightPart {
@@ -152,7 +155,18 @@ impl Default for FlightPart {
             parachute_deploy_fraction: 0.0,
             parachute_deployed_width_m: 0.0,
             parachute_fully_deployed: false,
+            cargo_buildings: Vec::new(),
         }
+    }
+}
+
+impl FlightPart {
+    /// Total mass of cargo buildings in this part, in tonnes.
+    pub fn cargo_building_mass_tonnes(&self) -> f64 {
+        self.cargo_buildings.iter()
+            .filter_map(|name| crate::colony::BuildingType::from_display_name(name))
+            .map(|bt| bt.total_build_mass())
+            .sum::<f64>() * 0.001 // kg -> tonnes
     }
 }
 
@@ -165,6 +179,71 @@ impl FlightVessel {
                 .and_then(|d| d.pod.as_ref())
                 .map_or(false, |pod| pod.can_control)
         })
+    }
+
+    /// Check if vessel cargo contains minimum colony buildings (Habitat + Small Solar Farm).
+    pub fn has_colony_buildings(&self) -> bool {
+        let all_buildings: Vec<&str> = self.parts.iter()
+            .filter(|p| !p.decoupled && !p.destroyed)
+            .flat_map(|p| p.cargo_buildings.iter().map(|s| s.as_str()))
+            .collect();
+        all_buildings.iter().any(|b| *b == "Habitat")
+            && all_buildings.iter().any(|b| *b == "Small Solar Farm")
+    }
+
+    /// Check if any non-decoupled, non-destroyed cargo container has contents.
+    pub fn has_cargo(&self, part_defs: &PartDefinitions) -> bool {
+        self.parts.iter().any(|p| {
+            !p.decoupled && !p.destroyed
+                && part_defs.get(&p.definition_id).and_then(|d| d.cargo.as_ref()).is_some()
+                && (!p.cargo_buildings.is_empty()
+                    || p.resources.values().any(|&v| v > 0.0))
+        })
+    }
+
+    /// Extract all cargo from all containers and return (buildings, resources, food_kg).
+    /// Clears the cargo containers.
+    pub fn extract_all_cargo(&mut self, part_defs: &PartDefinitions)
+        -> (Vec<String>, Vec<(String, f64)>, f64)
+    {
+        let mut buildings = Vec::new();
+        let mut resources = Vec::new();
+        let mut food_kg = 0.0;
+
+        for part in &mut self.parts {
+            if part.decoupled || part.destroyed {
+                continue;
+            }
+            if part_defs.get(&part.definition_id).and_then(|d| d.cargo.as_ref()).is_none() {
+                continue;
+            }
+            // Extract buildings
+            buildings.append(&mut part.cargo_buildings);
+            // Extract resources
+            for (name, amount) in part.resources.drain() {
+                if amount > 0.0 {
+                    if name == "food" {
+                        food_kg += amount;
+                    } else {
+                        resources.push((name, amount));
+                    }
+                }
+            }
+        }
+        self.recalculate_mass(part_defs);
+        (buildings, resources, food_kg)
+    }
+
+    /// Total crew capacity of all active (non-decoupled, non-destroyed) pods.
+    pub fn total_crew_capacity(&self, part_defs: &PartDefinitions) -> u32 {
+        self.parts.iter()
+            .filter(|p| !p.decoupled && !p.destroyed)
+            .filter_map(|p| {
+                part_defs.get(&p.definition_id)
+                    .and_then(|d| d.pod.as_ref())
+                    .map(|pod| pod.crew_capacity)
+            })
+            .sum()
     }
 
     /// Create a flight vessel from a blueprint
@@ -222,9 +301,20 @@ impl FlightVessel {
                 }
             }
 
-            // Calculate part mass including fuel
+            // Load cargo container resources from blueprint
+            if def.cargo.is_some() {
+                for (res_name, amount) in &bp_part.cargo_resources {
+                    resources.insert(res_name.clone(), *amount);
+                }
+            }
+
+            // Calculate part mass including fuel and cargo
+            let cargo_building_mass_kg: f64 = bp_part.cargo_buildings.iter()
+                .filter_map(|name| crate::colony::BuildingType::from_display_name(name))
+                .map(|bt| bt.total_build_mass())
+                .sum();
             let resource_mass_kg: f64 = resources.values().sum();
-            let part_mass = def.mass + resource_mass_kg * 0.001; // kg -> tonnes
+            let part_mass = def.mass + (resource_mass_kg + cargo_building_mass_kg) * 0.001; // kg -> tonnes
             total_mass += part_mass;
 
             // Weight center of mass by part mass
@@ -286,6 +376,7 @@ impl FlightVessel {
                     .map(|p| p.deployed_width * crate::parts::definition::GRID_SQUARE_SIZE)
                     .unwrap_or(0.0),
                 parachute_fully_deployed: false,
+                cargo_buildings: bp_part.cargo_buildings.clone(),
             };
 
             // Set engine data if this is an engine
@@ -350,10 +441,10 @@ impl FlightVessel {
         let mut moment_of_inertia = 0.0;
         for (i, bp_part) in blueprint.parts.iter().enumerate() {
             let def = part_defs.get(&bp_part.definition_id).unwrap();
-            // Use actual part mass (dry + fuel), not def.wet_mass() which lacks loaded fuel
+            // Use actual part mass (dry + fuel + cargo buildings)
             let base_mass = def.mass;
             let resource_mass: f64 = parts[i].resources.values().sum::<f64>() * 0.001;
-            let part_mass = base_mass + resource_mass;
+            let part_mass = base_mass + resource_mass + parts[i].cargo_building_mass_tonnes();
             let r_sq = parts[i].local_position[0].powi(2) + parts[i].local_position[1].powi(2);
             moment_of_inertia += part_mass * r_sq;
 
@@ -405,7 +496,7 @@ impl FlightVessel {
             let def = part_defs.get(&part.definition_id);
             let base_mass = def.map(|d| d.mass).unwrap_or(0.0);
             let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-            let part_mass = base_mass + resource_mass;
+            let part_mass = base_mass + resource_mass + part.cargo_building_mass_tonnes();
 
             self.total_mass += part_mass;
             com[0] += part.local_position[0] * part_mass;
@@ -429,7 +520,11 @@ impl FlightVessel {
             };
             let base_mass = def.mass;
             let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-            let part_mass = base_mass + resource_mass;
+            let building_mass: f64 = part.cargo_buildings.iter()
+                .filter_map(|name| crate::colony::BuildingType::from_display_name(name))
+                .map(|bt| bt.total_build_mass())
+                .sum::<f64>() * 0.001;
+            let part_mass = base_mass + resource_mass + building_mass;
 
             let r_sq = part.local_position[0].powi(2) + part.local_position[1].powi(2);
             moi += part_mass * r_sq;
@@ -472,7 +567,11 @@ impl FlightVessel {
             };
             let base_mass = def.mass;
             let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-            let part_mass = base_mass + resource_mass;
+            let building_mass: f64 = part.cargo_buildings.iter()
+                .filter_map(|name| crate::colony::BuildingType::from_display_name(name))
+                .map(|bt| bt.total_build_mass())
+                .sum::<f64>() * 0.001;
+            let part_mass = base_mass + resource_mass + building_mass;
 
             let r_sq = part.local_position[0].powi(2) + part.local_position[1].powi(2);
             moi += part_mass * r_sq;
@@ -654,6 +753,28 @@ impl FlightVessel {
             let py = part.local_position[1];
             let theta = part.gimbal_angle;
             torque += thrust * (px * (theta.cos() - 1.0) - py * theta.sin());
+        }
+        torque
+    }
+
+    /// Compute maximum possible gimbal torque (kN·m) assuming full deflection.
+    /// Used by autopilot to know rotation capability before gimbal is deflected.
+    pub fn compute_max_gimbal_torque(&self) -> f64 {
+        let mut torque = 0.0;
+        for part in &self.parts {
+            if part.destroyed || part.decoupled || !part.engine_active {
+                continue;
+            }
+            if part.gimbal_range_rad <= 0.0 {
+                continue;
+            }
+            let thrust = part.engine_thrust_vac * self.throttle;
+            if thrust <= 0.0 {
+                continue;
+            }
+            let py = part.local_position[1];
+            // Dominant torque term at full deflection: F * |py| * sin(max_angle)
+            torque += (thrust * py * part.gimbal_range_rad.sin()).abs();
         }
         torque
     }
@@ -2266,7 +2387,7 @@ impl FlightVessel {
                 let base_mass = part_defs.get(&part.definition_id)
                     .map(|d| d.mass).unwrap_or(0.0);
                 let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-                let pm = base_mass + resource_mass;
+                let pm = base_mass + resource_mass + part.cargo_building_mass_tonnes();
                 debris_mass += pm;
                 debris_com[0] += part.local_position[0] * pm;
                 debris_com[1] += part.local_position[1] * pm;
@@ -2295,7 +2416,7 @@ impl FlightVessel {
                 let base_mass = part_defs.get(&part.definition_id)
                     .map(|d| d.mass).unwrap_or(0.0);
                 let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-                let pm = base_mass + resource_mass;
+                let pm = base_mass + resource_mass + part.cargo_building_mass_tonnes();
                 let r_sq = part.local_position[0].powi(2) + part.local_position[1].powi(2);
                 moi += pm * r_sq;
                 let (w, h) = part_defs.get(&part.definition_id)
@@ -2734,7 +2855,7 @@ impl FlightVessel {
             let base_mass = part_defs.get(&part.definition_id)
                 .map(|d| d.mass).unwrap_or(0.0);
             let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-            let pm = base_mass + resource_mass;
+            let pm = base_mass + resource_mass + part.cargo_building_mass_tonnes();
             debris_mass += pm;
             debris_com[0] += part.local_position[0] * pm;
             debris_com[1] += part.local_position[1] * pm;
@@ -2771,7 +2892,7 @@ impl FlightVessel {
             let base_mass = part_defs.get(&part.definition_id)
                 .map(|d| d.mass).unwrap_or(0.0);
             let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-            let pm = base_mass + resource_mass;
+            let pm = base_mass + resource_mass + part.cargo_building_mass_tonnes();
             let r_sq = part.local_position[0].powi(2) + part.local_position[1].powi(2);
             moi += pm * r_sq;
             let (w, h) = part_defs.get(&part.definition_id)
@@ -3091,6 +3212,7 @@ pub fn create_default_vessel(
             parachute_deploy_fraction: 0.0,
             parachute_deployed_width_m: 0.0,
             parachute_fully_deployed: false,
+            cargo_buildings: Vec::new(),
         }],
         root_part_index: 0,
         total_mass: 2.0,

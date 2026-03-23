@@ -404,6 +404,8 @@ pub enum TrackingStationAction {
     FlyVessel(u64), // VesselId
     FocusVessel(u64), // VesselId - focus camera on this vessel
     DeleteVessel(u64), // VesselId - remove vessel from tracking
+    FocusBody(usize), // body_index - focus camera on a body
+    OpenColony(usize), // body_index - open colony management screen
 }
 
 /// Action returned from the main menu UI
@@ -477,6 +479,7 @@ pub enum PauseAction {
     Quicksave,
     LoadQuicksave(String),
     RevertToLaunch,
+    RevertToEditor,
 }
 
 /// Action returned from the title screen UI

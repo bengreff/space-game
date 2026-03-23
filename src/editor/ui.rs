@@ -666,6 +666,13 @@ pub fn render_editor_ui(
                             ui.label(format!("Deployed Width: {:.1} m", width_m));
                         }
 
+                        // Cargo info
+                        if let Some(ref cargo) = def.cargo {
+                            ui.separator();
+                            ui.heading("Cargo");
+                            ui.label(format!("Capacity: {}", format_mass(cargo.capacity_kg)));
+                        }
+
                     }
                 }
                 // Show placed part info when selected
@@ -950,6 +957,161 @@ pub fn render_editor_ui(
                                             mp.crossfeed_enabled = crossfeed;
                                         }
                                     }
+                                }
+                            }
+
+                            // Cargo container configuration
+                            if let Some(ref cargo_data) = def.cargo {
+                                ui.separator();
+                                ui.heading("Cargo");
+
+                                let capacity_kg = cargo_data.capacity_kg;
+
+                                // Calculate used mass
+                                let resource_mass: f64 = part.cargo_resources.iter().map(|(_, kg)| *kg).sum();
+                                let building_mass: f64 = part.cargo_buildings.iter()
+                                    .filter_map(|name| crate::colony::BuildingType::from_display_name(name))
+                                    .map(|bt| bt.total_build_mass())
+                                    .sum();
+                                let used_kg = resource_mass + building_mass;
+                                let remaining_kg = (capacity_kg - used_kg).max(0.0);
+
+                                // Capacity bar
+                                let fraction = (used_kg / capacity_kg).min(1.0);
+                                let bar_color = if fraction > 0.95 {
+                                    egui::Color32::from_rgb(200, 60, 60)
+                                } else {
+                                    egui::Color32::from_rgb(60, 140, 200)
+                                };
+                                let bar = egui::ProgressBar::new(fraction as f32)
+                                    .text(format!("{:.0} / {:.0} kg", used_kg, capacity_kg))
+                                    .fill(bar_color);
+                                ui.add(bar);
+
+                                // Editable resource list with amounts and remove buttons
+                                let cargo_res = part.cargo_resources.clone();
+                                let mut resource_to_remove: Option<usize> = None;
+                                for (idx, (name, kg)) in cargo_res.iter().enumerate() {
+                                    let mut amount = *kg;
+                                    let max_for_this = kg + remaining_kg;
+                                    ui.horizontal(|ui| {
+                                        if ui.small_button("\u{00d7}").clicked() {
+                                            resource_to_remove = Some(idx);
+                                        }
+                                        ui.label(format!("{}:", name));
+                                        let drag = egui::DragValue::new(&mut amount)
+                                            .clamp_range(0.0..=max_for_this)
+                                            .speed(10.0)
+                                            .suffix(" kg");
+                                        if ui.add(drag).changed() {
+                                            if let Some(p) = editor.parts.get_mut(&part_id) {
+                                                if let Some(entry) = p.cargo_resources.get_mut(idx) {
+                                                    entry.1 = amount;
+                                                }
+                                            }
+                                            if let Some(mid) = part.mirror_partner {
+                                                if let Some(mp) = editor.parts.get_mut(&mid) {
+                                                    if let Some(entry) = mp.cargo_resources.get_mut(idx) {
+                                                        entry.1 = amount;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    });
+                                }
+                                if let Some(idx) = resource_to_remove {
+                                    if let Some(p) = editor.parts.get_mut(&part_id) {
+                                        p.cargo_resources.remove(idx);
+                                    }
+                                    if let Some(mid) = part.mirror_partner {
+                                        if let Some(mp) = editor.parts.get_mut(&mid) {
+                                            if idx < mp.cargo_resources.len() {
+                                                mp.cargo_resources.remove(idx);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Buildings list with remove buttons
+                                let mut building_to_remove: Option<usize> = None;
+                                for (idx, name) in part.cargo_buildings.iter().enumerate() {
+                                    let mass = crate::colony::BuildingType::from_display_name(name)
+                                        .map(|bt| bt.total_build_mass())
+                                        .unwrap_or(0.0);
+                                    ui.horizontal(|ui| {
+                                        if ui.small_button("\u{00d7}").clicked() {
+                                            building_to_remove = Some(idx);
+                                        }
+                                        ui.label(format!("{} ({:.0} kg)", name, mass));
+                                    });
+                                }
+                                if let Some(idx) = building_to_remove {
+                                    if let Some(p) = editor.parts.get_mut(&part_id) {
+                                        p.cargo_buildings.remove(idx);
+                                    }
+                                    if let Some(mid) = part.mirror_partner {
+                                        if let Some(mp) = editor.parts.get_mut(&mid) {
+                                            if idx < mp.cargo_buildings.len() {
+                                                mp.cargo_buildings.remove(idx);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Add Resource combo
+                                if remaining_kg > 0.0 {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Add:");
+                                        egui::ComboBox::from_id_source("cargo_add_resource")
+                                            .selected_text("Resource...")
+                                            .width(120.0)
+                                            .show_ui(ui, |ui: &mut egui::Ui| {
+                                                for rt in crate::colony::ResourceType::all() {
+                                                    if rt.is_ship_fuel() {
+                                                        continue;
+                                                    }
+                                                    let name = rt.display_name();
+                                                    let default_amount = remaining_kg.min(1000.0);
+                                                    if ui.selectable_label(false, name).clicked() {
+                                                        if let Some(p) = editor.parts.get_mut(&part_id) {
+                                                            p.cargo_resources.push((name.to_string(), default_amount));
+                                                        }
+                                                        if let Some(mid) = part.mirror_partner {
+                                                            if let Some(mp) = editor.parts.get_mut(&mid) {
+                                                                mp.cargo_resources.push((name.to_string(), default_amount));
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                    });
+
+                                    // Add Building combo
+                                    ui.horizontal(|ui| {
+                                        ui.label("Add:");
+                                        egui::ComboBox::from_id_source("cargo_add_building")
+                                            .selected_text("Building...")
+                                            .width(120.0)
+                                            .show_ui(ui, |ui: &mut egui::Ui| {
+                                                for bt in crate::colony::BuildingType::all() {
+                                                    let name = bt.display_name();
+                                                    let mass = bt.total_build_mass();
+                                                    if mass <= remaining_kg {
+                                                        let label = format!("{} ({:.0} kg)", name, mass);
+                                                        if ui.selectable_label(false, label).clicked() {
+                                                            if let Some(p) = editor.parts.get_mut(&part_id) {
+                                                                p.cargo_buildings.push(name.to_string());
+                                                            }
+                                                            if let Some(mid) = part.mirror_partner {
+                                                                if let Some(mp) = editor.parts.get_mut(&mid) {
+                                                                    mp.cargo_buildings.push(name.to_string());
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                    });
                                 }
                             }
 

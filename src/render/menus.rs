@@ -1,5 +1,6 @@
 use egui_wgpu::ScreenDescriptor;
 
+use super::colony_ui::ColonyScreenAction;
 use super::formatting::{format_duration, format_distance, format_mass, format_pressure};
 use super::types::{
     BodyInfoData, MainMenuAction, PauseAction, TitleScreenAction, TrackingStationAction,
@@ -228,8 +229,8 @@ impl RenderState {
         paused: bool,
         date_str: &str,
         vessels: &[TrackingVesselData],
-        active_vessel_id: u64,
         body_info: &[BodyInfoData],
+        colony_manager: &crate::colony::ColonyManager,
     ) -> Result<(usize, PauseAction, TrackingStationAction), wgpu::SurfaceError> {
         self.update_camera_buffer();
 
@@ -280,73 +281,87 @@ impl RenderState {
                 });
             });
 
-            // Vessels sidebar
-            if !vessels.is_empty() {
+            // Vessels & Colonies sidebar
+            let has_sidebar_content = !vessels.is_empty() || !colony_manager.colonies.is_empty();
+            if has_sidebar_content {
                 egui::SidePanel::left("vessels_panel")
                     .default_width(180.0)
                     .resizable(false)
                     .show(ctx, |ui| {
-                        ui.heading(egui::RichText::new("Vessels").size(16.0).color(egui::Color32::WHITE));
-                        ui.separator();
-
                         egui::ScrollArea::vertical().show(ui, |ui| {
-                            for vessel in vessels {
-                                let is_active = vessel.id == active_vessel_id;
-                                let body_name = body_names.get(vessel.soi_body)
-                                    .cloned()
-                                    .unwrap_or_else(|| "Unknown".to_string());
+                            // Vessels section
+                            if !vessels.is_empty() {
+                                ui.heading(egui::RichText::new("Vessels").size(16.0).color(egui::Color32::WHITE));
+                                ui.separator();
 
-                                ui.horizontal(|ui| {
-                                    // Color indicator
-                                    let color = egui::Color32::from_rgba_unmultiplied(
-                                        (vessel.color[0] * 255.0) as u8,
-                                        (vessel.color[1] * 255.0) as u8,
-                                        (vessel.color[2] * 255.0) as u8,
-                                        255,
-                                    );
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(8.0, 8.0),
-                                        egui::Sense::hover(),
-                                    );
-                                    ui.painter().circle_filled(rect.center(), 4.0, color);
+                                for vessel in vessels {
+                                    let body_name = body_names.get(vessel.soi_body)
+                                        .cloned()
+                                        .unwrap_or_else(|| "Unknown".to_string());
 
-                                    ui.vertical(|ui| {
-                                        let name_text = if is_active {
-                                            egui::RichText::new(&vessel.name)
-                                                .color(egui::Color32::from_rgb(100, 255, 100))
-                                                .size(13.0)
-                                        } else if vessel.is_debris {
-                                            egui::RichText::new(&vessel.name)
-                                                .color(egui::Color32::from_rgb(140, 140, 140))
-                                                .size(13.0)
-                                        } else {
-                                            egui::RichText::new(&vessel.name)
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            let name_text = egui::RichText::new(&vessel.name)
                                                 .color(egui::Color32::WHITE)
-                                                .size(13.0)
-                                        };
-                                        if ui.add(egui::Label::new(name_text).sense(egui::Sense::click())).clicked() {
-                                            ts_action = TrackingStationAction::FocusVessel(vessel.id);
-                                        }
-                                        ui.label(egui::RichText::new(format!("SOI: {}", body_name))
-                                            .size(11.0)
-                                            .color(egui::Color32::GRAY));
-                                    });
-
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if !vessel.is_debris {
-                                            if ui.small_button("Fly").clicked() {
-                                                ts_action = TrackingStationAction::FlyVessel(vessel.id);
+                                                .size(13.0);
+                                            if ui.add(egui::Label::new(name_text).sense(egui::Sense::click())).clicked() {
+                                                ts_action = TrackingStationAction::FocusVessel(vessel.id);
                                             }
-                                        }
-                                        let delete_btn = egui::Button::new(
-                                            egui::RichText::new("X").color(egui::Color32::from_rgb(200, 80, 80))
-                                        ).small();
-                                        if ui.add(delete_btn).on_hover_text("Delete vessel").clicked() {
-                                            ts_action = TrackingStationAction::DeleteVessel(vessel.id);
-                                        }
+                                            ui.label(egui::RichText::new(format!("SOI: {}", body_name))
+                                                .size(11.0)
+                                                .color(egui::Color32::GRAY));
+                                        });
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if !vessel.is_debris {
+                                                if ui.small_button("Fly").clicked() {
+                                                    ts_action = TrackingStationAction::FlyVessel(vessel.id);
+                                                }
+                                            }
+                                            let delete_btn = egui::Button::new(
+                                                egui::RichText::new("X").color(egui::Color32::from_rgb(200, 80, 80))
+                                            ).small();
+                                            if ui.add(delete_btn).on_hover_text("Delete vessel").clicked() {
+                                                ts_action = TrackingStationAction::DeleteVessel(vessel.id);
+                                            }
+                                        });
                                     });
-                                });
-                                ui.add_space(4.0);
+                                    ui.add_space(4.0);
+                                }
+                            }
+
+                            // Colonies section
+                            if !colony_manager.colonies.is_empty() {
+                                ui.add_space(8.0);
+                                ui.heading(egui::RichText::new("Colonies").size(16.0).color(egui::Color32::WHITE));
+                                ui.separator();
+
+                                for colony in &colony_manager.colonies {
+                                    let body_name = body_names.get(colony.body_index)
+                                        .cloned()
+                                        .unwrap_or_else(|| "Unknown".to_string());
+
+                                    ui.horizontal(|ui| {
+                                        ui.vertical(|ui| {
+                                            let name_text = egui::RichText::new(&colony.name)
+                                                .color(egui::Color32::WHITE)
+                                                .size(13.0);
+                                            if ui.add(egui::Label::new(name_text).sense(egui::Sense::click())).clicked() {
+                                                ts_action = TrackingStationAction::FocusBody(colony.body_index);
+                                            }
+                                            ui.label(egui::RichText::new(format!("{}, {} crew", body_name, colony.crew))
+                                                .size(11.0)
+                                                .color(egui::Color32::GRAY));
+                                        });
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if ui.small_button("Open").clicked() {
+                                                ts_action = TrackingStationAction::OpenColony(colony.body_index);
+                                            }
+                                        });
+                                    });
+                                    ui.add_space(4.0);
+                                }
                             }
                         });
                     });
@@ -494,6 +509,9 @@ impl RenderState {
                             });
                     });
             }
+
+            // Toast notifications
+            super::flight::render_toasts(ctx, &self.active_toasts);
         });
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
@@ -563,5 +581,126 @@ impl RenderState {
         output.present();
 
         Ok((new_warp_index, pause_action, ts_action))
+    }
+
+    /// Render colony management screen: planets in background + full-screen colony UI.
+    /// Returns the new warp index and colony screen action.
+    pub fn render_colony(
+        &mut self,
+        body_names: &[String],
+        warp_levels: &[f64],
+        current_warp_index: usize,
+        paused: bool,
+        date_str: &str,
+        body_index: usize,
+        colony_manager: &crate::colony::ColonyManager,
+        body_habitability: &[u32],
+        body_mineable: &[Vec<crate::colony::ResourceType>],
+        body_atmospheric: &[Vec<crate::colony::ResourceType>],
+        can_return_to_flight: bool,
+        solar_power_factor: f64,
+    ) -> Result<(usize, ColonyScreenAction), wgpu::SurfaceError> {
+        self.update_camera_buffer();
+
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut new_warp_index = current_warp_index;
+        let mut colony_action = ColonyScreenAction::None;
+
+        let raw_input = self.egui_state.take_egui_input(&self.window);
+        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            let result = super::colony_ui::render_colony_screen(
+                ctx,
+                body_index,
+                colony_manager,
+                body_names,
+                body_habitability,
+                body_mineable,
+                body_atmospheric,
+                warp_levels,
+                current_warp_index,
+                date_str,
+                paused,
+                can_return_to_flight,
+                &self.active_toasts,
+                solar_power_factor,
+            );
+            colony_action = result;
+            // Extract warp change if that was the action
+            if let ColonyScreenAction::ChangeWarp(idx) = result {
+                new_warp_index = idx;
+            }
+        });
+
+        self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
+        let tris = self.egui_ctx.tessellate(full_output.shapes, full_output.pixels_per_point);
+        for (id, image_delta) in &full_output.textures_delta.set {
+            self.egui_renderer.update_texture(&self.device, &self.queue, *id, image_delta);
+        }
+
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [self.size.width, self.size.height],
+            pixels_per_point: self.window.scale_factor() as f32,
+        };
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Colony Render Encoder"),
+        });
+        self.egui_renderer.update_buffers(&self.device, &self.queue, &mut encoder, &tris, &screen_descriptor);
+
+        // Geometry pass (planets/orbits in background)
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Colony Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.msaa_view,
+                    resolve_target: Some(&view),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.sprite_atlas.bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+        }
+
+        // Egui pass
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Colony Egui Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            self.egui_renderer.render(&mut render_pass, &tris, &screen_descriptor);
+        }
+
+        for id in &full_output.textures_delta.free {
+            self.egui_renderer.free_texture(id);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok((new_warp_index, colony_action))
     }
 }

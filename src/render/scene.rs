@@ -1681,9 +1681,8 @@ impl RenderState {
                 let screen_y = (1.0 - ndc_y) * 0.5 * self.size.height as f32 / scale_factor;
                 self.background_vessel_screen_positions.push((vessel.id, [screen_x, screen_y]));
 
-                // Draw orbit line when this vessel's triangle indicator is showing
-                if needs_indicator {
-                  if let Some(ref orbit) = vessel.orbit {
+                // Draw orbit line for this vessel
+                if let Some(ref orbit) = vessel.orbit {
                     let e = orbit.eccentricity;
                     if e < 1.0 && orbit.semi_major_axis > 0.0 {
                         let a = orbit.semi_major_axis;
@@ -1732,7 +1731,6 @@ impl RenderState {
                             all_indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
                         }
                     }
-                  }
                 }
             }
         }

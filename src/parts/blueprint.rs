@@ -99,6 +99,10 @@ pub struct BlueprintPart {
     pub fairing_shape: Option<FairingShape>,
     #[serde(default = "default_true")]
     pub deployed: bool,
+    #[serde(default)]
+    pub cargo_resources: Vec<(String, f64)>,  // (resource_name, kg)
+    #[serde(default)]
+    pub cargo_buildings: Vec<String>,  // BuildingType display names
 }
 
 fn default_true() -> bool { true }
@@ -133,6 +137,9 @@ pub struct PlacedPart {
     pub fairing_shape: Option<FairingShape>,
     // Solar panel deploy state (true = extended, false = retracted)
     pub deployed: bool,
+    // Cargo container manifest
+    pub cargo_resources: Vec<(String, f64)>,  // (resource_name, kg)
+    pub cargo_buildings: Vec<String>,  // BuildingType display names
 }
 
 impl PlacedPart {
@@ -156,6 +163,8 @@ impl PlacedPart {
             mirror_partner: None,
             fairing_shape: None,
             deployed: true,
+            cargo_resources: Vec::new(),
+            cargo_buildings: Vec::new(),
         }
     }
 
@@ -237,6 +246,8 @@ pub fn parts_to_blueprint(
             mirror_partner_index,
             fairing_shape: part.fairing_shape.clone(),
             deployed: part.deployed,
+            cargo_resources: part.cargo_resources.clone(),
+            cargo_buildings: part.cargo_buildings.clone(),
         });
     }
 
@@ -286,6 +297,8 @@ pub fn blueprint_to_parts(
         part.crossfeed_enabled = bp_part.crossfeed_enabled;
         part.fairing_shape = bp_part.fairing_shape.clone();
         part.deployed = bp_part.deployed;
+        part.cargo_resources = bp_part.cargo_resources.clone();
+        part.cargo_buildings = bp_part.cargo_buildings.clone();
         parts.insert(id, part);
     }
 

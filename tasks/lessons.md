@@ -23,3 +23,15 @@
 **Mistake**: Tried to fix Hohmann transfers on eccentric orbits by constraining departure to apsides. Two problems: (1) for near-circular orbits, `argument_of_periapsis` is arbitrary so the node was at a meaningless fixed angle; (2) for eccentric orbits, snapping to an apsis doesn't account for the actual transfer geometry.
 
 **Rule**: When classical Hohmann assumptions break down (non-circular orbits), use the Lambert solver instead of patching formulas. Lambert naturally handles arbitrary eccentricities by solving for the exact velocity at the actual burn point. Use phase angle timing for the departure window, then Lambert for the exact delta-v.
+
+## egui Borrow Checker Pattern (2026-03-21)
+
+**Mistake**: Tried to call `self.render_colony_panel()` inside `self.egui_ctx.run()` closure. This fails with E0500 because the closure borrows `self` (via egui_ctx), and calling another `&mut self` method is a conflicting borrow.
+
+**Rule**: For egui panels that need mutable access to RenderState fields, use free functions that take individual `&mut` parameters (e.g., `&mut bool`, `&mut Option<usize>`) instead of `&mut self` methods. Copy data out before the egui closure, pass borrowed fields to free functions inside the closure, then write results back after.
+
+## Check for Existing Layer 0 Code (2026-03-21)
+
+**Mistake**: When implementing Layer 1, assumed all code needed to be written from scratch. Layer 0 had already implemented many stubs (establish_colony, update_colonies, simulation.rs, notification.rs, colony part, gas giant flag). This caused duplicate fields, methods, and imports.
+
+**Rule**: Before implementing any task from a plan, search for existing implementations first. Run `grep` for function names, field names, and file names. Layer 0 data model work often includes stubs for Layer 1 functionality.
