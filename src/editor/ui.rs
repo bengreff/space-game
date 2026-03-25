@@ -62,8 +62,6 @@ pub enum EditorAction {
     LoadBlueprint(String),
     DeleteBlueprint(String),
     NewVessel,
-    SetRdBudget(f64),
-    OpenTechTree,
     OpenContracts,
 }
 
@@ -97,20 +95,157 @@ fn format_delta_v(dv: f64) -> String {
     }
 }
 
+/// Render part definition info (name, stats, engine/tank/pod details).
+/// Reusable across editor info panel and tech tree detail panel.
+/// `id_prefix` is used to disambiguate egui indent IDs across call sites.
+pub fn render_part_info(ui: &mut egui::Ui, def: &crate::parts::PartDefinition, id_prefix: &str) {
+    ui.heading(&def.name);
+    ui.label(&def.description);
+
+    ui.separator();
+    ui.label(format!("Size: {}", def.size.display_name()));
+    ui.label(format!("Mass: {:.3} t ({:.0} kg)", def.mass, def.mass * 1000.0));
+    ui.label(format!("Cost: ${}", def.cost));
+    ui.label(format!("Dimensions: {}x{} grid", def.grid_width, def.grid_height));
+
+    // Engine info
+    if let Some(ref engine) = def.engine {
+        ui.separator();
+        ui.heading("Engine Stats");
+
+        if let Some(secondary) = engine.secondary_propellant {
+            ui.label(format!("Propellant: {} + {}", engine.propellant.display_name(), secondary.display_name()));
+        } else {
+            ui.label(format!("Propellant: {}", engine.propellant.display_name()));
+        }
+
+        ui.label("Thrust:");
+        ui.indent(format!("{}_thrust_indent", id_prefix), |ui| {
+            ui.label(format!("Vacuum: {:.1} kN", engine.thrust_vac));
+            ui.label(format!("Sea Level: {:.1} kN", engine.thrust_asl));
+        });
+
+        ui.label("Specific Impulse:");
+        ui.indent(format!("{}_isp_indent", id_prefix), |ui| {
+            ui.label(format!("Vacuum: {:.0} s", engine.isp_vac));
+            ui.label(format!("Sea Level: {:.0} s", engine.isp_asl));
+        });
+
+        ui.label("Mass Flow (vacuum):");
+        ui.indent(format!("{}_flow_indent", id_prefix), |ui| {
+            for (name, rate) in engine.fuel_flows_display() {
+                ui.label(format!("{}: {}", name, format_mass_flow(rate)));
+            }
+        });
+
+        ui.label("Gimbal:");
+        ui.indent(format!("{}_gimbal_indent", id_prefix), |ui| {
+            if engine.gimbal_range > 0.0 {
+                ui.label(format!("Range: ±{:.1}°", engine.gimbal_range));
+            } else {
+                ui.label("Fixed (no gimbal)");
+            }
+        });
+
+        if engine.throttleable {
+            ui.label("Throttleable: Yes");
+        } else {
+            ui.label("Throttleable: No");
+        }
+
+        // TWR calculation for this engine alone
+        ui.separator();
+        ui.label("Single Engine TWR:");
+        let engine_twr = engine.thrust_vac / (def.mass * 9.81);
+        ui.label(format!("  {:.1} (vacuum, Earth)", engine_twr));
+    }
+
+    // Tank info
+    if let Some(ref tank) = def.tank {
+        ui.separator();
+        ui.heading("Tank Stats");
+        ui.label(format!("Dry Mass: {:.0} kg", def.mass * 1000.0));
+
+        ui.separator();
+        ui.label("Propellant Capacity:");
+
+        let (ox, fuel) = tank.propellant_capacity(FuelType::Rp1);
+        ui.label(format!("  RP-1: {}", format_mass(ox + fuel)));
+
+        let (ox, fuel) = tank.propellant_capacity(FuelType::Methane);
+        ui.label(format!("  CH4: {}", format_mass(ox + fuel)));
+
+        let (ox, fuel) = tank.propellant_capacity(FuelType::Hydrogen);
+        ui.label(format!("  LH2: {}", format_mass(ox + fuel)));
+    }
+
+    // Pod info
+    if let Some(ref pod) = def.pod {
+        ui.separator();
+        ui.heading("Pod Stats");
+        ui.label(format!("Crew Capacity: {}", pod.crew_capacity));
+    }
+
+    // RCS info
+    if let Some(ref rcs) = def.rcs {
+        ui.separator();
+        ui.heading("RCS Stats");
+        ui.label(format!("Thrust: {:.1} kN", rcs.thrust));
+        ui.label(format!("Isp: {:.0} s", rcs.isp));
+        ui.label("Fuel: Monopropellant");
+    }
+
+    // Reactor info
+    if let Some(ref reactor) = def.reactor {
+        ui.separator();
+        ui.heading("Reactor Stats");
+        ui.label(format!("Output: {}", format_power(reactor.output_watts)));
+    }
+
+    // Shield info
+    if let Some(ref shield) = def.shield {
+        ui.separator();
+        ui.heading("Shield Stats");
+        ui.label(format!("Type: {:?}", shield.shield_type));
+        ui.label(format!("Max Velocity: {:.0}% c", shield.max_velocity_c * 100.0));
+        if shield.power_base_watts > 0.0 {
+            ui.label(format!("Power Draw: {}", format_power(shield.power_base_watts)));
+        } else {
+            ui.label("Power Draw: None (passive)");
+        }
+    }
+
+    // Parachute info
+    if let Some(ref chute) = def.parachute {
+        ui.separator();
+        ui.heading("Parachute");
+        let width_m = chute.deployed_width * crate::parts::GRID_SQUARE_SIZE;
+        ui.label(format!("Deployed Width: {:.1} m", width_m));
+    }
+
+    // Cargo info
+    if let Some(ref cargo) = def.cargo {
+        ui.separator();
+        ui.heading("Cargo");
+        ui.label(format!("Capacity: {}", format_mass(cargo.capacity_kg)));
+    }
+}
+
 /// Render the editor UI using egui
 pub fn render_editor_ui(
     ctx: &egui::Context,
     editor: &mut EditorState,
     part_defs: &PartDefinitions,
     blueprint_names: &[&str],
+    locked_blueprints: &std::collections::HashSet<String>,
     stats: &ShipStats,
     bodies: &[BodyInfo],
     stage_delta_vs: &[f64],
     stage_burn_times: &[f64],
     company_money: f64,
     vessel_cost: f64,
+    contracts: &crate::colony::ContractManager,
     tech_tree: &crate::colony::TechTree,
-    rd_budget: &mut f64,
 ) -> EditorAction {
     let mut action = EditorAction::None;
 
@@ -155,26 +290,9 @@ pub fn render_editor_ui(
 
             ui.separator();
 
-            // Research button
-            if ui.button("Research").clicked() {
-                action = EditorAction::OpenTechTree;
-            }
-
             // Contracts button
             if ui.button("Contracts").clicked() {
                 action = EditorAction::OpenContracts;
-            }
-
-            // R&D budget
-            ui.label("R&D:");
-            let mut budget_m = *rd_budget / 1_000_000.0;
-            let drag = egui::DragValue::new(&mut budget_m)
-                .speed(0.5)
-                .clamp_range(0.0..=1000.0)
-                .suffix("M/yr");
-            if ui.add(drag).changed() {
-                *rd_budget = budget_m * 1_000_000.0;
-                action = EditorAction::SetRdBudget(*rd_budget);
             }
 
             // Right-aligned info
@@ -594,137 +712,7 @@ pub fn render_editor_ui(
                 // Show part definition info when selected from palette
                 if let Some(ref def_id) = editor.selected_part_def {
                     if let Some(def) = part_defs.get(def_id) {
-                        ui.heading(&def.name);
-                        ui.label(&def.description);
-
-                        ui.separator();
-                        ui.label(format!("Size: {}", def.size.display_name()));
-                        ui.label(format!("Mass: {:.3} t ({:.0} kg)", def.mass, def.mass * 1000.0));
-                        ui.label(format!("Cost: ${}", def.cost));
-                        ui.label(format!("Dimensions: {}x{} grid", def.grid_width, def.grid_height));
-
-                        // Engine info
-                        if let Some(ref engine) = def.engine {
-                            ui.separator();
-                            ui.heading("Engine Stats");
-
-                            if let Some(secondary) = engine.secondary_propellant {
-                                ui.label(format!("Propellant: {} + {}", engine.propellant.display_name(), secondary.display_name()));
-                            } else {
-                                ui.label(format!("Propellant: {}", engine.propellant.display_name()));
-                            }
-
-                            ui.label("Thrust:");
-                            ui.indent("thrust_indent", |ui| {
-                                ui.label(format!("Vacuum: {:.1} kN", engine.thrust_vac));
-                                ui.label(format!("Sea Level: {:.1} kN", engine.thrust_asl));
-                            });
-
-                            ui.label("Specific Impulse:");
-                            ui.indent("isp_indent", |ui| {
-                                ui.label(format!("Vacuum: {:.0} s", engine.isp_vac));
-                                ui.label(format!("Sea Level: {:.0} s", engine.isp_asl));
-                            });
-
-                            ui.label("Mass Flow (vacuum):");
-                            ui.indent("flow_indent", |ui| {
-                                for (name, rate) in engine.fuel_flows_display() {
-                                    ui.label(format!("{}: {}", name, format_mass_flow(rate)));
-                                }
-                            });
-
-                            ui.label("Gimbal:");
-                            ui.indent("gimbal_indent", |ui| {
-                                if engine.gimbal_range > 0.0 {
-                                    ui.label(format!("Range: ±{:.1}°", engine.gimbal_range));
-                                } else {
-                                    ui.label("Fixed (no gimbal)");
-                                }
-                            });
-
-                            if engine.throttleable {
-                                ui.label("Throttleable: Yes");
-                            } else {
-                                ui.label("Throttleable: No");
-                            }
-
-                            // TWR calculation for this engine alone
-                            ui.separator();
-                            ui.label("Single Engine TWR:");
-                            let engine_twr = engine.thrust_vac / (def.mass * 9.81);
-                            ui.label(format!("  {:.1} (vacuum, Earth)", engine_twr));
-                        }
-
-                        // Tank info
-                        if let Some(ref tank) = def.tank {
-                            ui.separator();
-                            ui.heading("Tank Stats");
-                            ui.label(format!("Dry Mass: {:.0} kg", def.mass * 1000.0));
-
-                            ui.separator();
-                            ui.label("Propellant Capacity:");
-
-                            let (ox, fuel) = tank.propellant_capacity(FuelType::Rp1);
-                            ui.label(format!("  RP-1: {}", format_mass(ox + fuel)));
-
-                            let (ox, fuel) = tank.propellant_capacity(FuelType::Methane);
-                            ui.label(format!("  CH4: {}", format_mass(ox + fuel)));
-
-                            let (ox, fuel) = tank.propellant_capacity(FuelType::Hydrogen);
-                            ui.label(format!("  LH2: {}", format_mass(ox + fuel)));
-                        }
-
-                        // Pod info
-                        if let Some(ref pod) = def.pod {
-                            ui.separator();
-                            ui.heading("Pod Stats");
-                            ui.label(format!("Crew Capacity: {}", pod.crew_capacity));
-                        }
-
-                        // RCS info
-                        if let Some(ref rcs) = def.rcs {
-                            ui.separator();
-                            ui.heading("RCS Stats");
-                            ui.label(format!("Thrust: {:.1} kN", rcs.thrust));
-                            ui.label(format!("Isp: {:.0} s", rcs.isp));
-                            ui.label("Fuel: Monopropellant");
-                        }
-
-                        // Reactor info
-                        if let Some(ref reactor) = def.reactor {
-                            ui.separator();
-                            ui.heading("Reactor Stats");
-                            ui.label(format!("Output: {}", format_power(reactor.output_watts)));
-                        }
-
-                        // Shield info
-                        if let Some(ref shield) = def.shield {
-                            ui.separator();
-                            ui.heading("Shield Stats");
-                            ui.label(format!("Type: {:?}", shield.shield_type));
-                            ui.label(format!("Max Velocity: {:.0}% c", shield.max_velocity_c * 100.0));
-                            if shield.power_base_watts > 0.0 {
-                                ui.label(format!("Power Draw: {}", format_power(shield.power_base_watts)));
-                            } else {
-                                ui.label("Power Draw: None (passive)");
-                            }
-                        }
-
-                        // Parachute info
-                        if let Some(ref chute) = def.parachute {
-                            ui.separator();
-                            ui.heading("Parachute");
-                            let width_m = chute.deployed_width * crate::parts::GRID_SQUARE_SIZE;
-                            ui.label(format!("Deployed Width: {:.1} m", width_m));
-                        }
-
-                        // Cargo info
-                        if let Some(ref cargo) = def.cargo {
-                            ui.separator();
-                            ui.heading("Cargo");
-                            ui.label(format!("Capacity: {}", format_mass(cargo.capacity_kg)));
-                        }
-
+                        render_part_info(ui, def, "palette");
                     }
                 }
                 // Show placed part info when selected
@@ -1025,7 +1013,8 @@ pub fn render_editor_ui(
                                     .filter_map(|name| crate::colony::BuildingType::from_display_name(name))
                                     .map(|bt| bt.total_build_mass())
                                     .sum();
-                                let used_kg = resource_mass + building_mass;
+                                let payload_mass: f64 = part.cargo_payloads.iter().map(|p| p.mass_kg).sum();
+                                let used_kg = resource_mass + building_mass + payload_mass;
                                 let remaining_kg = (capacity_kg - used_kg).max(0.0);
 
                                 // Capacity bar
@@ -1165,6 +1154,94 @@ pub fn render_editor_ui(
                                             });
                                     });
                                 }
+
+                                // Contract Payloads section
+                                let payload_list = part.cargo_payloads.clone();
+                                if !payload_list.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.label(egui::RichText::new("Payloads").size(12.0).strong());
+                                }
+                                let mut payload_to_remove: Option<usize> = None;
+                                for (idx, payload) in payload_list.iter().enumerate() {
+                                    ui.horizontal(|ui| {
+                                        if ui.small_button("\u{00d7}").clicked() {
+                                            payload_to_remove = Some(idx);
+                                        }
+                                        ui.label(format!("{} ({:.0} kg)", payload.name, payload.mass_kg));
+                                    });
+                                }
+                                if let Some(idx) = payload_to_remove {
+                                    if let Some(p) = editor.parts.get_mut(&part_id) {
+                                        if idx < p.cargo_payloads.len() {
+                                            p.cargo_payloads.remove(idx);
+                                        }
+                                    }
+                                    if let Some(mid) = part.mirror_partner {
+                                        if let Some(mp) = editor.parts.get_mut(&mid) {
+                                            if idx < mp.cargo_payloads.len() {
+                                                mp.cargo_payloads.remove(idx);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Recalculate remaining after potential payload removal
+                                let payload_mass: f64 = if let Some(p) = editor.parts.get(&part_id) {
+                                    p.cargo_payloads.iter().map(|pl| pl.mass_kg).sum()
+                                } else {
+                                    0.0
+                                };
+                                let resource_mass_now: f64 = if let Some(p) = editor.parts.get(&part_id) {
+                                    p.cargo_resources.iter().map(|(_, kg)| *kg).sum()
+                                } else {
+                                    0.0
+                                };
+                                let building_mass_now: f64 = if let Some(p) = editor.parts.get(&part_id) {
+                                    p.cargo_buildings.iter()
+                                        .filter_map(|name| crate::colony::BuildingType::from_display_name(name))
+                                        .map(|bt| bt.total_build_mass())
+                                        .sum()
+                                } else {
+                                    0.0
+                                };
+                                let remaining_for_payloads = (capacity_kg - resource_mass_now - building_mass_now - payload_mass).max(0.0);
+
+                                // Add Payload combo — show available payloads from active contracts
+                                // that haven't been placed in any cargo container yet
+                                if remaining_for_payloads > 0.0 {
+                                    let available_payloads = contracts.active_payload_contracts();
+                                    // Collect all payload contract IDs already placed in any part
+                                    let placed_ids: std::collections::HashSet<u64> = editor.parts.values()
+                                        .flat_map(|p| p.cargo_payloads.iter().map(|pl| pl.contract_id))
+                                        .collect();
+                                    let unplaced: Vec<_> = available_payloads.into_iter()
+                                        .filter(|p| !placed_ids.contains(&p.contract_id) && p.mass_kg <= remaining_for_payloads)
+                                        .collect();
+
+                                    if !unplaced.is_empty() {
+                                        ui.horizontal(|ui| {
+                                            ui.label("Add:");
+                                            egui::ComboBox::from_id_source("cargo_add_payload")
+                                                .selected_text("Payload...")
+                                                .width(160.0)
+                                                .show_ui(ui, |ui: &mut egui::Ui| {
+                                                    for payload in &unplaced {
+                                                        let label = format!("{} ({:.0} kg)", payload.name, payload.mass_kg);
+                                                        if ui.selectable_label(false, label).clicked() {
+                                                            if let Some(p) = editor.parts.get_mut(&part_id) {
+                                                                p.cargo_payloads.push(payload.clone());
+                                                            }
+                                                            if let Some(mid) = part.mirror_partner {
+                                                                if let Some(mp) = editor.parts.get_mut(&mid) {
+                                                                    mp.cargo_payloads.push(payload.clone());
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                        });
+                                    }
+                                }
                             }
 
                             ui.separator();
@@ -1226,8 +1303,13 @@ pub fn render_editor_ui(
                 } else {
                     egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
                         for name in blueprint_names {
+                            let is_locked = locked_blueprints.contains(*name);
                             ui.horizontal(|ui| {
-                                if ui.button(*name).clicked() {
+                                if is_locked {
+                                    let btn = ui.add_enabled(false,
+                                        egui::Button::new(format!("\u{1f512} {}", name)));
+                                    btn.on_disabled_hover_text("Contains locked parts");
+                                } else if ui.button(*name).clicked() {
                                     action = EditorAction::LoadBlueprint(name.to_string());
                                     editor.show_load_dialog = false;
                                 }

@@ -2,8 +2,10 @@ use serde::{Serialize, Deserialize};
 use super::{FuelType, Propellant, PartDefinitions, VesselBlueprint};
 use std::collections::HashMap;
 
-/// A vessel in flight - runtime representation with physics
+/// A vessel in flight - runtime representation with physics.
+/// Uses struct-level `#[serde(default)]` so old saves missing new fields still load.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct FlightVessel {
     // Physics state (same as Ship)
     pub rel_position: [f64; 2],
@@ -35,8 +37,33 @@ pub struct FlightVessel {
 
     // Extra dry mass added as cargo payload (tonnes). Used by trade route dv computation
     // to make cargo reduce ship delta-v. Not consumed as fuel.
-    #[serde(default)]
     pub extra_dry_mass_tonnes: f64,
+}
+
+impl Default for FlightVessel {
+    fn default() -> Self {
+        Self {
+            rel_position: [0.0, 0.0],
+            rel_velocity: [0.0, 0.0],
+            rotation: 0.0,
+            rotational_velocity: 0.0,
+            soi_body: 0,
+            parts: Vec::new(),
+            root_part_index: 0,
+            total_mass: 0.0,
+            dry_mass: 0.0,
+            center_of_mass: [0.0, 0.0],
+            max_thrust_vac: 0.0,
+            max_thrust_asl: 0.0,
+            moment_of_inertia: 0.0,
+            throttle: 0.0,
+            on_rails: false,
+            stages: Vec::new(),
+            current_stage: 0,
+            last_decouple_force: 0.0,
+            extra_dry_mass_tonnes: 0.0,
+        }
+    }
 }
 
 /// A part in flight.
@@ -112,6 +139,7 @@ pub struct FlightPart {
 
     // Cargo container manifest
     pub cargo_buildings: Vec<String>,  // BuildingType display names loaded in cargo
+    pub cargo_payloads: Vec<crate::colony::ContractPayload>,  // Contract payloads
 }
 
 impl Default for FlightPart {
@@ -161,6 +189,7 @@ impl Default for FlightPart {
             parachute_deployed_width_m: 0.0,
             parachute_fully_deployed: false,
             cargo_buildings: Vec::new(),
+            cargo_payloads: Vec::new(),
         }
     }
 }
@@ -172,6 +201,16 @@ impl FlightPart {
             .filter_map(|name| crate::colony::BuildingType::from_display_name(name))
             .map(|bt| bt.total_build_mass())
             .sum::<f64>() * 0.001 // kg -> tonnes
+    }
+
+    /// Total mass of contract payloads in this part, in tonnes.
+    pub fn cargo_payload_mass_tonnes(&self) -> f64 {
+        self.cargo_payloads.iter().map(|p| p.mass_kg).sum::<f64>() * 0.001
+    }
+
+    /// Total extra cargo mass (buildings + payloads) in tonnes.
+    pub fn cargo_extra_mass_tonnes(&self) -> f64 {
+        self.cargo_building_mass_tonnes() + self.cargo_payload_mass_tonnes()
     }
 }
 
@@ -196,12 +235,21 @@ impl FlightVessel {
             && all_buildings.iter().any(|b| *b == "Small Solar Farm")
     }
 
+    /// Collect all contract payloads from non-decoupled, non-destroyed cargo containers.
+    pub fn all_payloads(&self) -> Vec<crate::colony::ContractPayload> {
+        self.parts.iter()
+            .filter(|p| !p.decoupled && !p.destroyed)
+            .flat_map(|p| p.cargo_payloads.iter().cloned())
+            .collect()
+    }
+
     /// Check if any non-decoupled, non-destroyed cargo container has contents.
     pub fn has_cargo(&self, part_defs: &PartDefinitions) -> bool {
         self.parts.iter().any(|p| {
             !p.decoupled && !p.destroyed
                 && part_defs.get(&p.definition_id).and_then(|d| d.cargo.as_ref()).is_some()
                 && (!p.cargo_buildings.is_empty()
+                    || !p.cargo_payloads.is_empty()
                     || p.resources.values().any(|&v| v > 0.0))
         })
     }
@@ -318,8 +366,11 @@ impl FlightVessel {
                 .filter_map(|name| crate::colony::BuildingType::from_display_name(name))
                 .map(|bt| bt.total_build_mass())
                 .sum();
+            let cargo_payload_mass_kg: f64 = bp_part.cargo_payloads.iter()
+                .map(|p| p.mass_kg)
+                .sum();
             let resource_mass_kg: f64 = resources.values().sum();
-            let part_mass = def.mass + (resource_mass_kg + cargo_building_mass_kg) * 0.001; // kg -> tonnes
+            let part_mass = def.mass + (resource_mass_kg + cargo_building_mass_kg + cargo_payload_mass_kg) * 0.001; // kg -> tonnes
             total_mass += part_mass;
 
             // Weight center of mass by part mass
@@ -382,6 +433,7 @@ impl FlightVessel {
                     .unwrap_or(0.0),
                 parachute_fully_deployed: false,
                 cargo_buildings: bp_part.cargo_buildings.clone(),
+                cargo_payloads: bp_part.cargo_payloads.clone(),
             };
 
             // Set engine data if this is an engine
@@ -449,7 +501,7 @@ impl FlightVessel {
             // Use actual part mass (dry + fuel + cargo buildings)
             let base_mass = def.mass;
             let resource_mass: f64 = parts[i].resources.values().sum::<f64>() * 0.001;
-            let part_mass = base_mass + resource_mass + parts[i].cargo_building_mass_tonnes();
+            let part_mass = base_mass + resource_mass + parts[i].cargo_extra_mass_tonnes();
             let r_sq = parts[i].local_position[0].powi(2) + parts[i].local_position[1].powi(2);
             moment_of_inertia += part_mass * r_sq;
 
@@ -502,7 +554,7 @@ impl FlightVessel {
             let def = part_defs.get(&part.definition_id);
             let base_mass = def.map(|d| d.mass).unwrap_or(0.0);
             let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-            let part_mass = base_mass + resource_mass + part.cargo_building_mass_tonnes();
+            let part_mass = base_mass + resource_mass + part.cargo_extra_mass_tonnes();
 
             self.total_mass += part_mass;
             com[0] += part.local_position[0] * part_mass;
@@ -526,11 +578,7 @@ impl FlightVessel {
             };
             let base_mass = def.mass;
             let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-            let building_mass: f64 = part.cargo_buildings.iter()
-                .filter_map(|name| crate::colony::BuildingType::from_display_name(name))
-                .map(|bt| bt.total_build_mass())
-                .sum::<f64>() * 0.001;
-            let part_mass = base_mass + resource_mass + building_mass;
+            let part_mass = base_mass + resource_mass + part.cargo_extra_mass_tonnes();
 
             let r_sq = part.local_position[0].powi(2) + part.local_position[1].powi(2);
             moi += part_mass * r_sq;
@@ -573,11 +621,7 @@ impl FlightVessel {
             };
             let base_mass = def.mass;
             let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-            let building_mass: f64 = part.cargo_buildings.iter()
-                .filter_map(|name| crate::colony::BuildingType::from_display_name(name))
-                .map(|bt| bt.total_build_mass())
-                .sum::<f64>() * 0.001;
-            let part_mass = base_mass + resource_mass + building_mass;
+            let part_mass = base_mass + resource_mass + part.cargo_extra_mass_tonnes();
 
             let r_sq = part.local_position[0].powi(2) + part.local_position[1].powi(2);
             moi += part_mass * r_sq;
@@ -2393,7 +2437,7 @@ impl FlightVessel {
                 let base_mass = part_defs.get(&part.definition_id)
                     .map(|d| d.mass).unwrap_or(0.0);
                 let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-                let pm = base_mass + resource_mass + part.cargo_building_mass_tonnes();
+                let pm = base_mass + resource_mass + part.cargo_extra_mass_tonnes();
                 debris_mass += pm;
                 debris_com[0] += part.local_position[0] * pm;
                 debris_com[1] += part.local_position[1] * pm;
@@ -2422,7 +2466,7 @@ impl FlightVessel {
                 let base_mass = part_defs.get(&part.definition_id)
                     .map(|d| d.mass).unwrap_or(0.0);
                 let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-                let pm = base_mass + resource_mass + part.cargo_building_mass_tonnes();
+                let pm = base_mass + resource_mass + part.cargo_extra_mass_tonnes();
                 let r_sq = part.local_position[0].powi(2) + part.local_position[1].powi(2);
                 moi += pm * r_sq;
                 let (w, h) = part_defs.get(&part.definition_id)
@@ -2863,7 +2907,7 @@ impl FlightVessel {
             let base_mass = part_defs.get(&part.definition_id)
                 .map(|d| d.mass).unwrap_or(0.0);
             let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-            let pm = base_mass + resource_mass + part.cargo_building_mass_tonnes();
+            let pm = base_mass + resource_mass + part.cargo_extra_mass_tonnes();
             debris_mass += pm;
             debris_com[0] += part.local_position[0] * pm;
             debris_com[1] += part.local_position[1] * pm;
@@ -2900,7 +2944,7 @@ impl FlightVessel {
             let base_mass = part_defs.get(&part.definition_id)
                 .map(|d| d.mass).unwrap_or(0.0);
             let resource_mass: f64 = part.resources.values().sum::<f64>() * 0.001;
-            let pm = base_mass + resource_mass + part.cargo_building_mass_tonnes();
+            let pm = base_mass + resource_mass + part.cargo_extra_mass_tonnes();
             let r_sq = part.local_position[0].powi(2) + part.local_position[1].powi(2);
             moi += pm * r_sq;
             let (w, h) = part_defs.get(&part.definition_id)
@@ -3222,6 +3266,7 @@ pub fn create_default_vessel(
             parachute_deployed_width_m: 0.0,
             parachute_fully_deployed: false,
             cargo_buildings: Vec::new(),
+            cargo_payloads: Vec::new(),
         }],
         root_part_index: 0,
         total_mass: 2.0,

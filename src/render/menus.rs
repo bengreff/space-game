@@ -988,6 +988,7 @@ impl RenderState {
         current_warp_index: usize,
         paused: bool,
         date_str: &str,
+        part_defs: &crate::parts::PartDefinitions,
     ) -> Result<(usize, TechTreeScreenAction), wgpu::SurfaceError> {
         self.update_camera_buffer();
 
@@ -1010,6 +1011,7 @@ impl RenderState {
                 date_str,
                 paused,
                 &self.active_toasts,
+                part_defs,
             );
             tt_action = result;
             if let TechTreeScreenAction::ChangeWarp(idx) = result {

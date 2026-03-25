@@ -645,3 +645,43 @@
 - [ ] Visual test: Launch failure shows alert on route card + notification toast
 - [ ] Visual test: Alert doesn't spam (one notification per failure state change)
 - [ ] Visual test: Insufficient funds error shows both need and have amounts
+
+---
+
+# Contract System Revamp
+
+## Implementation
+- [x] Phase 1: Rewrite `src/colony/contracts.rs` — Destination, ContractKind, Contract, ContractPayload, GovernmentMilestone, ContractManager with pool-based generation, accept/cancel/complete, payload/tourism checks, milestone checks, size scaling, destination gating, deterministic PRNG
+- [x] Phase 1: Add notification variants — ContractCompleted, MilestoneAchieved in notification.rs; crewed discovery fields (first_crewed_orbit/lunar/mars) in DiscoveryTracker
+- [x] Phase 2: Add cargo_payloads — Vec<ContractPayload> on BlueprintPart, PlacedPart, FlightPart; wired through parts_to_blueprint/blueprint_to_parts/from_blueprint; all_payloads() on FlightVessel; payload mass in cargo_extra_mass_tonnes()
+- [x] Phase 3: Game logic — Rewritten check_contracts() with payload/tourism checks + notifications; new check_government_milestones() with crewed discovery tracking
+- [x] Phase 4: UI — ManagementAction::AcceptContract(u64) + CancelContract(u64); rewritten management screen contracts section with pool/active/milestones; payload placement UI in editor cargo section; editor contract board uses shared render_contracts_section()
+- [x] Phase 5: Integration — Tourism completion on vessel recovery; pool refill at init/load/completion; check_government_milestones() wired next to check_contracts() in all frame functions; save compatibility via serde defaults
+
+## Files Changed
+- `src/colony/contracts.rs` — REWRITTEN: pool-based contract system
+- `src/colony/notification.rs` — 2 new variants (ContractCompleted, MilestoneAchieved)
+- `src/colony/tech.rs` — 3 new fields on DiscoveryTracker (first_crewed_orbit/lunar/mars)
+- `src/parts/blueprint.rs` — cargo_payloads on BlueprintPart and PlacedPart
+- `src/parts/vessel.rs` — cargo_payloads on FlightPart, all_payloads(), cargo_extra_mass_tonnes()
+- `src/game.rs` — Rewritten check_contracts(), new check_government_milestones()
+- `src/render/types.rs` — AcceptContract(u64), CancelContract(u64)
+- `src/render/management_ui.rs` — REWRITTEN: pool-based UI with render_contracts_section()
+- `src/render/mod.rs` — pub mod management_ui
+- `src/editor/ui.rs` — Payload UI in cargo section, contracts param on render_editor_ui()
+- `src/main.rs` — Tourism recovery hook, pool refill wiring, milestone checks, updated contract board
+- `src/save.rs` — Pool refill on load
+- `openspec/specs/game/colony/contracts/spec.md` — NEW
+- `openspec/specs/game/colony/economy/spec.md` — Updated contract section
+
+## Verification
+- [x] `cargo build` — compiles clean
+- [ ] Visual test: contract board shows ~5 available contracts, only suborbital initially
+- [ ] Visual test: accept payload contract, payload appears in editor cargo UI
+- [ ] Visual test: place payload in cargo container, capacity decreases by payload mass
+- [ ] Visual test: launch, reach destination, notification pops, money increases
+- [ ] Visual test: new contract appears in pool after completion
+- [ ] Visual test: accept tourism contract, fly to destination, recover vessel, payout
+- [ ] Visual test: government milestones fire on first achievements
+- [ ] Visual test: size scaling: after 5+ completions, larger contracts appear
+- [ ] Visual test: old saves load without crash (fresh contract state)

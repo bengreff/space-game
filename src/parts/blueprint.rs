@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use super::FuelType;
+use crate::colony::ContractPayload;
 
 /// Shape of a user-constructed fairing shell
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,11 +23,23 @@ pub type PlacedPartId = u64;
 
 /// A saveable vessel blueprint (stored in RON files)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct VesselBlueprint {
     pub name: String,
     pub parts: Vec<BlueprintPart>,
     pub root_part_index: usize,
     pub stages: Vec<Vec<usize>>,
+}
+
+impl Default for VesselBlueprint {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            parts: Vec::new(),
+            root_part_index: 0,
+            stages: Vec::new(),
+        }
+    }
 }
 
 impl VesselBlueprint {
@@ -61,13 +74,46 @@ impl VesselBlueprint {
         Ok(())
     }
 
-    /// Calculate total cost of all parts
+    /// Calculate total cost of all parts (legacy: sum of part cost fields)
     pub fn total_cost(&self, definitions: &super::PartDefinitions) -> u32 {
         self.parts
             .iter()
             .filter_map(|p| definitions.get(&p.definition_id))
             .map(|def| def.cost)
             .sum()
+    }
+
+    /// Calculate the full vessel cost in dollars (material breakdown + fuel).
+    /// Mirrors `EditorState::calculate_vessel_cost()`.
+    pub fn calculate_cost(&self, part_defs: &super::PartDefinitions) -> f64 {
+        use crate::colony::economy::{material_breakdown, fuel_price_per_kg, LOX_PRICE_PER_KG};
+
+        let mut total = 0.0;
+
+        for part in &self.parts {
+            let Some(def) = part_defs.get(&part.definition_id) else {
+                continue;
+            };
+
+            // Material cost from dry mass
+            let dry_mass_kg = def.mass * 1000.0; // tonnes → kg
+            let breakdown = material_breakdown(def);
+            let masses = breakdown.to_masses(dry_mass_kg);
+            total += masses.earth_cost();
+
+            // Fuel cost from filled tanks
+            if let Some(ref tank) = def.tank {
+                if part.fill_fraction > 0.0 && part.fuel_type != FuelType::Empty {
+                    let (ox_kg, fuel_kg) = tank.propellant_capacity(part.fuel_type);
+                    let filled_ox = ox_kg * part.fill_fraction;
+                    let filled_fuel = fuel_kg * part.fill_fraction;
+                    total += filled_ox * LOX_PRICE_PER_KG;
+                    total += filled_fuel * fuel_price_per_kg(part.fuel_type);
+                }
+            }
+        }
+
+        total
     }
 
     /// Get the root part's definition ID
@@ -78,6 +124,7 @@ impl VesselBlueprint {
 
 /// A placed part within a blueprint
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BlueprintPart {
     pub definition_id: String,
     pub position: [f64; 2],
@@ -103,6 +150,31 @@ pub struct BlueprintPart {
     pub cargo_resources: Vec<(String, f64)>,  // (resource_name, kg)
     #[serde(default)]
     pub cargo_buildings: Vec<String>,  // BuildingType display names
+    #[serde(default)]
+    pub cargo_payloads: Vec<ContractPayload>,  // Contract payloads
+}
+
+impl Default for BlueprintPart {
+    fn default() -> Self {
+        Self {
+            definition_id: String::new(),
+            position: [0.0, 0.0],
+            rotation: 0.0,
+            parent_index: None,
+            attachment_type: AttachmentType::Root,
+            stage: 0,
+            fuel_type: FuelType::default(),
+            tank_filled: false,
+            fill_fraction: 0.0,
+            crossfeed_enabled: false,
+            mirror_partner_index: None,
+            fairing_shape: None,
+            deployed: true,
+            cargo_resources: Vec::new(),
+            cargo_buildings: Vec::new(),
+            cargo_payloads: Vec::new(),
+        }
+    }
 }
 
 fn default_true() -> bool { true }
@@ -140,6 +212,7 @@ pub struct PlacedPart {
     // Cargo container manifest
     pub cargo_resources: Vec<(String, f64)>,  // (resource_name, kg)
     pub cargo_buildings: Vec<String>,  // BuildingType display names
+    pub cargo_payloads: Vec<ContractPayload>,  // Contract payloads
 }
 
 impl PlacedPart {
@@ -165,6 +238,7 @@ impl PlacedPart {
             deployed: true,
             cargo_resources: Vec::new(),
             cargo_buildings: Vec::new(),
+            cargo_payloads: Vec::new(),
         }
     }
 
@@ -248,6 +322,7 @@ pub fn parts_to_blueprint(
             deployed: part.deployed,
             cargo_resources: part.cargo_resources.clone(),
             cargo_buildings: part.cargo_buildings.clone(),
+            cargo_payloads: part.cargo_payloads.clone(),
         });
     }
 
@@ -299,6 +374,7 @@ pub fn blueprint_to_parts(
         part.deployed = bp_part.deployed;
         part.cargo_resources = bp_part.cargo_resources.clone();
         part.cargo_buildings = bp_part.cargo_buildings.clone();
+        part.cargo_payloads = bp_part.cargo_payloads.clone();
         parts.insert(id, part);
     }
 

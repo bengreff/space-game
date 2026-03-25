@@ -543,6 +543,7 @@ impl FactoryRecipe {
 
 /// A single building instance within a colony.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BuildingInstance {
     pub building_type: BuildingType,
     /// For mines: which resource to extract. For atmospheric collectors: which atmospheric resource.
@@ -555,6 +556,19 @@ pub struct BuildingInstance {
     pub degradation: f64,
     /// Water fill level for greenhouses (kg). Scales food output linearly.
     pub water_fill: f64,
+}
+
+impl Default for BuildingInstance {
+    fn default() -> Self {
+        Self {
+            building_type: BuildingType::Habitat,
+            assigned_resource: None,
+            assigned_recipe: None,
+            operational: true,
+            degradation: 0.0,
+            water_fill: 0.0,
+        }
+    }
 }
 
 impl BuildingInstance {
@@ -572,6 +586,7 @@ impl BuildingInstance {
 
 /// An item in the colony construction queue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ConstructionQueueItem {
     pub building_type: BuildingType,
     /// Resources that have been reserved from colony inventory for this construction.
@@ -582,8 +597,20 @@ pub struct ConstructionQueueItem {
     pub total_mass: f64,
 }
 
+impl Default for ConstructionQueueItem {
+    fn default() -> Self {
+        Self {
+            building_type: BuildingType::Habitat,
+            reserved_resources: ResourceInventory::default(),
+            mass_assembled: 0.0,
+            total_mass: 0.0,
+        }
+    }
+}
+
 /// A colony on a celestial body.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Colony {
     /// Index of the body this colony is on.
     pub body_index: usize,
@@ -624,6 +651,31 @@ pub struct Colony {
 
 fn default_one() -> f64 {
     1.0
+}
+
+impl Default for Colony {
+    fn default() -> Self {
+        Self {
+            body_index: 0,
+            name: String::new(),
+            buildings: Vec::new(),
+            resources: ResourceInventory::default(),
+            crew: 0,
+            food_stored: 0.0,
+            power_generated: 0.0,
+            power_consumed: 0.0,
+            construction_queue: Vec::new(),
+            is_orbital_station: false,
+            lab_science_extracted: 0.0,
+            lab_elapsed_years: 0.0,
+            food_depleted_notified: false,
+            habitat_power_fraction: 1.0,
+            other_power_fraction: 1.0,
+            habitat_unpowered_notified: false,
+            crew_at_crisis_start: None,
+            crew_death_accumulator: 0.0,
+        }
+    }
 }
 
 impl Colony {

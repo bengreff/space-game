@@ -21,6 +21,7 @@ pub enum TradeShipState {
 
 /// A single leg of a trade route (one hop).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RouteLeg {
     /// Source body index. None = Earth.
     pub from_body: Option<usize>,
@@ -30,6 +31,17 @@ pub struct RouteLeg {
     pub delta_v: f64,
     /// Flight time for this leg (seconds).
     pub flight_time: f64,
+}
+
+impl Default for RouteLeg {
+    fn default() -> Self {
+        Self {
+            from_body: None,
+            to_body: None,
+            delta_v: 0.0,
+            flight_time: 0.0,
+        }
+    }
 }
 
 /// Cargo manifest: what resources to carry.
@@ -69,6 +81,7 @@ impl Default for AutomationMode {
 
 /// A trade route connecting two (or more) bodies.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TradeRoute {
     pub id: TradeRouteId,
     pub name: String,
@@ -119,6 +132,35 @@ pub struct TradeRoute {
     pub alert_reason: Option<String>,
 }
 
+impl Default for TradeRoute {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            name: String::new(),
+            legs: Vec::new(),
+            blueprint_name: String::new(),
+            outbound_cargo: CargoManifest::default(),
+            return_cargo: CargoManifest::default(),
+            crew: 0,
+            automation: AutomationMode::default(),
+            frequency_days: 30.0,
+            dv_threshold: 0.0,
+            priority: 0,
+            min_stockpile: 0.0,
+            paused: false,
+            last_launch_time: 0.0,
+            assigned_ship_id: None,
+            total_delta_v: 0.0,
+            total_flight_time: 0.0,
+            max_cargo_capacity: 0.0,
+            route_category: super::transfer::RouteCategory::default(),
+            interval_days: 30.0,
+            ships_per_window: 1,
+            alert_reason: None,
+        }
+    }
+}
+
 fn default_interval_days() -> f64 {
     30.0
 }
@@ -128,6 +170,7 @@ fn default_ships_per_window() -> u32 {
 
 /// A trade ship — an abstract vessel that flies computed routes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TradeShip {
     pub id: TradeShipId,
     pub name: String,
@@ -155,8 +198,29 @@ pub struct TradeShip {
     pub cached_delta_v: f64,
 }
 
+impl Default for TradeShip {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            name: String::new(),
+            blueprint_name: String::new(),
+            state: TradeShipState::Stationed,
+            location: None,
+            origin: None,
+            cargo: CargoManifest::default(),
+            crew: 0,
+            current_leg: 0,
+            returning: false,
+            transit_remaining: 0.0,
+            assigned_route: None,
+            cached_delta_v: 0.0,
+        }
+    }
+}
+
 /// Manages all trade ships and routes.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct FleetManager {
     pub ships: Vec<TradeShip>,
     pub routes: Vec<TradeRoute>,
@@ -703,11 +767,8 @@ impl FleetManager {
         let is_earth = location.map_or(true, |idx| idx == earth_index);
 
         if is_earth {
-            // Compute cost in dollars (sum of part costs)
-            let cost: f64 = blueprint.parts.iter()
-                .filter_map(|p| part_defs.get(&p.definition_id))
-                .map(|d| d.cost as f64)
-                .sum();
+            // Compute cost in dollars (material breakdown + fuel)
+            let cost = blueprint.calculate_cost(part_defs);
             if company.money < cost {
                 return Err(format!("Insufficient funds (need {})",
                     super::format_money(cost)));

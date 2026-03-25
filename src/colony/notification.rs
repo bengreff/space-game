@@ -12,6 +12,8 @@ pub enum NotificationKind {
     ShipDeparted { ship_name: String, route_name: String },
     RoutePaused { route_name: String, reason: String },
     ShipConstructionComplete { ship_name: String, location: String },
+    ContractCompleted { name: String, payout: f64 },
+    MilestoneAchieved { name: String, payout: f64 },
 }
 
 impl NotificationKind {
@@ -56,16 +58,33 @@ impl NotificationKind {
             NotificationKind::ShipConstructionComplete { ship_name, location } => {
                 format!("{} construction complete at {}", ship_name, location)
             }
+            NotificationKind::ContractCompleted { name, payout } => {
+                format!("Contract complete: {} — {}", name, crate::colony::format_money(*payout))
+            }
+            NotificationKind::MilestoneAchieved { name, payout } => {
+                format!("{} — {}", name, crate::colony::format_money(*payout))
+            }
         }
     }
 }
 
 /// A game notification (persisted in saves).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Notification {
     pub kind: NotificationKind,
     /// Simulation time when the notification was created.
     pub time: f64,
     /// Whether this notification has been acknowledged/processed.
     pub read: bool,
+}
+
+impl Default for Notification {
+    fn default() -> Self {
+        Self {
+            kind: NotificationKind::ContractCompleted { name: String::new(), payout: 0.0 },
+            time: 0.0,
+            read: true,
+        }
+    }
 }

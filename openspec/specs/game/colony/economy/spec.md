@@ -7,7 +7,7 @@ Vessel cost computation, money management, science from discoveries and R&D, tec
 ```
 src/colony/
   economy.rs    — MaterialBreakdown, cost computation, format_money, science reward functions
-  contracts.rs  — ContractType, Contract, ContractManager
+  contracts.rs  — Destination, ContractKind, Contract, ContractPayload, GovernmentMilestone, ContractManager
 ```
 
 ## Material Cost System (`economy.rs`)
@@ -71,7 +71,7 @@ Each part's dry mass is decomposed into five construction materials using `mater
 
 ### Requirement: Parts palette filtering
 
-Parts in the editor palette are filtered by `tech_tree.is_part_available(&part.name)`. Default unlocked parts (from `tree.ron`): Gecko, Tank 1x1, Tank 1x2, Tank 1x4, Tank 1x8, Tiny Probe Core, NC-1 Nose Cone, AE-FF0 Fairing, TD-1 Decoupler. Size groups with no unlocked parts are hidden entirely.
+Parts in the editor palette are filtered by `tech_tree.is_part_available(&part.name)`. `TechTree::load()` automatically unlocks `basic_rocketry` so every new game starts with starter parts available. Default unlocked parts (from `tree.ron`): Gecko, Tiny Fuel Tank 1/2/4/8, Tiny Probe Core, NC-1 Nose Cone, AE-FF0 Fairing, TD-1 Decoupler, and additional starter parts (Hummingbird, Firefly, NC-1R/NC-1L Side Cones, HS-1 Heat Shield, Battery Bank Z-1). These parts all appear in the `basic_rocketry` node's `unlocks_parts` for discoverability. Size groups with no unlocked parts are hidden entirely.
 
 ## Tech Tree UI (`render/tech_tree_ui.rs`)
 
@@ -85,23 +85,10 @@ Accessed via "Research" button in editor toolbar.
 
 ## Contract System (`contracts.rs`)
 
-### Requirement: Contract types
+See `openspec/specs/game/colony/contracts/spec.md` for full specification.
 
-9 contract types with fixed payouts:
-- SuborbitalPayload ($500K), OrbitalPayload ($2M), LunarOrbitPayload ($4M), LunarSurfaceDelivery ($6M)
-- MarsOrbitPayload ($8M), MarsSurfaceDelivery ($12M)
-- SuborbitalTourism ($1M), OrbitalTourism ($3M), LunarTourism ($10M)
-
-Tourism contracts require crew capacity > 0.
-
-### Requirement: Contract completion
-
-`ContractManager::check_completion()` evaluates each active contract against ship state (SOI body, altitude, suborbital status, landing). Completed contracts are removed and payout returned.
-
-### Requirement: Contract board UI
-
-An egui::Window "Contracts" accessible from editor toolbar "Contracts" button. Lists all 9 contract types with Accept button (disabled if already active), payout display, and description. Active contracts shown in a separate section.
+Pool-based contract system with payload delivery (price-per-kg), tourism (price-per-seat, requires recovery), and government milestones (automatic one-time awards). Contracts are the manual income bridge until trade routes automate income.
 
 ### Requirement: Contract persistence
 
-`ContractManager` serialized in `SaveGame` with `#[serde(default)]` for backward compatibility.
+`ContractManager` serialized in `SaveGame` with `#[serde(default)]` for backward compatibility. Pool refilled on load.

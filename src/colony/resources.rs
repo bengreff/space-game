@@ -212,6 +212,7 @@ impl ResourceInventory {
 
 /// The player's company — manages money and R&D spending.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Company {
     /// Current cash balance in dollars
     pub money: f64,

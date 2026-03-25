@@ -6,7 +6,7 @@ mod flight;
 mod formatting;
 mod geometry;
 mod interaction;
-mod management_ui;
+pub mod management_ui;
 mod maneuver;
 mod menus;
 mod scene;

@@ -664,6 +664,11 @@ impl PartDefinitions {
         self.parts.get(id)
     }
 
+    /// Find a part definition by display name
+    pub fn find_by_name(&self, name: &str) -> Option<&PartDefinition> {
+        self.parts.values().find(|p| p.name == name)
+    }
+
     /// Get all parts in a category, sorted by width then height
     pub fn by_category(&self, category: PartCategory) -> Vec<&PartDefinition> {
         let mut parts: Vec<_> = self.parts

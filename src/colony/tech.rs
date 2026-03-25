@@ -83,9 +83,11 @@ impl TechTree {
             .map_err(|e| format!("Failed to read tech tree file {}: {}", path, e))?;
         let file: TechTreeFile = ron::from_str(&content)
             .map_err(|e| format!("Failed to parse tech tree file {}: {}", path, e))?;
+        let mut unlocked = HashSet::new();
+        unlocked.insert("basic_rocketry".to_string());
         Ok(Self {
             nodes: file.nodes,
-            unlocked: HashSet::new(),
+            unlocked,
             efficiency_lines: file.efficiency_lines,
             line_tiers: HashMap::new(),
             default_unlocked_parts: file.default_unlocked_parts,
@@ -204,6 +206,7 @@ impl TechTree {
 
 /// Tracks one-time discovery milestones for science.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DiscoveryTracker {
     pub first_suborbital: bool,
     pub first_orbit: bool,
@@ -214,10 +217,18 @@ pub struct DiscoveryTracker {
     /// Body indices where the player has landed.
     #[serde(default)]
     pub body_landed: HashSet<usize>,
+    /// Crewed milestones (for government contract payouts).
+    #[serde(default)]
+    pub first_crewed_orbit: bool,
+    #[serde(default)]
+    pub first_crewed_lunar: bool,
+    #[serde(default)]
+    pub first_crewed_mars: bool,
 }
 
 /// Science state: tracks available science points and cumulative sources.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ScienceState {
     /// Spendable science points.
     pub available: f64,

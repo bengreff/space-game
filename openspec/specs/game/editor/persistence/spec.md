@@ -72,6 +72,12 @@ Blueprints SHALL be saved to `{directory}/{sanitized_name}.ron` and stored in th
 
 Clicking "Load" in the toolbar SHALL open a dialog with a scrollable list (max height 200px) of blueprint names. If no blueprints exist, it SHALL display "No saved blueprints".
 
+### Requirement: Tech tree validation on load
+
+`Game::load_blueprint()` SHALL validate that all parts in the blueprint are unlocked via the tech tree before loading. If any parts are locked (not available via `tech_tree.is_part_available()`), the load SHALL fail with an error listing the locked part names. The editor SHALL display an alert message with the locked part names so the user understands why the load failed.
+
+In the load dialog, blueprints containing locked parts SHALL be visually indicated with a lock icon and grayed out (disabled button). Clicking a grayed-out blueprint does nothing. The locked set is precomputed before rendering the dialog by checking each blueprint's parts against the tech tree.
+
 ### Requirement: Load clears state first
 
 Loading a blueprint SHALL call `clear()` first, then populate parts, root, stages, and vessel name from the blueprint.

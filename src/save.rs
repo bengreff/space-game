@@ -10,6 +10,24 @@ use crate::render::ManeuverNode;
 use crate::ship::Ship;
 
 const SAVE_DIR: &str = "data/saves";
+
+/// Deserialize ContractManager with fallback to default for old save formats.
+/// Old saves have Contract { contract_type, objective_met } which is incompatible
+/// with the new Contract { id, kind, payout, name } format.
+fn deserialize_contracts_compat<'de, D>(deserializer: D) -> Result<ContractManager, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Try to deserialize the new format; if it fails, return default
+    let value = <ron::Value as Deserialize>::deserialize(deserializer)?;
+    match ContractManager::deserialize(value) {
+        Ok(cm) => Ok(cm),
+        Err(_) => {
+            log::warn!("Old contract format detected in save — starting with fresh contracts");
+            Ok(ContractManager::default())
+        }
+    }
+}
 const SAVE_VERSION: u32 = 1;
 
 /// Write a file atomically: write to a temp file in the same directory, then rename.
@@ -24,6 +42,7 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(default)]
 pub struct SaveGame {
     pub version: u32,
     pub name: String,
@@ -46,7 +65,7 @@ pub struct SaveGame {
     pub tech_line_tiers: HashMap<String, u32>,
     #[serde(default)]
     pub notifications: Vec<Notification>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_contracts_compat")]
     pub contracts: ContractManager,
     #[serde(default)]
     pub fleet: FleetManager,
@@ -56,6 +75,7 @@ pub struct SaveGame {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(default)]
 pub struct SavedVessel {
     pub id: VesselId,
     pub name: String,
@@ -82,6 +102,43 @@ pub struct QuicksaveInfo {
     pub index: u32,
     pub simulation_time: f64,
     pub modified: std::time::SystemTime,
+}
+
+impl Default for SaveGame {
+    fn default() -> Self {
+        Self {
+            version: SAVE_VERSION,
+            name: String::new(),
+            simulation_time: 0.0,
+            vessels: Vec::new(),
+            next_vessel_id: 1,
+            debris_counter: 0,
+            blueprints: Vec::new(),
+            editor_vessel_name: String::new(),
+            colonies: ColonyManager::default(),
+            company: Company::default(),
+            science: ScienceState::default(),
+            tech_unlocked: HashSet::new(),
+            tech_line_tiers: HashMap::new(),
+            notifications: Vec::new(),
+            contracts: ContractManager::default(),
+            fleet: FleetManager::default(),
+            editor_blueprint: None,
+        }
+    }
+}
+
+impl Default for SavedVessel {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            name: String::new(),
+            ship: Ship::default(),
+            vessel: None,
+            maneuver_nodes: Vec::new(),
+            is_debris: false,
+        }
+    }
 }
 
 impl SaveGame {
@@ -392,6 +449,27 @@ impl SaveGame {
         saves
     }
 
+    /// Delete a save game by save_id (removes folder or legacy file).
+    pub fn delete_save(save_id: &str) -> Result<(), String> {
+        let folder_path = PathBuf::from(SAVE_DIR).join(save_id);
+        if folder_path.is_dir() {
+            fs::remove_dir_all(&folder_path)
+                .map_err(|e| format!("Failed to delete save folder: {}", e))?;
+            log::info!("Deleted save folder: {:?}", folder_path);
+            return Ok(());
+        }
+
+        let legacy_path = PathBuf::from(SAVE_DIR).join(format!("{}.ron", save_id));
+        if legacy_path.is_file() {
+            fs::remove_file(&legacy_path)
+                .map_err(|e| format!("Failed to delete save file: {}", e))?;
+            log::info!("Deleted save file: {:?}", legacy_path);
+            return Ok(());
+        }
+
+        Err(format!("Save '{}' not found", save_id))
+    }
+
     /// List all quicksaves for a given save name.
     /// Returns sorted by index descending (newest first).
     pub fn list_quicksaves(save_name: &str) -> Vec<QuicksaveInfo> {
@@ -558,6 +636,17 @@ impl SaveGame {
         game.tech_tree.apply_save_state(migrated_unlocked, migrated_tiers);
         game.notifications = self.notifications;
         game.contracts = self.contracts;
+        // Sync milestones from discoveries to prevent re-awarding on old saves
+        game.contracts.sync_milestones_from_discoveries(
+            &game.science.discoveries,
+            &game.solar_system,
+        );
+        // Refill contract pool on load (handles old saves with empty pool)
+        game.contracts.refill_pool(
+            &game.science.discoveries,
+            &game.solar_system,
+            game.solar_system.time,
+        );
         game.fleet = self.fleet;
     }
 }

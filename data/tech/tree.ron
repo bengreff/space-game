@@ -55,7 +55,7 @@
             prerequisites: [],
             col: 0,
             row: 1,
-            unlocks_parts: ["Hummingbird", "Firefly", "NC-1R Side Cone", "NC-1L Side Cone", "HS-1 Heat Shield", "Battery Bank Z-1"],
+            unlocks_parts: ["Gecko", "Tiny Fuel Tank 1", "Tiny Fuel Tank 2", "Tiny Fuel Tank 4", "Tiny Fuel Tank 8", "Tiny Probe Core", "NC-1 Nose Cone", "AE-FF0 Fairing", "TD-1 Decoupler", "Hummingbird", "Firefly", "NC-1R Side Cone", "NC-1L Side Cone", "HS-1 Heat Shield", "Battery Bank Z-1"],
             unlocks_buildings: [],
         ),
         (

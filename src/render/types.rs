@@ -273,6 +273,7 @@ pub struct ManeuverDeltaV {
 
 /// A maneuver node - fixed on the orbit it was created on
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ManeuverNode {
     pub id: u64,
     // Orbit parameters (fixed at creation time)
@@ -294,6 +295,27 @@ pub struct ManeuverNode {
     pub delta_v: ManeuverDeltaV,
     // Remaining delta-v (counts down during burns, displayed in UI)
     pub remaining_delta_v: ManeuverDeltaV,
+}
+
+impl Default for ManeuverNode {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            semi_major_axis: 0.0,
+            eccentricity: 0.0,
+            argument_of_periapsis: 0.0,
+            parent_x: 0.0,
+            parent_y: 0.0,
+            retrograde: false,
+            true_anomaly: 0.0,
+            parent_idx: 0,
+            parent_mass: 0.0,
+            render_scale: 0.0,
+            epoch: 0.0,
+            delta_v: ManeuverDeltaV::default(),
+            remaining_delta_v: ManeuverDeltaV::default(),
+        }
+    }
 }
 
 impl ManeuverNode {
@@ -458,7 +480,8 @@ pub enum ManagementAction {
     OpenTechTree,
     GoToMainMenu,
     ChangeWarp(usize),
-    AcceptContract(crate::colony::ContractType),
+    AcceptContract(u64),
+    CancelContract(u64),
     SetRdBudget(f64),
 }
 
@@ -541,5 +564,6 @@ pub enum TitleScreenAction {
     None,
     NewGame(String),
     LoadGame(String),
+    DeleteGame(String),
     QuitGame,
 }

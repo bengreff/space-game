@@ -1,5 +1,5 @@
 use crate::bodies::SolarSystem;
-use crate::colony::{ColonyManager, Company, ContractManager, FleetManager, Notification, ScienceState, TechTree};
+use crate::colony::{ColonyManager, Company, ContractManager, FleetManager, Notification, NotificationKind, ScienceState, TechTree};
 use crate::editor::EditorState;
 use crate::parts::{BlueprintRegistry, FlightVessel, PartDefinitions};
 use crate::render::ManeuverNode;
@@ -33,6 +33,8 @@ pub struct TitleScreenUiState {
     pub new_game_name: String,
     /// Cached save file list, populated once when load dialog opens.
     pub save_list: Vec<crate::save::SaveFileInfo>,
+    /// Save ID pending delete confirmation (None = no dialog shown).
+    pub confirm_delete: Option<String>,
 }
 
 /// Unique identifier for a vessel (active or inactive)
@@ -445,6 +447,10 @@ impl Game {
                 TechTree::default()
             });
 
+        let mut contracts = ContractManager::new();
+        let discoveries = crate::colony::DiscoveryTracker::default();
+        contracts.refill_pool(&discoveries, &solar_system, solar_system.time);
+
         Self {
             mode: GameMode::TitleScreen,
             paused: false,
@@ -461,7 +467,7 @@ impl Game {
             company: Company::default(),
             science: ScienceState::default(),
             tech_tree,
-            contracts: ContractManager::new(),
+            contracts,
             fleet: FleetManager::new(),
             notifications: Vec::new(),
             colony_view_body_index: None,
@@ -503,6 +509,13 @@ impl Game {
                 log::error!("Failed to load tech tree: {}", e);
                 TechTree::default()
             });
+        // Reset contracts (milestones, active/available contracts)
+        self.contracts = ContractManager::new();
+        self.contracts.refill_pool(
+            &self.science.discoveries,
+            &self.solar_system,
+            self.solar_system.time,
+        );
         log::info!("Started new game: {:?}", self.save_name);
     }
 
@@ -712,11 +725,30 @@ impl Game {
         Ok(())
     }
 
-    /// Load a blueprint into the editor
+    /// Load a blueprint into the editor.
+    /// Returns Err if the blueprint contains parts not yet unlocked in the tech tree.
     pub fn load_blueprint(&mut self, name: &str) -> Result<(), String> {
         let blueprint = self.blueprints.get(name)
             .ok_or_else(|| format!("Blueprint not found: {}", name))?
             .clone();
+
+        // Validate all parts are unlocked
+        let locked: Vec<String> = blueprint.parts.iter()
+            .filter_map(|p| {
+                let def = self.part_definitions.get(&p.definition_id)?;
+                if !self.tech_tree.is_part_available(&def.name) {
+                    Some(def.name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        if !locked.is_empty() {
+            return Err(format!("Blueprint contains locked parts: {}", locked.join(", ")));
+        }
 
         self.editor.load_blueprint(&blueprint, &self.part_definitions);
         self.mode = GameMode::Editor;
@@ -957,24 +989,107 @@ impl Game {
         let has_crew = self.flight.vessel.as_ref()
             .map_or(false, |v| v.total_crew_capacity(&self.part_definitions) > 0);
 
-        let mars_index = self.solar_system.bodies.iter()
-            .position(|b| b.name == "Mars")
-            .unwrap_or(usize::MAX);
+        // Check payload contracts
+        let vessel_payloads = self.flight.vessel.as_ref()
+            .map(|v| v.all_payloads())
+            .unwrap_or_default();
 
-        let payout = self.contracts.check_completion(
+        let payload_completions = self.contracts.check_payload_contracts(
+            &vessel_payloads,
             &ship.state,
             ship.soi_body,
             altitude,
             is_suborbital,
-            self.solar_system.earth_index,
-            self.solar_system.moon_index,
-            mars_index,
-            has_crew,
+            &self.solar_system,
         );
 
-        if payout > 0.0 {
+        for (name, payout) in &payload_completions {
             self.company.money += payout;
-            log::info!("Contract completed! Payout: {}", crate::colony::format_money(payout));
+            log::info!("Contract completed: {} — {}", name, crate::colony::format_money(*payout));
+            self.notifications.push(Notification {
+                kind: NotificationKind::ContractCompleted { name: name.clone(), payout: *payout },
+                time: self.solar_system.time,
+                read: false,
+            });
+        }
+
+        // Refill pool after completions
+        if !payload_completions.is_empty() {
+            self.contracts.refill_pool(
+                &self.science.discoveries,
+                &self.solar_system,
+                self.solar_system.time,
+            );
+        }
+
+        // Check tourism destination flags
+        self.contracts.check_tourism_destinations(
+            &ship.state,
+            ship.soi_body,
+            altitude,
+            is_suborbital,
+            has_crew,
+            &self.solar_system,
+        );
+    }
+
+    /// Check and award government milestones. Also update crewed discovery tracking.
+    pub fn check_government_milestones(&mut self) {
+        let ship = &self.flight.ship;
+        let has_crew = self.flight.vessel.as_ref()
+            .map_or(false, |v| v.total_crew_capacity(&self.part_definitions) > 0);
+
+        if has_crew {
+            let moon_idx = self.solar_system.moon_index;
+            let mars_idx = self.solar_system.bodies.iter()
+                .position(|b| b.name == "Mars")
+                .unwrap_or(usize::MAX);
+            let is_suborbital = ship.is_suborbital(&self.solar_system);
+            let earth_idx = self.solar_system.earth_index;
+
+            // Track crewed discoveries
+            if !self.science.discoveries.first_crewed_orbit
+                && ship.soi_body == earth_idx
+                && !is_suborbital
+                && matches!(ship.state, crate::ship::ShipState::Flying)
+            {
+                self.science.discoveries.first_crewed_orbit = true;
+            }
+
+            if !self.science.discoveries.first_crewed_lunar {
+                // Crewed lunar = orbit or landing at moon
+                let at_moon = ship.soi_body == moon_idx && matches!(ship.state, crate::ship::ShipState::Flying);
+                let landed_moon = matches!(ship.state, crate::ship::ShipState::Landed { body_index, .. } if body_index == moon_idx);
+                if at_moon || landed_moon {
+                    self.science.discoveries.first_crewed_lunar = true;
+                }
+            }
+
+            if !self.science.discoveries.first_crewed_mars {
+                let at_mars = ship.soi_body == mars_idx && matches!(ship.state, crate::ship::ShipState::Flying);
+                let landed_mars = matches!(ship.state, crate::ship::ShipState::Landed { body_index, .. } if body_index == mars_idx);
+                if at_mars || landed_mars {
+                    self.science.discoveries.first_crewed_mars = true;
+                }
+            }
+        }
+
+        // Check milestones
+        let awarded = self.contracts.check_milestones(
+            &self.science.discoveries,
+            has_crew,
+            &self.solar_system,
+        );
+
+        for (milestone, payout) in awarded {
+            self.company.money += payout;
+            let name = milestone.display_name().to_string();
+            log::info!("Milestone achieved: {} — {}", name, crate::colony::format_money(payout));
+            self.notifications.push(Notification {
+                kind: NotificationKind::MilestoneAchieved { name, payout },
+                time: self.solar_system.time,
+                read: false,
+            });
         }
     }
 

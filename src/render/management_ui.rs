@@ -1,4 +1,4 @@
-use crate::colony::{Company, ContractManager, ContractType, ScienceState};
+use crate::colony::{Company, ContractManager, ContractKind, GovernmentMilestone, ScienceState};
 use super::types::ManagementAction;
 
 /// Render the management screen. Returns the action and the updated R&D budget.
@@ -155,89 +155,7 @@ pub fn render_management_screen(
                 ui.separator();
 
                 // === Contracts ===
-                ui.heading("Contracts");
-                ui.add_space(4.0);
-
-                // Available contracts
-                ui.label(
-                    egui::RichText::new("Available")
-                        .size(14.0)
-                        .strong()
-                        .color(egui::Color32::from_rgb(200, 200, 200)),
-                );
-                ui.add_space(2.0);
-
-                for &ct in ContractType::all() {
-                    let already_active = contracts
-                        .active
-                        .iter()
-                        .any(|c| c.contract_type == ct);
-
-                    egui::Frame::none()
-                        .fill(egui::Color32::from_rgba_unmultiplied(30, 35, 45, 220))
-                        .rounding(egui::Rounding::same(4.0))
-                        .inner_margin(egui::Margin::same(6.0))
-                        .outer_margin(egui::Margin::symmetric(0.0, 2.0))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(ct.display_name()).strong(),
-                                );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.label(
-                                            egui::RichText::new(crate::colony::format_money(
-                                                ct.payout(),
-                                            ))
-                                            .color(egui::Color32::from_rgb(100, 200, 100))
-                                            .size(12.0),
-                                        );
-                                        if already_active {
-                                            ui.label(
-                                                egui::RichText::new("Active")
-                                                    .size(11.0)
-                                                    .color(egui::Color32::from_rgb(
-                                                        100, 180, 255,
-                                                    )),
-                                            );
-                                        } else if ui.small_button("Accept").clicked() {
-                                            action =
-                                                ManagementAction::AcceptContract(ct);
-                                        }
-                                    },
-                                );
-                            });
-                            ui.label(
-                                egui::RichText::new(ct.description())
-                                    .size(11.0)
-                                    .color(egui::Color32::from_rgb(160, 160, 160)),
-                            );
-                        });
-                }
-
-                // Active contracts
-                if !contracts.active.is_empty() {
-                    ui.add_space(10.0);
-                    ui.label(
-                        egui::RichText::new("Active")
-                            .size(14.0)
-                            .strong()
-                            .color(egui::Color32::from_rgb(200, 200, 200)),
-                    );
-                    for contract in &contracts.active {
-                        ui.horizontal(|ui| {
-                            ui.label(contract.contract_type.display_name());
-                            ui.label(
-                                egui::RichText::new(crate::colony::format_money(
-                                    contract.contract_type.payout(),
-                                ))
-                                .color(egui::Color32::from_rgb(100, 200, 100))
-                                .size(12.0),
-                            );
-                        });
-                    }
-                }
+                render_contracts_section(ui, contracts, &mut action);
             });
     });
 
@@ -245,4 +163,156 @@ pub fn render_management_screen(
     super::flight::render_toasts(ctx, active_toasts);
 
     (action, budget)
+}
+
+/// Render the contracts section (reusable in both management screen and editor window).
+pub fn render_contracts_section(
+    ui: &mut egui::Ui,
+    contracts: &ContractManager,
+    action: &mut ManagementAction,
+) {
+    ui.heading("Contracts");
+    ui.add_space(4.0);
+
+    // Available contracts
+    ui.label(
+        egui::RichText::new("Available")
+            .size(14.0)
+            .strong()
+            .color(egui::Color32::from_rgb(200, 200, 200)),
+    );
+    ui.add_space(2.0);
+
+    if contracts.available.is_empty() {
+        ui.label(
+            egui::RichText::new("No contracts available yet")
+                .size(12.0)
+                .color(egui::Color32::from_rgb(140, 140, 140)),
+        );
+    }
+
+    for contract in &contracts.available {
+        egui::Frame::none()
+            .fill(egui::Color32::from_rgba_unmultiplied(30, 35, 45, 220))
+            .rounding(egui::Rounding::same(4.0))
+            .inner_margin(egui::Margin::same(6.0))
+            .outer_margin(egui::Margin::symmetric(0.0, 2.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(&contract.name).strong(),
+                    );
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            ui.label(
+                                egui::RichText::new(crate::colony::format_money(contract.payout))
+                                    .color(egui::Color32::from_rgb(100, 200, 100))
+                                    .size(12.0),
+                            );
+                            if ui.small_button("Accept").clicked() {
+                                *action = ManagementAction::AcceptContract(contract.id);
+                            }
+                        },
+                    );
+                });
+                ui.label(
+                    egui::RichText::new(contract.description())
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(160, 160, 160)),
+                );
+            });
+    }
+
+    // Active contracts
+    if !contracts.active.is_empty() {
+        ui.add_space(10.0);
+        ui.label(
+            egui::RichText::new("Active")
+                .size(14.0)
+                .strong()
+                .color(egui::Color32::from_rgb(200, 200, 200)),
+        );
+        ui.add_space(2.0);
+
+        for contract in &contracts.active {
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgba_unmultiplied(25, 40, 30, 220))
+                .rounding(egui::Rounding::same(4.0))
+                .inner_margin(egui::Margin::same(6.0))
+                .outer_margin(egui::Margin::symmetric(0.0, 2.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(&contract.name).strong(),
+                        );
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                ui.label(
+                                    egui::RichText::new(crate::colony::format_money(contract.payout))
+                                        .color(egui::Color32::from_rgb(100, 200, 100))
+                                        .size(12.0),
+                                );
+                                if ui.small_button("Cancel").clicked() {
+                                    *action = ManagementAction::CancelContract(contract.id);
+                                }
+                            },
+                        );
+                    });
+                    // Show status for tourism contracts
+                    let status_text = match &contract.kind {
+                        ContractKind::Tourism { destination_reached, .. } => {
+                            if *destination_reached {
+                                "Destination reached — return to Earth and recover vessel"
+                            } else {
+                                "Fly to destination"
+                            }
+                        }
+                        ContractKind::Payload { .. } => "Load payload in cargo container and deliver",
+                    };
+                    ui.label(
+                        egui::RichText::new(status_text)
+                            .size(11.0)
+                            .color(egui::Color32::from_rgb(160, 160, 160)),
+                    );
+                });
+        }
+    }
+
+    // Government Milestones
+    ui.add_space(10.0);
+    ui.label(
+        egui::RichText::new("Government Milestones")
+            .size(14.0)
+            .strong()
+            .color(egui::Color32::from_rgb(200, 200, 200)),
+    );
+    ui.add_space(2.0);
+
+    for milestone in GovernmentMilestone::all() {
+        let awarded = contracts.awarded_milestones.contains(milestone);
+        let color = if awarded {
+            egui::Color32::from_rgb(100, 200, 100)
+        } else {
+            egui::Color32::from_rgb(120, 120, 120)
+        };
+        let prefix = if awarded { "[x]" } else { "[ ]" };
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(format!("{} {}", prefix, milestone.display_name()))
+                    .size(12.0)
+                    .color(color),
+            );
+            ui.label(
+                egui::RichText::new(crate::colony::format_money(milestone.payout()))
+                    .size(11.0)
+                    .color(if awarded {
+                        egui::Color32::from_rgb(80, 160, 80)
+                    } else {
+                        egui::Color32::from_rgb(100, 100, 100)
+                    }),
+            );
+        });
+    }
 }

@@ -21,7 +21,7 @@ Returned from `render_tech_tree_screen()`. `Back` triggers `game.leave_tech_tree
 
 ## Function Signature
 
-`render_tech_tree_screen()` takes `&mut TechTree` and `&mut ScienceState` for direct mutation (unlock nodes, upgrade lines, deduct science). Also takes `warp_levels`, `current_warp_index`, `date_str`, `paused`, and `active_toasts`.
+`render_tech_tree_screen()` takes `&mut TechTree` and `&mut ScienceState` for direct mutation (unlock nodes, upgrade lines, deduct science). Also takes `warp_levels`, `current_warp_index`, `date_str`, `paused`, `active_toasts`, and `&PartDefinitions` (for part info display in the detail panel).
 
 ## Top Panel
 
@@ -52,7 +52,7 @@ Panel contents:
   - "Locked" — gray `rgb(120,120,120)` (prerequisites not met)
 - **"Cost: {cost} Science"**
 - **Prerequisites list** (if non-empty): each with check mark (green) if met, lock icon (red) if not, showing display name
-- **"Unlocks Parts:" list** (if non-empty): part names
+- **"Unlocks Parts:" list** (if non-empty): part names as clickable links. Clicking a part name toggles its selection (stored in `egui::Id::new("tech_tree_selected_part")` as `Option<String>`). When selected, the part's full info panel is shown inline below the list using `render_part_info()` from `editor/ui.rs`, displaying stats (mass, cost, engine/tank/pod details) from `PartDefinitions::find_by_name()`
 - **"Unlocks Buildings:" list** (if non-empty): `BuildingType::display_name()` values
 - **"Unlock ({cost} sci)" button**: shown only when `!is_unlocked && can_unlock && affordable`. On click: `tech_tree.unlock(&id)` then `science.available -= cost`
 - **"Close" link** (gray, size 12): clears selection in temp data

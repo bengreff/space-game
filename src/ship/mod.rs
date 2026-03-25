@@ -196,8 +196,10 @@ pub struct PatchedTrajectory {
 }
 
 /// A flyable spaceship
-/// Position and velocity are stored RELATIVE to the current SOI body
+/// Position and velocity are stored RELATIVE to the current SOI body.
+/// Uses struct-level `#[serde(default)]` so old saves missing new fields still load.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Ship {
     pub rel_position: [f64; 2],
     pub rel_velocity: [f64; 2],
@@ -236,6 +238,32 @@ pub struct Ship {
     /// Coordinate/Earth time elapsed (seconds)
     #[serde(default)]
     pub mission_time: f64,
+}
+
+impl Default for Ship {
+    fn default() -> Self {
+        Self {
+            rel_position: [0.0, 0.0],
+            rel_velocity: [0.0, 0.0],
+            rotation: 0.0,
+            rotational_velocity: 0.0,
+            throttle: 0.0,
+            state: ShipState::Flying,
+            color: [1.0, 0.2, 0.2, 1.0],
+            soi_body: 0,
+            on_rails: false,
+            cached_orbit: None,
+            cached_trajectory: None,
+            trajectory_calc_frame: 0,
+            trajectory_soi_body: 0,
+            frame_counter: 0,
+            temperature: AMBIENT_TEMPERATURE,
+            heat_flux: 0.0,
+            rcs_translate: [0.0, 0.0],
+            proper_time: 0.0,
+            mission_time: 0.0,
+        }
+    }
 }
 
 impl Ship {

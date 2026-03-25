@@ -956,12 +956,9 @@ pub fn render_route_creation_panel(
                     if state.source_body.is_none() && !state.blueprint_name.is_empty() {
                         ui.add_space(4.0);
                         let mut total_cost = 0.0;
-                        // Rocket cost
+                        // Rocket cost (material breakdown + fuel)
                         let rocket_cost = if let Some(bp) = blueprints.get(&state.blueprint_name) {
-                            bp.parts.iter()
-                                .filter_map(|p| part_defs.get(&p.definition_id))
-                                .map(|d| d.cost as f64)
-                                .sum::<f64>()
+                            bp.calculate_cost(part_defs)
                         } else {
                             0.0
                         };

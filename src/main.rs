@@ -840,8 +840,9 @@ fn render_flight_frame(
         // Delete debris vessels that are far from all controllable vessels
         game.flight.cleanup_distant_debris();
 
-        // Check discovery milestones, contracts, R&D science, and colony simulation
+        // Check discovery milestones, government milestones, contracts, R&D science, and colony simulation
         game.check_discovery_milestones();
+        game.check_government_milestones();
         game.check_contracts();
         game.update_rd_science(dt_sim);
         game.update_colonies(dt_sim);
@@ -2333,6 +2334,28 @@ fn render_flight_frame(
                     game.enter_main_menu();
                 }
                 PauseAction::RecoverVessel => {
+                    // Complete tourism contracts on recovery
+                    let tourism_completions = game.contracts.check_tourism_recovery();
+                    for (name, payout) in &tourism_completions {
+                        game.company.money += payout;
+                        log::info!("Tourism contract completed on recovery: {} — {}", name, sunscatter::colony::format_money(*payout));
+                        game.notifications.push(sunscatter::colony::Notification {
+                            kind: sunscatter::colony::NotificationKind::ContractCompleted {
+                                name: name.clone(),
+                                payout: *payout,
+                            },
+                            time: game.solar_system.time,
+                            read: false,
+                        });
+                    }
+                    if !tourism_completions.is_empty() {
+                        game.contracts.refill_pool(
+                            &game.science.discoveries,
+                            &game.solar_system,
+                            game.solar_system.time,
+                        );
+                    }
+
                     // Discard maneuver nodes (vessel is recovered, not shelved)
                     render_state.maneuver_nodes.clear();
                     game.flight.active_maneuver_nodes.clear();
@@ -2760,8 +2783,21 @@ fn render_editor_frame(
     let stage_burn_times: Vec<f64> = stage_dv_burns.iter().map(|(_, bt)| *bt).collect();
     let vessel_cost = game.editor.calculate_vessel_cost(&part_defs);
     let company_money = game.company.money;
-    let mut rd_budget = game.company.rd_budget;
     let mut show_contracts = render_state.show_contracts;
+
+    // Precompute which blueprints have locked parts
+    let locked_blueprints: std::collections::HashSet<String> = blueprint_names.iter()
+        .filter(|name| {
+            game.blueprints.get(name)
+                .map_or(false, |bp| {
+                    bp.parts.iter().any(|p| {
+                        game.part_definitions.get(&p.definition_id)
+                            .map_or(false, |def| !game.tech_tree.is_part_available(&def.name))
+                    })
+                })
+        })
+        .map(|name| name.to_string())
+        .collect();
 
     let result = render_state.render_editor(&vertices, |ctx| {
         action = render_editor_ui(
@@ -2769,74 +2805,44 @@ fn render_editor_frame(
             &mut game.editor,
             &part_defs,
             &blueprint_names,
+            &locked_blueprints,
             &stats,
             &bodies,
             &stage_delta_vs,
             &stage_burn_times,
             company_money,
             vessel_cost,
+            &game.contracts,
             &game.tech_tree,
-            &mut rd_budget,
         );
 
         // Contract board window
         if show_contracts {
+            let mut editor_contract_action = sunscatter::render::ManagementAction::None;
             egui::Window::new("Contracts")
                 .open(&mut show_contracts)
                 .default_width(400.0)
                 .resizable(true)
                 .show(ctx, |ui| {
-                    // Available contracts
-                    ui.heading("Available Contracts");
-                    ui.separator();
-
-                    for &ct in sunscatter::colony::ContractType::all() {
-                        let already_active = game.contracts.active.iter()
-                            .any(|c| c.contract_type == ct);
-
-                        egui::Frame::none()
-                            .fill(egui::Color32::from_rgba_unmultiplied(30, 35, 45, 220))
-                            .rounding(egui::Rounding::same(4.0))
-                            .inner_margin(egui::Margin::same(6.0))
-                            .outer_margin(egui::Margin::symmetric(0.0, 2.0))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(ct.display_name()).strong());
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(egui::RichText::new(
-                                            sunscatter::colony::format_money(ct.payout()))
-                                            .color(egui::Color32::from_rgb(100, 200, 100))
-                                            .size(12.0));
-                                        if already_active {
-                                            ui.label(egui::RichText::new("Active")
-                                                .size(11.0)
-                                                .color(egui::Color32::from_rgb(100, 180, 255)));
-                                        } else if ui.small_button("Accept").clicked() {
-                                            game.contracts.accept(ct);
-                                        }
-                                    });
-                                });
-                                ui.label(egui::RichText::new(ct.description())
-                                    .size(11.0)
-                                    .color(egui::Color32::from_rgb(160, 160, 160)));
-                            });
-                    }
-
-                    if !game.contracts.active.is_empty() {
-                        ui.add_space(10.0);
-                        ui.heading("Active Contracts");
-                        ui.separator();
-                        for contract in &game.contracts.active {
-                            ui.horizontal(|ui| {
-                                ui.label(contract.contract_type.display_name());
-                                ui.label(egui::RichText::new(
-                                    sunscatter::colony::format_money(contract.contract_type.payout()))
-                                    .color(egui::Color32::from_rgb(100, 200, 100))
-                                    .size(12.0));
-                            });
-                        }
-                    }
+                    sunscatter::render::management_ui::render_contracts_section(
+                        ui,
+                        &game.contracts,
+                        &mut editor_contract_action,
+                    );
                 });
+            match editor_contract_action {
+                sunscatter::render::ManagementAction::AcceptContract(id) => {
+                    game.contracts.accept(id);
+                }
+                sunscatter::render::ManagementAction::CancelContract(id) => {
+                    let cancelled_ids = game.contracts.cancel(id);
+                    // Remove payloads from editor parts for cancelled contracts
+                    for part in game.editor.parts.values_mut() {
+                        part.cargo_payloads.retain(|p| !cancelled_ids.contains(&p.contract_id));
+                    }
+                }
+                _ => {}
+            }
         }
 
         // Pause overlay on top of editor
@@ -2910,7 +2916,11 @@ fn render_editor_frame(
         EditorAction::LoadBlueprint(name) => {
             match game.load_blueprint(&name) {
                 Ok(()) => log::info!("Blueprint loaded"),
-                Err(e) => log::error!("Failed to load: {}", e),
+                Err(e) => {
+                    log::error!("Failed to load: {}", e);
+                    game.editor.alert_message = Some(e);
+                    game.editor.alert_timer = 4.0;
+                }
             }
         }
         EditorAction::DeleteBlueprint(name) => {
@@ -2922,19 +2932,11 @@ fn render_editor_frame(
         EditorAction::NewVessel => {
             game.new_vessel();
         }
-        EditorAction::SetRdBudget(budget) => {
-            game.company.rd_budget = budget;
-        }
-        EditorAction::OpenTechTree => {
-            game.enter_tech_tree(GameMode::Editor);
-        }
         EditorAction::OpenContracts => {
             render_state.show_contracts = true;
         }
         EditorAction::None => {}
     }
-    // Sync R&D budget from UI drag value
-    game.company.rd_budget = rd_budget;
 
     // Handle pause action
     match editor_pause_action {
@@ -3221,6 +3223,7 @@ fn render_title_screen_frame(
     let mut show_load_game = game.title_screen.show_load_game;
     let mut new_game_name = game.title_screen.new_game_name.clone();
     let save_list = &game.title_screen.save_list;
+    let mut confirm_delete = game.title_screen.confirm_delete.clone();
 
     match render_state.render_title_screen(|ctx| {
         let mut action = TitleScreenAction::None;
@@ -3295,25 +3298,75 @@ fn render_title_screen_frame(
                                 } else {
                                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                                         for save in save_list {
-                                            let label = format!(
-                                                "{} — {} vessels — {}",
-                                                save.name,
-                                                save.vessel_count,
-                                                sunscatter::game::format_date(save.simulation_time),
-                                            );
-                                            if ui.button(egui::RichText::new(&label).size(16.0)).clicked() {
-                                                action = TitleScreenAction::LoadGame(save.save_id.clone());
-                                            }
+                                            ui.vertical_centered(|ui| {
+                                                ui.horizontal(|ui| {
+                                                    let label = format!(
+                                                        "{} — {} vessels — {}",
+                                                        save.name,
+                                                        save.vessel_count,
+                                                        sunscatter::game::format_date(save.simulation_time),
+                                                    );
+                                                    if ui.button(egui::RichText::new(&label).size(16.0)).clicked() {
+                                                        action = TitleScreenAction::LoadGame(save.save_id.clone());
+                                                    }
+                                                    let delete_btn = ui.small_button(
+                                                        egui::RichText::new("\u{00d7}")
+                                                            .size(16.0)
+                                                            .color(egui::Color32::from_rgb(180, 80, 80)),
+                                                    );
+                                                    if delete_btn.clicked() {
+                                                        confirm_delete = Some(save.save_id.clone());
+                                                    }
+                                                    delete_btn.on_hover_text("Delete save");
+                                                });
+                                            });
                                         }
                                     });
                                 }
                                 ui.add_space(15.0);
                                 if ui.button(egui::RichText::new("Back").size(18.0)).clicked() {
                                     show_load_game = false;
+                                    confirm_delete = None;
                                 }
                             });
                         });
                 });
+
+            // Delete confirmation overlay (shown on top of load dialog)
+            if let Some(delete_id) = confirm_delete.clone() {
+                let delete_name = save_list.iter()
+                    .find(|s| s.save_id == delete_id)
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| delete_id.clone());
+                let confirm_label = format!("Delete \"{}\"?", delete_name);
+                egui::Area::new(egui::Id::new("delete_confirm_overlay"))
+                    .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                    .order(egui::Order::Foreground)
+                    .show(ctx, |ui| {
+                        egui::Frame::none()
+                            .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 220))
+                            .inner_margin(egui::Margin::same(30.0))
+                            .rounding(egui::Rounding::same(8.0))
+                            .show(ui, |ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.label(egui::RichText::new(&confirm_label).size(20.0).color(egui::Color32::WHITE));
+                                    ui.add_space(5.0);
+                                    ui.label(egui::RichText::new("This cannot be undone.").size(14.0).color(egui::Color32::from_rgb(200, 150, 150)));
+                                    ui.add_space(15.0);
+                                    ui.horizontal(|ui| {
+                                        if ui.button(egui::RichText::new("Delete").size(16.0).color(egui::Color32::from_rgb(220, 80, 80))).clicked() {
+                                            action = TitleScreenAction::DeleteGame(delete_id.clone());
+                                            confirm_delete = None;
+                                        }
+                                        ui.add_space(10.0);
+                                        if ui.button(egui::RichText::new("Cancel").size(16.0)).clicked() {
+                                            confirm_delete = None;
+                                        }
+                                    });
+                                });
+                            });
+                    });
+            }
         } else {
             // Main title screen
             egui::Area::new(egui::Id::new("title_screen"))
@@ -3363,6 +3416,19 @@ fn render_title_screen_frame(
                     }
                     return;
                 }
+                TitleScreenAction::DeleteGame(save_id) => {
+                    match SaveGame::delete_save(save_id) {
+                        Ok(()) => {
+                            log::info!("Deleted save: {}", save_id);
+                            game.title_screen.save_list = SaveGame::list_saves();
+                        }
+                        Err(e) => {
+                            log::error!("Failed to delete save: {}", e);
+                        }
+                    }
+                    game.title_screen.confirm_delete = None;
+                    return;
+                }
                 TitleScreenAction::QuitGame => {
                     elwt.exit();
                 }
@@ -3380,6 +3446,7 @@ fn render_title_screen_frame(
             }
             game.title_screen.show_load_game = show_load_game;
             game.title_screen.new_game_name = new_game_name;
+            game.title_screen.confirm_delete = confirm_delete;
         }
         Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
         Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
@@ -3559,7 +3626,8 @@ fn render_tracking_station_frame(
             !(v.ship.periapsis_below_surface(&game.solar_system) && in_landing_zone)
         });
 
-        // Check contracts, R&D science, and update colony simulation
+        // Check milestones, contracts, R&D science, and update colony simulation
+        game.check_government_milestones();
         game.check_contracts();
         game.update_rd_science(dt_sim);
         game.update_colonies(dt_sim);
@@ -3724,7 +3792,8 @@ fn render_colony_frame(
             vessel.ship.update_on_rails(dt_sim, &game.solar_system);
         }
 
-        // Check contracts, R&D science, and update colony simulation
+        // Check milestones, contracts, R&D science, and update colony simulation
+        game.check_government_milestones();
         game.check_contracts();
         game.update_rd_science(dt_sim);
         game.update_colonies(dt_sim);
@@ -4080,6 +4149,7 @@ fn render_colony_overview_frame(
             vessel.ship.update_on_rails(dt_sim, &game.solar_system);
         }
 
+        game.check_government_milestones();
         game.check_contracts();
         game.update_rd_science(dt_sim);
         game.update_colonies(dt_sim);
@@ -4180,6 +4250,7 @@ fn render_management_frame(
             vessel.ship.update_on_rails(dt_sim, &game.solar_system);
         }
 
+        game.check_government_milestones();
         game.check_contracts();
         game.update_rd_science(dt_sim);
         game.update_colonies(dt_sim);
@@ -4221,8 +4292,11 @@ fn render_management_frame(
                 sunscatter::render::ManagementAction::ChangeWarp(idx) => {
                     game.warp_index = idx;
                 }
-                sunscatter::render::ManagementAction::AcceptContract(ct) => {
-                    game.contracts.accept(ct);
+                sunscatter::render::ManagementAction::AcceptContract(id) => {
+                    game.contracts.accept(id);
+                }
+                sunscatter::render::ManagementAction::CancelContract(id) => {
+                    game.contracts.cancel(id);
                 }
                 sunscatter::render::ManagementAction::SetRdBudget(budget) => {
                     game.company.rd_budget = budget;
@@ -4265,6 +4339,7 @@ fn render_tech_tree_frame(
             vessel.ship.update_on_rails(dt_sim, &game.solar_system);
         }
 
+        game.check_government_milestones();
         game.check_contracts();
         game.update_rd_science(dt_sim);
         game.update_colonies(dt_sim);
@@ -4290,6 +4365,7 @@ fn render_tech_tree_frame(
         game.warp_index,
         game.paused,
         &date_str,
+        &game.part_definitions,
     ) {
         Ok((new_warp_index, action)) => {
             game.warp_index = new_warp_index;

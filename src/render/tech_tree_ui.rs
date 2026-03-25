@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::colony::{ScienceState, TechTree};
+use crate::parts::PartDefinitions;
 use super::types::TechTreeScreenAction;
 
 const NODE_W: f32 = 160.0;
@@ -71,6 +72,7 @@ pub fn render_tech_tree_screen(
     date_str: &str,
     paused: bool,
     active_toasts: &[(String, std::time::Instant)],
+    part_defs: &PartDefinitions,
 ) -> TechTreeScreenAction {
     let mut action = TechTreeScreenAction::None;
 
@@ -151,13 +153,16 @@ pub fn render_tech_tree_screen(
         return action;
     }
 
-    // Get selected node/line from egui temp data
+    // Get selected node/line/part from egui temp data
     let selected_node_key = egui::Id::new("tech_tree_selected_node");
     let selected_line_key = egui::Id::new("tech_tree_selected_line");
+    let selected_part_key = egui::Id::new("tech_tree_selected_part");
     let selected_node_id: Option<String> =
         ctx.data_mut(|d| d.get_temp::<Option<String>>(selected_node_key).flatten());
     let selected_line_id: Option<String> =
         ctx.data_mut(|d| d.get_temp::<Option<String>>(selected_line_key).flatten());
+    let selected_part_name: Option<String> =
+        ctx.data_mut(|d| d.get_temp::<Option<String>>(selected_part_key).flatten());
 
     // === Detail side panel (right) — tech node ===
     if let Some(ref sel_id) = selected_node_id {
@@ -229,7 +234,7 @@ pub fn render_tech_tree_screen(
                             ui.add_space(8.0);
                         }
 
-                        // Unlocks Parts
+                        // Unlocks Parts (clickable for info)
                         if !node.unlocks_parts.is_empty() {
                             ui.label(
                                 egui::RichText::new("Unlocks Parts:")
@@ -237,9 +242,34 @@ pub fn render_tech_tree_screen(
                                     .strong(),
                             );
                             for part in &node.unlocks_parts {
-                                ui.label(format!("  {}", part));
+                                let is_selected_part = selected_part_name.as_ref() == Some(part);
+                                let color = if is_selected_part {
+                                    egui::Color32::from_rgb(100, 180, 255)
+                                } else {
+                                    egui::Color32::from_rgb(160, 200, 255)
+                                };
+                                if ui.link(
+                                    egui::RichText::new(format!("  {}", part))
+                                        .color(color)
+                                        .size(12.0),
+                                ).clicked() {
+                                    let new_val = if is_selected_part { None } else { Some(part.clone()) };
+                                    ctx.data_mut(|d| {
+                                        d.insert_temp::<Option<String>>(selected_part_key, new_val);
+                                    });
+                                }
                             }
                             ui.add_space(8.0);
+                        }
+
+                        // Part info sub-panel (when a part is clicked)
+                        if let Some(ref part_name) = selected_part_name {
+                            if node.unlocks_parts.contains(part_name) {
+                                if let Some(def) = part_defs.find_by_name(part_name) {
+                                    ui.separator();
+                                    crate::editor::render_part_info(ui, def, "tech_tree");
+                                }
+                            }
                         }
 
                         // Unlocks Buildings
