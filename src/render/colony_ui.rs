@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::colony::{BuildingType, Colony, ColonyManager, FactoryRecipe, ResourceType};
+use crate::colony::{BuildingType, Colony, ColonyManager, FactoryRecipe, FleetManager, ResourceType};
+use super::types::TradeAction;
 
 // ============================================================
 // Format helpers
@@ -122,7 +123,7 @@ const ALL_RECIPES: &[FactoryRecipe] = &[
 // ============================================================
 
 /// Actions returned by the colony screen.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ColonyScreenAction {
     None,
     QueueBuilding(usize, BuildingType),
@@ -135,11 +136,13 @@ pub enum ColonyScreenAction {
     ReturnToFlight,
     GoToTrackingStation,
     GoToMainMenu,
+    GoToColonyOverview,
     ChangeWarp(usize),
     SwitchColony(usize),
     DebugAddResource(usize, ResourceType, f64),
     DebugAddBuilding(usize, BuildingType),
     DebugAddCrew(usize, u32),
+    Trade(TradeAction),
 }
 
 // ============================================================
@@ -1346,6 +1349,8 @@ pub fn render_colony_screen(
     active_toasts: &[(String, std::time::Instant)],
     solar_power_factor: f64,
     tech_tree: &crate::colony::TechTree,
+    fleet: &FleetManager,
+    earth_index: usize,
 ) -> ColonyScreenAction {
     let mut action = ColonyScreenAction::None;
 
@@ -1455,6 +1460,13 @@ pub fn render_colony_screen(
                             }
                             ui.add_space(8.0);
                             if ui
+                                .button(egui::RichText::new("Colony Overview").size(18.0))
+                                .clicked()
+                            {
+                                action = ColonyScreenAction::GoToColonyOverview;
+                            }
+                            ui.add_space(8.0);
+                            if ui
                                 .button(egui::RichText::new("Main Menu").size(18.0))
                                 .clicked()
                             {
@@ -1512,7 +1524,18 @@ pub fn render_colony_screen(
                 // 6. Resources card
                 render_resources_card(ui, colony, &rates);
 
-                // 7. Debug section (no card frame)
+                // 7. Trade routes section (read-only)
+                {
+                    ui.add_space(4.0);
+                    let trade_action = super::trade_ui::render_colony_trade_section(
+                        ui, body_index, fleet, body_names, earth_index,
+                    );
+                    if trade_action != TradeAction::None {
+                        action = ColonyScreenAction::Trade(trade_action);
+                    }
+                }
+
+                // 8. Debug section (no card frame)
                 ui.add_space(4.0);
                 egui::CollapsingHeader::new("Debug")
                     .default_open(false)

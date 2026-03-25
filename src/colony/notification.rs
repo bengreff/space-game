@@ -8,6 +8,10 @@ pub enum NotificationKind {
     ColonyResourceDepleted { colony_name: String, resource: String },
     ColonyPowerLoss { colony_name: String },
     ConstructionComplete { colony_name: String, building: String },
+    ShipArrived { ship_name: String, destination: String },
+    ShipDeparted { ship_name: String, route_name: String },
+    RoutePaused { route_name: String, reason: String },
+    ShipConstructionComplete { ship_name: String, location: String },
 }
 
 impl NotificationKind {
@@ -18,6 +22,7 @@ impl NotificationKind {
             NotificationKind::ColonyFoodDepleted { .. }
                 | NotificationKind::ColonyResourceDepleted { .. }
                 | NotificationKind::ColonyPowerLoss { .. }
+                | NotificationKind::RoutePaused { .. }
         )
     }
 
@@ -38,6 +43,18 @@ impl NotificationKind {
             }
             NotificationKind::ConstructionComplete { colony_name, building } => {
                 format!("{}: {} construction complete", colony_name, building)
+            }
+            NotificationKind::ShipArrived { ship_name, destination } => {
+                format!("{} arrived at {}", ship_name, destination)
+            }
+            NotificationKind::ShipDeparted { ship_name, route_name } => {
+                format!("{} departed on route {}", ship_name, route_name)
+            }
+            NotificationKind::RoutePaused { route_name, reason } => {
+                format!("Route {} paused: {}", route_name, reason)
+            }
+            NotificationKind::ShipConstructionComplete { ship_name, location } => {
+                format!("{} construction complete at {}", ship_name, location)
             }
         }
     }

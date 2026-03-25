@@ -3,8 +3,8 @@ use egui_wgpu::ScreenDescriptor;
 use super::colony_ui::ColonyScreenAction;
 use super::formatting::{format_duration, format_distance, format_mass, format_pressure};
 use super::types::{
-    BodyInfoData, MainMenuAction, PauseAction, TitleScreenAction, TrackingStationAction,
-    TrackingVesselData,
+    BodyInfoData, ColonyOverviewAction, MainMenuAction, ManagementAction, PauseAction,
+    TechTreeScreenAction, TitleScreenAction, TrackingStationAction, TrackingVesselData,
 };
 use super::state::RenderState;
 
@@ -599,6 +599,9 @@ impl RenderState {
         body_atmospheric: &[Vec<crate::colony::ResourceType>],
         can_return_to_flight: bool,
         solar_power_factor: f64,
+        tech_tree: &crate::colony::TechTree,
+        fleet: &crate::colony::FleetManager,
+        earth_index: usize,
     ) -> Result<(usize, ColonyScreenAction), wgpu::SurfaceError> {
         self.update_camera_buffer();
 
@@ -627,12 +630,15 @@ impl RenderState {
                 can_return_to_flight,
                 &self.active_toasts,
                 solar_power_factor,
+                tech_tree,
+                fleet,
+                earth_index,
             );
-            colony_action = result;
             // Extract warp change if that was the action
-            if let ColonyScreenAction::ChangeWarp(idx) = result {
-                new_warp_index = idx;
+            if let ColonyScreenAction::ChangeWarp(idx) = &result {
+                new_warp_index = *idx;
             }
+            colony_action = result;
         });
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
@@ -702,5 +708,397 @@ impl RenderState {
         output.present();
 
         Ok((new_warp_index, colony_action))
+    }
+
+    /// Render colony overview screen: planets + full-screen colony list.
+    pub fn render_colony_overview(
+        &mut self,
+        colony_manager: &crate::colony::ColonyManager,
+        body_names: &[String],
+        warp_levels: &[f64],
+        current_warp_index: usize,
+        paused: bool,
+        date_str: &str,
+        company_money: f64,
+        science_available: f64,
+        fleet: &crate::colony::FleetManager,
+        earth_index: usize,
+        blueprints: &crate::parts::BlueprintRegistry,
+        part_defs: &crate::parts::PartDefinitions,
+        solar_system: &crate::bodies::SolarSystem,
+        sim_time: f64,
+    ) -> Result<(usize, ColonyOverviewAction), wgpu::SurfaceError> {
+        self.update_camera_buffer();
+
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut new_warp_index = current_warp_index;
+        let mut overview_action = ColonyOverviewAction::None;
+
+        let raw_input = self.egui_state.take_egui_input(&self.window);
+        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            let result = super::colony_overview_ui::render_colony_overview_screen(
+                ctx,
+                colony_manager,
+                body_names,
+                warp_levels,
+                current_warp_index,
+                date_str,
+                paused,
+                company_money,
+                science_available,
+                &self.active_toasts,
+                fleet,
+                earth_index,
+                &mut self.route_creation,
+                blueprints,
+                part_defs,
+                solar_system,
+                sim_time,
+            );
+            if let ColonyOverviewAction::ChangeWarp(idx) = &result {
+                new_warp_index = *idx;
+            }
+            overview_action = result;
+        });
+
+        self.egui_state
+            .handle_platform_output(&self.window, full_output.platform_output);
+        let tris = self
+            .egui_ctx
+            .tessellate(full_output.shapes, full_output.pixels_per_point);
+        for (id, image_delta) in &full_output.textures_delta.set {
+            self.egui_renderer
+                .update_texture(&self.device, &self.queue, *id, image_delta);
+        }
+
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [self.size.width, self.size.height],
+            pixels_per_point: self.window.scale_factor() as f32,
+        };
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Colony Overview Render Encoder"),
+            });
+        self.egui_renderer.update_buffers(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &tris,
+            &screen_descriptor,
+        );
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Colony Overview Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.msaa_view,
+                    resolve_target: Some(&view),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.sprite_atlas.bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+        }
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Colony Overview Egui Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            self.egui_renderer
+                .render(&mut render_pass, &tris, &screen_descriptor);
+        }
+
+        for id in &full_output.textures_delta.free {
+            self.egui_renderer.free_texture(id);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok((new_warp_index, overview_action))
+    }
+
+    /// Render management screen: planets + full-screen management UI.
+    pub fn render_management(
+        &mut self,
+        company: &crate::colony::Company,
+        science: &crate::colony::ScienceState,
+        contracts: &crate::colony::ContractManager,
+        rd_budget: f64,
+        warp_levels: &[f64],
+        current_warp_index: usize,
+        paused: bool,
+        date_str: &str,
+    ) -> Result<(usize, ManagementAction, f64), wgpu::SurfaceError> {
+        self.update_camera_buffer();
+
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut new_warp_index = current_warp_index;
+        let mut mgmt_action = ManagementAction::None;
+        let mut new_budget = rd_budget;
+
+        let raw_input = self.egui_state.take_egui_input(&self.window);
+        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            let (act, bud) = super::management_ui::render_management_screen(
+                ctx,
+                company,
+                science,
+                contracts,
+                rd_budget,
+                warp_levels,
+                current_warp_index,
+                date_str,
+                paused,
+                &self.active_toasts,
+            );
+            mgmt_action = act;
+            new_budget = bud;
+            if let ManagementAction::ChangeWarp(idx) = act {
+                new_warp_index = idx;
+            }
+        });
+
+        self.egui_state
+            .handle_platform_output(&self.window, full_output.platform_output);
+        let tris = self
+            .egui_ctx
+            .tessellate(full_output.shapes, full_output.pixels_per_point);
+        for (id, image_delta) in &full_output.textures_delta.set {
+            self.egui_renderer
+                .update_texture(&self.device, &self.queue, *id, image_delta);
+        }
+
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [self.size.width, self.size.height],
+            pixels_per_point: self.window.scale_factor() as f32,
+        };
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Management Render Encoder"),
+            });
+        self.egui_renderer.update_buffers(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &tris,
+            &screen_descriptor,
+        );
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Management Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.msaa_view,
+                    resolve_target: Some(&view),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.sprite_atlas.bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+        }
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Management Egui Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            self.egui_renderer
+                .render(&mut render_pass, &tris, &screen_descriptor);
+        }
+
+        for id in &full_output.textures_delta.free {
+            self.egui_renderer.free_texture(id);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok((new_warp_index, mgmt_action, new_budget))
+    }
+
+    /// Render full-screen tech tree: planets + tech tree graph.
+    pub fn render_tech_tree_screen(
+        &mut self,
+        tech_tree: &mut crate::colony::TechTree,
+        science: &mut crate::colony::ScienceState,
+        warp_levels: &[f64],
+        current_warp_index: usize,
+        paused: bool,
+        date_str: &str,
+    ) -> Result<(usize, TechTreeScreenAction), wgpu::SurfaceError> {
+        self.update_camera_buffer();
+
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut new_warp_index = current_warp_index;
+        let mut tt_action = TechTreeScreenAction::None;
+
+        let raw_input = self.egui_state.take_egui_input(&self.window);
+        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            let result = super::tech_tree_ui::render_tech_tree_screen(
+                ctx,
+                tech_tree,
+                science,
+                warp_levels,
+                current_warp_index,
+                date_str,
+                paused,
+                &self.active_toasts,
+            );
+            tt_action = result;
+            if let TechTreeScreenAction::ChangeWarp(idx) = result {
+                new_warp_index = idx;
+            }
+        });
+
+        self.egui_state
+            .handle_platform_output(&self.window, full_output.platform_output);
+        let tris = self
+            .egui_ctx
+            .tessellate(full_output.shapes, full_output.pixels_per_point);
+        for (id, image_delta) in &full_output.textures_delta.set {
+            self.egui_renderer
+                .update_texture(&self.device, &self.queue, *id, image_delta);
+        }
+
+        let screen_descriptor = ScreenDescriptor {
+            size_in_pixels: [self.size.width, self.size.height],
+            pixels_per_point: self.window.scale_factor() as f32,
+        };
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Tech Tree Render Encoder"),
+            });
+        self.egui_renderer.update_buffers(
+            &self.device,
+            &self.queue,
+            &mut encoder,
+            &tris,
+            &screen_descriptor,
+        );
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Tech Tree Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.msaa_view,
+                    resolve_target: Some(&view),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.body_texture_bind_group, &[]);
+            render_pass.set_bind_group(2, &self.sprite_atlas.bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+        }
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Tech Tree Egui Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            self.egui_renderer
+                .render(&mut render_pass, &tris, &screen_descriptor);
+        }
+
+        for id in &full_output.textures_delta.free {
+            self.egui_renderer.free_texture(id);
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok((new_warp_index, tt_action))
     }
 }

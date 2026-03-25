@@ -10,6 +10,8 @@ src/colony/
   resources.rs    — ResourceType, ResourceInventory, Company
   buildings.rs    — BuildingType, FactoryRecipe, BuildingInstance, Colony, ColonyManager
   tech.rs         — TechNodeData, TechLineData, TechTree, DiscoveryTracker, ScienceState
+  economy.rs      — MaterialBreakdown, cost computation, format_money, science rewards
+  contracts.rs    — ContractType, Contract, ContractManager
 ```
 
 ## Resources (`resources.rs`)
@@ -103,6 +105,7 @@ Fields on `Game`:
 - `company: Company`
 - `science: ScienceState`
 - `tech_tree: TechTree`
+- `contracts: ContractManager`
 - `colony_view_body_index: Option<usize>` — body index of colony being viewed in Colony mode
 - `colony_return_mode: Option<GameMode>` — which mode to return to when leaving Colony mode
 
@@ -112,11 +115,12 @@ Initialized in `new()` (tech tree loaded from file) and reset in `reset_for_new_
 
 ## Save System (`save.rs`)
 
-Five new fields on `SaveGame`, all with `#[serde(default)]`:
+Fields on `SaveGame`, all with `#[serde(default)]`:
 - `colonies: ColonyManager`
 - `company: Company`
 - `science: ScienceState`
 - `tech_unlocked: HashSet<String>` — which nodes are researched
 - `tech_line_tiers: HashMap<String, u32>` — efficiency line progress
+- `contracts: ContractManager`
 
 Tech tree static data NOT saved — reloaded from `data/tech/tree.ron` at startup. Version check changed from `!=` to `>` to accept current and older save versions.

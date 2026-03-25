@@ -29,9 +29,9 @@ An egui top panel named "time_warp_panel" SHALL display time warp controls and o
 #### Scenario: Current warp display
 - After separator: "Current: {warp}x" where warp is cast to i64
 
-### Requirement: FPS counter
+### Requirement: FPS counter and economy display
 
-A frames-per-second counter SHALL be displayed right-aligned in the time warp panel row. The value is smoothed using an exponential moving average (`fps = fps * 0.95 + instant * 0.05`). Displayed as "{fps:.0} fps" in gray text at size 11.
+Right-aligned in the time warp panel row: company money (green, size 11, formatted via `format_money()`), science available ("Sci: {value:.0}", blue `rgb(100, 180, 255)`, size 11), separator, FPS counter ("{fps:.0} fps" in gray text at size 11). FPS smoothed via exponential moving average (`fps = fps * 0.95 + instant * 0.05`).
 
 ## Orbital Information
 

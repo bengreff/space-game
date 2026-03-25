@@ -1258,6 +1258,38 @@ impl EditorState {
         stats
     }
 
+    /// Calculate the total vessel cost in dollars (material + fuel).
+    pub fn calculate_vessel_cost(&self, part_defs: &PartDefinitions) -> f64 {
+        use crate::colony::economy::{material_breakdown, fuel_price_per_kg, LOX_PRICE_PER_KG};
+
+        let mut total = 0.0;
+
+        for part in self.parts.values() {
+            let Some(def) = part_defs.get(&part.definition_id) else {
+                continue;
+            };
+
+            // Material cost from dry mass
+            let dry_mass_kg = def.mass * 1000.0; // tonnes → kg
+            let breakdown = material_breakdown(def);
+            let masses = breakdown.to_masses(dry_mass_kg);
+            total += masses.earth_cost();
+
+            // Fuel cost from filled tanks
+            if let Some(ref tank) = def.tank {
+                if part.fill_fraction > 0.0 && part.fuel_type != FuelType::Empty {
+                    let (ox_kg, fuel_kg) = tank.propellant_capacity(part.fuel_type);
+                    let filled_ox = ox_kg * part.fill_fraction;
+                    let filled_fuel = fuel_kg * part.fill_fraction;
+                    total += filled_ox * LOX_PRICE_PER_KG;
+                    total += filled_fuel * fuel_price_per_kg(part.fuel_type);
+                }
+            }
+        }
+
+        total
+    }
+
     /// Compute fuel zones among non-decoupled editor parts.
     /// BFS through weld adjacency; non-crossfeed decouplers act as barriers.
     /// Returns a map from part ID to zone index.

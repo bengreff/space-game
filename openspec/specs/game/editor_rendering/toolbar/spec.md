@@ -4,7 +4,7 @@ The top toolbar with vessel actions, symmetry mode, launch button, and part coun
 
 ### Requirement: Toolbar layout
 
-The toolbar SHALL be a top panel containing: "Vehicle Editor" heading, separator, New/Save/Load buttons, separator, symmetry mode control, separator, Launch button, separator, Exit to Flight button, and right-aligned part count.
+The toolbar SHALL be a top panel containing: "Vehicle Editor" heading, separator, New/Save/Load buttons, separator, symmetry mode control, separator, Launch button, separator, Research button, Contracts button, R&D budget drag value, and right-aligned company balance and part count.
 
 ### Requirement: Launch button enabled state
 
@@ -18,6 +18,22 @@ Launching SHALL fail with an error if the vessel has no controllable part (no po
 
 The toolbar SHALL include an "Exit to Flight" button that returns to flight mode without launching a new vessel.
 
-### Requirement: Part count display
+### Requirement: Part count and balance display
 
-The toolbar SHALL display "Parts: {count}" right-aligned, showing the total number of placed parts.
+The toolbar SHALL display company balance (green, formatted via `format_money()`) and "Parts: {count}" right-aligned.
+
+### Requirement: Research button
+
+A "Research" button SHALL navigate to the full-screen Tech Tree (`EditorAction::OpenTechTree`), which transitions `GameMode` to `TechTree` and records the Editor as the return mode. Clicking "Back" in the Tech Tree SHALL return the user to the Editor.
+
+### Requirement: Contracts button
+
+A "Contracts" button SHALL open the contract board window (`EditorAction::OpenContracts`).
+
+### Requirement: R&D budget control
+
+An R&D budget DragValue SHALL be displayed labeled "R&D:", showing budget in millions per year (suffix "M/yr"), range 0-1000, step 0.5. Changes emit `EditorAction::SetRdBudget(f64)`.
+
+### Requirement: Launch cost check
+
+Launching SHALL fail with an error if the vessel cost exceeds company money. The error message includes both the vessel cost and available funds, formatted via `format_money()`.

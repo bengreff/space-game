@@ -8,9 +8,13 @@ Part selection, placement, dragging, deletion, and info display in the vehicle e
 
 The parts palette SHALL display selectable tabs for each `PartCategory`. The default selected category SHALL be `Pods`.
 
+### Requirement: Tech tree gating
+
+Parts in the palette SHALL be filtered by `tech_tree.is_part_available(&part.name)`. Only parts unlocked via the tech tree or in the default unlocked list are shown. This filter applies to both the Interstellar flat list and the size-grouped categories.
+
 ### Requirement: Size grouping
 
-Within a selected category, parts SHALL be grouped by `PartSize` under collapsible headers (default open). Sizes with no parts in the current category SHALL be hidden. Size categories: Tiny (1 grid square, 0.5m), Small (3, 1.5m), Medium (5, 2.5m), Large (9, 4.5m), XL (13, 6.5m). Categories: Command, Engines, Fuel Tanks, Structural, Aerodynamic, Utility, Electricity, Interstellar.
+Within a selected category, parts SHALL be grouped by `PartSize` under collapsible headers (default open). Sizes with no unlocked parts in the current category SHALL be hidden entirely. Size categories: Tiny (1 grid square, 0.5m), Small (3, 1.5m), Medium (5, 2.5m), Large (9, 4.5m), XL (13, 6.5m). Categories: Command, Engines, Fuel Tanks, Structural, Aerodynamic, Utility, Electricity, Interstellar.
 
 ### Requirement: Flat Interstellar palette
 

@@ -274,6 +274,24 @@ fn main() {
                                         &mut render_state,
                                     );
                                 }
+                                GameMode::ColonyOverview => {
+                                    render_colony_overview_frame(
+                                        &mut game,
+                                        &mut render_state,
+                                    );
+                                }
+                                GameMode::Management => {
+                                    render_management_frame(
+                                        &mut game,
+                                        &mut render_state,
+                                    );
+                                }
+                                GameMode::TechTree => {
+                                    render_tech_tree_frame(
+                                        &mut game,
+                                        &mut render_state,
+                                    );
+                                }
                             }
 
                             // Auto-save check
@@ -291,7 +309,8 @@ fn main() {
 
                         WindowEvent::MouseInput { state, button, .. } => {
                             match game.mode {
-                                GameMode::TitleScreen | GameMode::MainMenu | GameMode::Colony => {
+                                GameMode::TitleScreen | GameMode::MainMenu | GameMode::Colony
+                                | GameMode::ColonyOverview | GameMode::Management | GameMode::TechTree => {
                                     // egui-only handling (buttons in menu)
                                 }
                                 GameMode::Flight => {
@@ -333,7 +352,8 @@ fn main() {
                             let y = position.y as f32;
 
                             match game.mode {
-                                GameMode::TitleScreen | GameMode::MainMenu | GameMode::Colony => {
+                                GameMode::TitleScreen | GameMode::MainMenu | GameMode::Colony
+                                | GameMode::ColonyOverview | GameMode::Management | GameMode::TechTree => {
                                     render_state.camera.last_mouse_pos = [x, y];
                                 }
                                 GameMode::Flight => {
@@ -370,7 +390,8 @@ fn main() {
                                 let zoom_factor = 1.0 + scroll_amount * 0.1;
 
                                 match game.mode {
-                                    GameMode::Flight | GameMode::TrackingStation | GameMode::Colony => {
+                                    GameMode::Flight | GameMode::TrackingStation | GameMode::Colony
+                                    | GameMode::ColonyOverview | GameMode::Management | GameMode::TechTree => {
                                         render_state.camera.zoom_by(zoom_factor);
                                     }
                                     GameMode::TitleScreen | GameMode::MainMenu => {
@@ -415,7 +436,8 @@ fn main() {
                                 }
                             } else if !game.paused {
                                 match game.mode {
-                                    GameMode::TitleScreen | GameMode::MainMenu | GameMode::TrackingStation | GameMode::Colony => {
+                                    GameMode::TitleScreen | GameMode::MainMenu | GameMode::TrackingStation | GameMode::Colony
+                                    | GameMode::ColonyOverview | GameMode::Management | GameMode::TechTree => {
                                         // No keyboard shortcuts in these modes
                                     }
                                     GameMode::Flight => {
@@ -818,7 +840,10 @@ fn render_flight_frame(
         // Delete debris vessels that are far from all controllable vessels
         game.flight.cleanup_distant_debris();
 
-        // Update colony simulation
+        // Check discovery milestones, contracts, R&D science, and colony simulation
+        game.check_discovery_milestones();
+        game.check_contracts();
+        game.update_rd_science(dt_sim);
         game.update_colonies(dt_sim);
 
         // Collision detection: active vs inactive vessels during physics warp (1x-10x)
@@ -2268,6 +2293,10 @@ fn render_flight_frame(
         _ => false,
     };
 
+    // Set economy/science HUD state
+    render_state.company_money = game.company.money;
+    render_state.science_available = game.science.available;
+
     // Set colony-related render state
     render_state.can_establish_colony = match game.flight.ship.state {
         ShipState::Landed { body_index, .. } => {
@@ -2729,6 +2758,10 @@ fn render_editor_frame(
     let stage_dv_burns = game.editor.calculate_stage_delta_v(&part_defs);
     let stage_delta_vs: Vec<f64> = stage_dv_burns.iter().map(|(dv, _)| *dv).collect();
     let stage_burn_times: Vec<f64> = stage_dv_burns.iter().map(|(_, bt)| *bt).collect();
+    let vessel_cost = game.editor.calculate_vessel_cost(&part_defs);
+    let company_money = game.company.money;
+    let mut rd_budget = game.company.rd_budget;
+    let mut show_contracts = render_state.show_contracts;
 
     let result = render_state.render_editor(&vertices, |ctx| {
         action = render_editor_ui(
@@ -2740,7 +2773,71 @@ fn render_editor_frame(
             &bodies,
             &stage_delta_vs,
             &stage_burn_times,
+            company_money,
+            vessel_cost,
+            &game.tech_tree,
+            &mut rd_budget,
         );
+
+        // Contract board window
+        if show_contracts {
+            egui::Window::new("Contracts")
+                .open(&mut show_contracts)
+                .default_width(400.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    // Available contracts
+                    ui.heading("Available Contracts");
+                    ui.separator();
+
+                    for &ct in sunscatter::colony::ContractType::all() {
+                        let already_active = game.contracts.active.iter()
+                            .any(|c| c.contract_type == ct);
+
+                        egui::Frame::none()
+                            .fill(egui::Color32::from_rgba_unmultiplied(30, 35, 45, 220))
+                            .rounding(egui::Rounding::same(4.0))
+                            .inner_margin(egui::Margin::same(6.0))
+                            .outer_margin(egui::Margin::symmetric(0.0, 2.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new(ct.display_name()).strong());
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(egui::RichText::new(
+                                            sunscatter::colony::format_money(ct.payout()))
+                                            .color(egui::Color32::from_rgb(100, 200, 100))
+                                            .size(12.0));
+                                        if already_active {
+                                            ui.label(egui::RichText::new("Active")
+                                                .size(11.0)
+                                                .color(egui::Color32::from_rgb(100, 180, 255)));
+                                        } else if ui.small_button("Accept").clicked() {
+                                            game.contracts.accept(ct);
+                                        }
+                                    });
+                                });
+                                ui.label(egui::RichText::new(ct.description())
+                                    .size(11.0)
+                                    .color(egui::Color32::from_rgb(160, 160, 160)));
+                            });
+                    }
+
+                    if !game.contracts.active.is_empty() {
+                        ui.add_space(10.0);
+                        ui.heading("Active Contracts");
+                        ui.separator();
+                        for contract in &game.contracts.active {
+                            ui.horizontal(|ui| {
+                                ui.label(contract.contract_type.display_name());
+                                ui.label(egui::RichText::new(
+                                    sunscatter::colony::format_money(contract.contract_type.payout()))
+                                    .color(egui::Color32::from_rgb(100, 200, 100))
+                                    .size(12.0));
+                            });
+                        }
+                    }
+                });
+        }
 
         // Pause overlay on top of editor
         if paused {
@@ -2764,6 +2861,7 @@ fn render_editor_frame(
                 });
         }
     });
+    render_state.show_contracts = show_contracts;
 
     // Handle editor actions
     match action {
@@ -2824,8 +2922,19 @@ fn render_editor_frame(
         EditorAction::NewVessel => {
             game.new_vessel();
         }
+        EditorAction::SetRdBudget(budget) => {
+            game.company.rd_budget = budget;
+        }
+        EditorAction::OpenTechTree => {
+            game.enter_tech_tree(GameMode::Editor);
+        }
+        EditorAction::OpenContracts => {
+            render_state.show_contracts = true;
+        }
         EditorAction::None => {}
     }
+    // Sync R&D budget from UI drag value
+    game.company.rd_budget = rd_budget;
 
     // Handle pause action
     match editor_pause_action {
@@ -3367,6 +3476,14 @@ fn render_main_menu_frame(
                                 if ui.button(egui::RichText::new("Tracking Station").size(20.0)).clicked() {
                                     action = MainMenuAction::TrackingStation;
                                 }
+                                ui.add_space(10.0);
+                                if ui.button(egui::RichText::new("Colonies").size(20.0)).clicked() {
+                                    action = MainMenuAction::Colonies;
+                                }
+                                ui.add_space(10.0);
+                                if ui.button(egui::RichText::new("Management").size(20.0)).clicked() {
+                                    action = MainMenuAction::Management;
+                                }
                             });
                         });
                 });
@@ -3384,6 +3501,16 @@ fn render_main_menu_frame(
                     // Zoom so Earth fills ~half the screen
                     let earth_radius_world = game.solar_system.bodies[game.solar_system.earth_index].radius * SCALE * BODY_SCALE;
                     render_state.camera.zoom = (0.25 / earth_radius_world) as f32;
+                },
+                MainMenuAction::Colonies => {
+                    game.enter_colony_overview();
+                    render_state.focus_on_body(game.solar_system.sun_index);
+                    render_state.camera.zoom = 0.002;
+                },
+                MainMenuAction::Management => {
+                    game.enter_management();
+                    render_state.focus_on_body(game.solar_system.sun_index);
+                    render_state.camera.zoom = 0.002;
                 },
                 MainMenuAction::Quit => {
                     save_and_quit_to_title(game, render_state);
@@ -3432,7 +3559,9 @@ fn render_tracking_station_frame(
             !(v.ship.periapsis_below_surface(&game.solar_system) && in_landing_zone)
         });
 
-        // Update colony simulation
+        // Check contracts, R&D science, and update colony simulation
+        game.check_contracts();
+        game.update_rd_science(dt_sim);
         game.update_colonies(dt_sim);
     }
 
@@ -3595,7 +3724,9 @@ fn render_colony_frame(
             vessel.ship.update_on_rails(dt_sim, &game.solar_system);
         }
 
-        // Update colony simulation
+        // Check contracts, R&D science, and update colony simulation
+        game.check_contracts();
+        game.update_rd_science(dt_sim);
         game.update_colonies(dt_sim);
     }
 
@@ -3642,6 +3773,9 @@ fn render_colony_frame(
         &colony_body_atmospheric,
         can_return_to_flight,
         solar_power_factor,
+        &game.tech_tree,
+        &game.fleet,
+        game.solar_system.earth_index,
     ) {
         Ok((new_warp_index, action)) => {
             game.warp_index = new_warp_index;
@@ -3654,67 +3788,87 @@ fn render_colony_frame(
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::AddMineAssignment(bi, resource) => {
+                sunscatter::render::ColonyScreenAction::AddMineAssignment(bi, resource, count) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
-                        // Find first unassigned mine and assign it
-                        if let Some(building) = colony.buildings.iter_mut().find(|b| {
-                            b.building_type == sunscatter::colony::BuildingType::Mine
-                                && b.assigned_resource.is_none()
-                        }) {
-                            building.assigned_resource = Some(resource);
+                        for _ in 0..count {
+                            if let Some(building) = colony.buildings.iter_mut().find(|b| {
+                                b.building_type == sunscatter::colony::BuildingType::Mine
+                                    && b.assigned_resource.is_none()
+                            }) {
+                                building.assigned_resource = Some(resource);
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::RemoveMineAssignment(bi, resource) => {
+                sunscatter::render::ColonyScreenAction::RemoveMineAssignment(bi, resource, count) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
-                        // Find first mine assigned to this resource and unassign it
-                        if let Some(building) = colony.buildings.iter_mut().find(|b| {
-                            b.building_type == sunscatter::colony::BuildingType::Mine
-                                && b.assigned_resource == Some(resource)
-                        }) {
-                            building.assigned_resource = None;
+                        for _ in 0..count {
+                            if let Some(building) = colony.buildings.iter_mut().find(|b| {
+                                b.building_type == sunscatter::colony::BuildingType::Mine
+                                    && b.assigned_resource == Some(resource)
+                            }) {
+                                building.assigned_resource = None;
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::AddCollectorAssignment(bi, resource) => {
+                sunscatter::render::ColonyScreenAction::AddCollectorAssignment(bi, resource, count) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
-                        if let Some(building) = colony.buildings.iter_mut().find(|b| {
-                            b.building_type == sunscatter::colony::BuildingType::AtmosphericCollector
-                                && b.assigned_resource.is_none()
-                        }) {
-                            building.assigned_resource = Some(resource);
+                        for _ in 0..count {
+                            if let Some(building) = colony.buildings.iter_mut().find(|b| {
+                                b.building_type == sunscatter::colony::BuildingType::AtmosphericCollector
+                                    && b.assigned_resource.is_none()
+                            }) {
+                                building.assigned_resource = Some(resource);
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::RemoveCollectorAssignment(bi, resource) => {
+                sunscatter::render::ColonyScreenAction::RemoveCollectorAssignment(bi, resource, count) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
-                        if let Some(building) = colony.buildings.iter_mut().find(|b| {
-                            b.building_type == sunscatter::colony::BuildingType::AtmosphericCollector
-                                && b.assigned_resource == Some(resource)
-                        }) {
-                            building.assigned_resource = None;
+                        for _ in 0..count {
+                            if let Some(building) = colony.buildings.iter_mut().find(|b| {
+                                b.building_type == sunscatter::colony::BuildingType::AtmosphericCollector
+                                    && b.assigned_resource == Some(resource)
+                            }) {
+                                building.assigned_resource = None;
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::AddFactoryAssignment(bi, recipe) => {
+                sunscatter::render::ColonyScreenAction::AddFactoryAssignment(bi, recipe, count) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
-                        // Find first unassigned factory and assign it
-                        if let Some(building) = colony.buildings.iter_mut().find(|b| {
-                            b.building_type == sunscatter::colony::BuildingType::Factory
-                                && b.assigned_recipe.is_none()
-                        }) {
-                            building.assigned_recipe = Some(recipe);
+                        for _ in 0..count {
+                            if let Some(building) = colony.buildings.iter_mut().find(|b| {
+                                b.building_type == sunscatter::colony::BuildingType::Factory
+                                    && b.assigned_recipe.is_none()
+                            }) {
+                                building.assigned_recipe = Some(recipe);
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::RemoveFactoryAssignment(bi, recipe) => {
+                sunscatter::render::ColonyScreenAction::RemoveFactoryAssignment(bi, recipe, count) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
-                        // Find first factory assigned to this recipe and unassign it
-                        if let Some(building) = colony.buildings.iter_mut().find(|b| {
-                            b.building_type == sunscatter::colony::BuildingType::Factory
-                                && b.assigned_recipe == Some(recipe)
-                        }) {
-                            building.assigned_recipe = None;
+                        for _ in 0..count {
+                            if let Some(building) = colony.buildings.iter_mut().find(|b| {
+                                b.building_type == sunscatter::colony::BuildingType::Factory
+                                    && b.assigned_recipe == Some(recipe)
+                            }) {
+                                building.assigned_recipe = None;
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
@@ -3725,6 +3879,11 @@ fn render_colony_frame(
                     game.colony_view_body_index = None;
                     game.colony_return_mode = None;
                     game.enter_tracking_station();
+                }
+                sunscatter::render::ColonyScreenAction::GoToColonyOverview => {
+                    game.colony_view_body_index = None;
+                    game.colony_return_mode = None;
+                    game.enter_colony_overview();
                 }
                 sunscatter::render::ColonyScreenAction::GoToMainMenu => {
                     game.colony_view_body_index = None;
@@ -3763,12 +3922,390 @@ fn render_colony_frame(
                         }
                     }
                 }
+                sunscatter::render::ColonyScreenAction::Trade(trade_action) => {
+                    handle_trade_action(trade_action, game);
+                }
                 sunscatter::render::ColonyScreenAction::None => {}
             }
         }
         Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
         Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
         Err(e) => eprintln!("Colony render error: {:?}", e),
+    }
+
+    // Process notifications
+    for notif in &mut game.notifications {
+        if !notif.read && notif.kind.stops_warp() {
+            game.warp_index = 0;
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        } else if !notif.read {
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        }
+    }
+    render_state.active_toasts.retain(|(_, t)| t.elapsed().as_secs_f32() < 5.0);
+}
+
+/// Handle a TradeAction returned by the trade route UI.
+fn handle_trade_action(action: sunscatter::render::TradeAction, game: &mut Game) {
+    use sunscatter::render::TradeAction;
+
+    let sim_time = game.time();
+
+    match action {
+        TradeAction::None => {}
+        TradeAction::CreateRoute { route, .. } => {
+            // Route is created; automation will build and launch ships on schedule
+            game.fleet.create_route(route);
+        }
+        TradeAction::ManualLaunch(route_id) => {
+            // Build a new ship and launch it immediately (manual trigger)
+            let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
+            let mut notifications = Vec::new();
+
+            let (blueprint_name, source) = {
+                let route = match game.fleet.get_route(route_id) {
+                    Some(r) => r,
+                    None => return,
+                };
+                (route.blueprint_name.clone(), route.legs.first().and_then(|l| l.from_body))
+            };
+            let ship_name = format!("Manual Launch #{}", sim_time as u64 / 86400);
+
+            match game.fleet.build_ship(
+                ship_name,
+                blueprint_name,
+                source,
+                game.solar_system.earth_index,
+                &game.blueprints,
+                &game.part_definitions,
+                &mut game.colony_manager,
+                &mut game.company,
+                &body_names,
+                &mut notifications,
+                sim_time,
+            ) {
+                Ok(ship_id) => {
+                    if let Some(r) = game.fleet.get_route_mut(route_id) {
+                        r.assigned_ship_id = Some(ship_id);
+                    }
+                    if let Some(s) = game.fleet.get_ship_mut(ship_id) {
+                        s.assigned_route = Some(route_id);
+                    }
+                    match game.fleet.launch_ship(
+                        ship_id,
+                        route_id,
+                        &mut game.colony_manager,
+                        &mut game.company,
+                        game.solar_system.earth_index,
+                        &game.blueprints,
+                        &game.part_definitions,
+                        &body_names,
+                        &mut notifications,
+                        sim_time,
+                    ) {
+                        Err(e) => {
+                            log::error!("Manual launch failed: {}", e);
+                            if let Some(route) = game.fleet.get_route_mut(route_id) {
+                                route.alert_reason = Some(e);
+                            }
+                        }
+                        Ok(()) => {
+                            if let Some(route) = game.fleet.get_route_mut(route_id) {
+                                route.alert_reason = None;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Manual launch ship build failed: {}", e);
+                    if let Some(route) = game.fleet.get_route_mut(route_id) {
+                        route.alert_reason = Some(e);
+                    }
+                }
+            }
+            game.notifications.extend(notifications);
+        }
+        TradeAction::PauseRoute(route_id) => {
+            if let Some(route) = game.fleet.get_route_mut(route_id) {
+                route.paused = true;
+            }
+        }
+        TradeAction::ResumeRoute(route_id) => {
+            if let Some(route) = game.fleet.get_route_mut(route_id) {
+                route.paused = false;
+                route.alert_reason = None; // Clear alert so automation retries
+            }
+        }
+        TradeAction::DeleteRoute(route_id) => {
+            game.fleet.delete_route(route_id);
+        }
+        TradeAction::DeleteShip(ship_id) => {
+            game.fleet.delete_ship(ship_id);
+        }
+        TradeAction::EditRoute { route_id, route } => {
+            if let Some(existing) = game.fleet.get_route_mut(route_id) {
+                // Update route fields, preserving id, assigned_ship_id, last_launch_time
+                existing.name = route.name;
+                existing.blueprint_name = route.blueprint_name;
+                existing.legs = route.legs;
+                existing.outbound_cargo = route.outbound_cargo;
+                existing.crew = route.crew;
+                existing.total_delta_v = route.total_delta_v;
+                existing.route_category = route.route_category;
+                existing.interval_days = route.interval_days;
+                existing.ships_per_window = route.ships_per_window;
+                existing.alert_reason = None; // Clear alert so automation retries with new settings
+            }
+        }
+        TradeAction::OpenEditor(_) => {
+            // Handled at call site (colony overview intercepts this before calling handle_trade_action)
+        }
+    }
+}
+
+fn render_colony_overview_frame(
+    game: &mut Game,
+    render_state: &mut RenderState,
+) {
+    if !game.paused {
+        let dt = 1.0 / 60.0;
+        let time_warp = WARP_LEVELS[game.warp_index];
+        game.solar_system.update(dt * time_warp);
+
+        let dt_sim = dt * time_warp;
+        for vessel in &mut game.flight.inactive_vessels {
+            vessel.ship.ensure_on_rails(&game.solar_system);
+            vessel.ship.update_on_rails(dt_sim, &game.solar_system);
+        }
+
+        game.check_contracts();
+        game.update_rd_science(dt_sim);
+        game.update_colonies(dt_sim);
+    }
+
+    // Camera on Sun, zoomed out
+    render_state.tracked_body = Some(game.solar_system.sun_index);
+    let scaled_positions = compute_scaled_positions(game);
+    let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
+    render_state.update_tracking(&scaled_positions, SCALE);
+
+    let bodies = build_body_data(game, &scaled_positions, in_galaxy_view);
+    let orbits = build_orbit_data(game, &scaled_positions, render_state);
+    let accretion_discs = build_accretion_disc_data(game);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view);
+
+    let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
+    let date_str = sunscatter::game::format_date(game.time());
+
+    let sim_time = game.time();
+    match render_state.render_colony_overview(
+        &game.colony_manager,
+        &body_names,
+        WARP_LEVELS,
+        game.warp_index,
+        game.paused,
+        &date_str,
+        game.company.money,
+        game.science.available,
+        &game.fleet,
+        game.solar_system.earth_index,
+        &game.blueprints,
+        &game.part_definitions,
+        &game.solar_system,
+        sim_time,
+    ) {
+        Ok((new_warp_index, action)) => {
+            game.warp_index = new_warp_index;
+            match action {
+                sunscatter::render::ColonyOverviewAction::OpenColony(bi) => {
+                    game.enter_colony(bi, GameMode::ColonyOverview);
+                }
+                sunscatter::render::ColonyOverviewAction::GoToMainMenu => {
+                    game.enter_main_menu();
+                }
+                sunscatter::render::ColonyOverviewAction::ChangeWarp(idx) => {
+                    game.warp_index = idx;
+                }
+                sunscatter::render::ColonyOverviewAction::Trade(trade_action) => {
+                    // Intercept OpenEditor — populate route_creation state instead of forwarding
+                    if let sunscatter::render::TradeAction::OpenEditor(route_id) = &trade_action {
+                        if let Some(route) = game.fleet.get_route(*route_id) {
+                            render_state.route_creation =
+                                sunscatter::render::RouteCreationState::start_from_route(
+                                    route,
+                                    &game.fleet,
+                                );
+                        }
+                    } else {
+                        handle_trade_action(trade_action, game);
+                    }
+                }
+                sunscatter::render::ColonyOverviewAction::None => {}
+            }
+        }
+        Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
+        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(e) => eprintln!("Colony overview render error: {:?}", e),
+    }
+
+    // Process notifications
+    for notif in &mut game.notifications {
+        if !notif.read && notif.kind.stops_warp() {
+            game.warp_index = 0;
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        } else if !notif.read {
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        }
+    }
+    render_state.active_toasts.retain(|(_, t)| t.elapsed().as_secs_f32() < 5.0);
+}
+
+/// Render management screen
+fn render_management_frame(
+    game: &mut Game,
+    render_state: &mut RenderState,
+) {
+    if !game.paused {
+        let dt = 1.0 / 60.0;
+        let time_warp = WARP_LEVELS[game.warp_index];
+        game.solar_system.update(dt * time_warp);
+
+        let dt_sim = dt * time_warp;
+        for vessel in &mut game.flight.inactive_vessels {
+            vessel.ship.ensure_on_rails(&game.solar_system);
+            vessel.ship.update_on_rails(dt_sim, &game.solar_system);
+        }
+
+        game.check_contracts();
+        game.update_rd_science(dt_sim);
+        game.update_colonies(dt_sim);
+    }
+
+    // Camera on Sun, zoomed out
+    render_state.tracked_body = Some(game.solar_system.sun_index);
+    let scaled_positions = compute_scaled_positions(game);
+    let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
+    render_state.update_tracking(&scaled_positions, SCALE);
+
+    let bodies = build_body_data(game, &scaled_positions, in_galaxy_view);
+    let orbits = build_orbit_data(game, &scaled_positions, render_state);
+    let accretion_discs = build_accretion_disc_data(game);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view);
+
+    let date_str = sunscatter::game::format_date(game.time());
+
+    match render_state.render_management(
+        &game.company,
+        &game.science,
+        &game.contracts,
+        game.company.rd_budget,
+        WARP_LEVELS,
+        game.warp_index,
+        game.paused,
+        &date_str,
+    ) {
+        Ok((new_warp_index, action, new_budget)) => {
+            game.warp_index = new_warp_index;
+            game.company.rd_budget = new_budget;
+            match action {
+                sunscatter::render::ManagementAction::OpenTechTree => {
+                    game.enter_tech_tree(GameMode::Management);
+                }
+                sunscatter::render::ManagementAction::GoToMainMenu => {
+                    game.enter_main_menu();
+                }
+                sunscatter::render::ManagementAction::ChangeWarp(idx) => {
+                    game.warp_index = idx;
+                }
+                sunscatter::render::ManagementAction::AcceptContract(ct) => {
+                    game.contracts.accept(ct);
+                }
+                sunscatter::render::ManagementAction::SetRdBudget(budget) => {
+                    game.company.rd_budget = budget;
+                }
+                sunscatter::render::ManagementAction::None => {}
+            }
+        }
+        Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
+        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(e) => eprintln!("Management render error: {:?}", e),
+    }
+
+    // Process notifications
+    for notif in &mut game.notifications {
+        if !notif.read && notif.kind.stops_warp() {
+            game.warp_index = 0;
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        } else if !notif.read {
+            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            notif.read = true;
+        }
+    }
+    render_state.active_toasts.retain(|(_, t)| t.elapsed().as_secs_f32() < 5.0);
+}
+
+/// Render full-screen tech tree
+fn render_tech_tree_frame(
+    game: &mut Game,
+    render_state: &mut RenderState,
+) {
+    if !game.paused {
+        let dt = 1.0 / 60.0;
+        let time_warp = WARP_LEVELS[game.warp_index];
+        game.solar_system.update(dt * time_warp);
+
+        let dt_sim = dt * time_warp;
+        for vessel in &mut game.flight.inactive_vessels {
+            vessel.ship.ensure_on_rails(&game.solar_system);
+            vessel.ship.update_on_rails(dt_sim, &game.solar_system);
+        }
+
+        game.check_contracts();
+        game.update_rd_science(dt_sim);
+        game.update_colonies(dt_sim);
+    }
+
+    // Camera on Sun, zoomed out
+    render_state.tracked_body = Some(game.solar_system.sun_index);
+    let scaled_positions = compute_scaled_positions(game);
+    let in_galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.size.height);
+    render_state.update_tracking(&scaled_positions, SCALE);
+
+    let bodies = build_body_data(game, &scaled_positions, in_galaxy_view);
+    let orbits = build_orbit_data(game, &scaled_positions, render_state);
+    let accretion_discs = build_accretion_disc_data(game);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view);
+
+    let date_str = sunscatter::game::format_date(game.time());
+
+    match render_state.render_tech_tree_screen(
+        &mut game.tech_tree,
+        &mut game.science,
+        WARP_LEVELS,
+        game.warp_index,
+        game.paused,
+        &date_str,
+    ) {
+        Ok((new_warp_index, action)) => {
+            game.warp_index = new_warp_index;
+            match action {
+                sunscatter::render::TechTreeScreenAction::Back => {
+                    game.leave_tech_tree();
+                }
+                sunscatter::render::TechTreeScreenAction::ChangeWarp(idx) => {
+                    game.warp_index = idx;
+                }
+                sunscatter::render::TechTreeScreenAction::None => {}
+            }
+        }
+        Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
+        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(e) => eprintln!("Tech tree render error: {:?}", e),
     }
 
     // Process notifications

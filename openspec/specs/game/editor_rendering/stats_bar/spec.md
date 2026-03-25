@@ -22,6 +22,10 @@ The stats bar SHALL display TWR as "TWR: {value}" with 2 decimal places. A combo
 
 When total delta-v > 0, the stats bar SHALL display "dv: {formatted}" after a separator. Delta-v SHALL be formatted as "{value} m/s" when < 1000 m/s, or "{value} km/s" with 1 decimal when >= 1000 m/s.
 
+### Requirement: Vessel cost display
+
+When vessel cost > 0, the stats bar SHALL display "Cost: {formatted}" after delta-v. The cost SHALL be colored green (`rgb(100, 200, 100)`) when affordable (cost <= company money) or red (`rgb(220, 80, 80)`) when too expensive.
+
 ### Requirement: Resource totals display
 
 The stats bar SHALL display resource totals at body text size in consistent order: O2 (oxygen), RP1 (rp1), CH4 (methane), LH2 (hydrogen). Only resources that exist in the vessel SHALL be shown. Mass values SHALL be formatted as "{value} t" for >= 1000 kg, or "{value} kg" for < 1000 kg.

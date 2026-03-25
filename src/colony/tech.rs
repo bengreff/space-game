@@ -11,6 +11,12 @@ pub struct TechNodeData {
     pub era: u32,
     pub cost: f64,
     pub prerequisites: Vec<String>,
+    /// Horizontal position in tech tree graph (0 = leftmost).
+    #[serde(default)]
+    pub col: u32,
+    /// Vertical position in tech tree graph (0 = topmost).
+    #[serde(default)]
+    pub row: u32,
     #[serde(default)]
     pub unlocks_parts: Vec<String>,
     #[serde(default)]
@@ -30,6 +36,12 @@ pub struct TechLineData {
     /// Recipe gates: at certain tiers, new recipes become available.
     #[serde(default)]
     pub recipe_gates: Vec<(u32, String)>,
+    /// Horizontal position in tech tree graph (0 = leftmost).
+    #[serde(default)]
+    pub col: u32,
+    /// Vertical position in tech tree graph (0 = topmost).
+    #[serde(default)]
+    pub row: u32,
 }
 
 /// Top-level RON file format for the tech tree.

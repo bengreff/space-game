@@ -414,7 +414,60 @@ pub enum MainMenuAction {
     None,
     Editor,
     TrackingStation,
+    Colonies,
+    Management,
     Quit,
+}
+
+/// Action returned from the trade route UI.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TradeAction {
+    None,
+    CreateRoute {
+        route: crate::colony::TradeRoute,
+    },
+    /// Build a ship and launch it on a route immediately (manual trigger).
+    ManualLaunch(crate::colony::TradeRouteId),
+    PauseRoute(crate::colony::TradeRouteId),
+    ResumeRoute(crate::colony::TradeRouteId),
+    DeleteRoute(crate::colony::TradeRouteId),
+    DeleteShip(crate::colony::TradeShipId),
+    /// Update an existing route (preserves id, assigned_ship_id, last_launch_time).
+    EditRoute {
+        route_id: crate::colony::TradeRouteId,
+        route: crate::colony::TradeRoute,
+    },
+    /// Request to open the route editor for an existing route.
+    OpenEditor(crate::colony::TradeRouteId),
+}
+
+/// Action returned from the colony overview screen
+#[derive(Debug, Clone, PartialEq)]
+pub enum ColonyOverviewAction {
+    None,
+    OpenColony(usize),
+    GoToMainMenu,
+    ChangeWarp(usize),
+    Trade(TradeAction),
+}
+
+/// Action returned from the management screen
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ManagementAction {
+    None,
+    OpenTechTree,
+    GoToMainMenu,
+    ChangeWarp(usize),
+    AcceptContract(crate::colony::ContractType),
+    SetRdBudget(f64),
+}
+
+/// Action returned from the full-screen tech tree
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TechTreeScreenAction {
+    None,
+    Back,
+    ChangeWarp(usize),
 }
 
 /// A selected navigation target (body or vessel)

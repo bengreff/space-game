@@ -32,6 +32,11 @@ pub struct FlightVessel {
 
     // Ejection force from last decoupler firing (kN), consumed by handle_post_decouple
     pub last_decouple_force: f64,
+
+    // Extra dry mass added as cargo payload (tonnes). Used by trade route dv computation
+    // to make cargo reduce ship delta-v. Not consumed as fuel.
+    #[serde(default)]
+    pub extra_dry_mass_tonnes: f64,
 }
 
 /// A part in flight.
@@ -479,6 +484,7 @@ impl FlightVessel {
             stages,
             current_stage: 0,
             last_decouple_force: 0.0,
+            extra_dry_mass_tonnes: 0.0,
         })
     }
 
@@ -2449,6 +2455,7 @@ impl FlightVessel {
                 stages: Vec::new(),
                 current_stage: 0,
                 last_decouple_force: 0.0,
+                extra_dry_mass_tonnes: 0.0,
             };
 
             result.push((debris_vessel, debris_com));
@@ -2701,8 +2708,8 @@ impl FlightVessel {
                 .map(|&d| d * phase_time).sum();
             let total_consumed = total_consumed_kg / 1000.0;
 
-            // Wet mass of all remaining parts (tonnes)
-            let mut wet_mass = 0.0;
+            // Wet mass of all remaining parts (tonnes) + extra cargo payload
+            let mut wet_mass = self.extra_dry_mass_tonnes;
             for i in 0..n {
                 if decoupled[i] { continue; }
                 let base_mass = part_defs.get(&self.parts[i].definition_id)
@@ -2818,6 +2825,7 @@ impl FlightVessel {
                     stages: Vec::new(),
                     current_stage: 0,
                     last_decouple_force: 0.0,
+                    extra_dry_mass_tonnes: 0.0,
                 };
 
                 result.push((debris_vessel, com_offset, half));
@@ -2925,6 +2933,7 @@ impl FlightVessel {
             stages: Vec::new(),   // Debris can't stage
             current_stage: 0,
             last_decouple_force: 0.0,
+            extra_dry_mass_tonnes: 0.0,
         };
 
         Some((debris_vessel, debris_com))
@@ -3226,5 +3235,6 @@ pub fn create_default_vessel(
         stages: Vec::new(),
         current_stage: 0,
         last_decouple_force: 0.0,
+        extra_dry_mass_tonnes: 0.0,
     }
 }

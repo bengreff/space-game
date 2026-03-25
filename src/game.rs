@@ -1,5 +1,5 @@
 use crate::bodies::SolarSystem;
-use crate::colony::{ColonyManager, Company, Notification, ScienceState, TechTree};
+use crate::colony::{ColonyManager, Company, ContractManager, FleetManager, Notification, ScienceState, TechTree};
 use crate::editor::EditorState;
 use crate::parts::{BlueprintRegistry, FlightVessel, PartDefinitions};
 use crate::render::ManeuverNode;
@@ -20,6 +20,9 @@ pub enum GameMode {
     Flight,
     TrackingStation,
     Colony,
+    ColonyOverview,
+    Management,
+    TechTree,
 }
 
 /// UI state for the title screen dialogs
@@ -397,12 +400,17 @@ pub struct Game {
     pub company: Company,
     pub science: ScienceState,
     pub tech_tree: TechTree,
+    pub contracts: ContractManager,
+    /// Fleet manager for trade routes and ships
+    pub fleet: FleetManager,
     /// Colony notifications (persisted in saves)
     pub notifications: Vec<Notification>,
     /// Body index of the colony currently being viewed in Colony mode
     pub colony_view_body_index: Option<usize>,
     /// Which mode to return to when leaving Colony mode
     pub colony_return_mode: Option<GameMode>,
+    /// Which mode to return to when leaving the Tech Tree screen
+    pub tech_tree_return_mode: Option<GameMode>,
 }
 
 impl Game {
@@ -453,9 +461,12 @@ impl Game {
             company: Company::default(),
             science: ScienceState::default(),
             tech_tree,
+            contracts: ContractManager::new(),
+            fleet: FleetManager::new(),
             notifications: Vec::new(),
             colony_view_body_index: None,
             colony_return_mode: None,
+            tech_tree_return_mode: None,
         }
     }
 
@@ -482,9 +493,11 @@ impl Game {
         self.colony_manager = ColonyManager::new();
         self.company = Company::default();
         self.science = ScienceState::default();
+        self.fleet = FleetManager::new();
         self.notifications = Vec::new();
         self.colony_view_body_index = None;
         self.colony_return_mode = None;
+        self.tech_tree_return_mode = None;
         self.tech_tree = TechTree::load("data/tech/tree.ron")
             .unwrap_or_else(|e| {
                 log::error!("Failed to load tech tree: {}", e);
@@ -546,6 +559,36 @@ impl Game {
         log::info!("Left colony screen, returning to {:?}", return_mode);
     }
 
+    /// Switch to colony overview screen
+    pub fn enter_colony_overview(&mut self) {
+        self.mode = GameMode::ColonyOverview;
+        self.paused = false;
+        log::info!("Entered colony overview");
+    }
+
+    /// Switch to management screen
+    pub fn enter_management(&mut self) {
+        self.mode = GameMode::Management;
+        self.paused = false;
+        log::info!("Entered management screen");
+    }
+
+    /// Switch to tech tree screen, remembering where to return
+    pub fn enter_tech_tree(&mut self, from: GameMode) {
+        self.tech_tree_return_mode = Some(from);
+        self.mode = GameMode::TechTree;
+        self.paused = false;
+        log::info!("Entered tech tree from {:?}", from);
+    }
+
+    /// Leave tech tree screen, returning to the previous mode
+    pub fn leave_tech_tree(&mut self) {
+        let return_mode = self.tech_tree_return_mode.take().unwrap_or(GameMode::Management);
+        self.mode = return_mode;
+        self.paused = false;
+        log::info!("Left tech tree, returning to {:?}", return_mode);
+    }
+
     /// Get current time warp multiplier
     pub fn time_warp(&self, warp_levels: &[f64]) -> f64 {
         warp_levels.get(self.warp_index).copied().unwrap_or(1.0)
@@ -565,6 +608,17 @@ impl Game {
         if !has_control {
             return Err("Vessel has no controllable part (add a pod or probe core)".to_string());
         }
+
+        // Check funds
+        let cost = self.editor.calculate_vessel_cost(&self.part_definitions);
+        if cost > self.company.money {
+            return Err(format!(
+                "Insufficient funds: vessel costs {} but you only have {}",
+                crate::colony::format_money(cost),
+                crate::colony::format_money(self.company.money),
+            ));
+        }
+        self.company.money -= cost;
 
         // Get spawn position (on launchpad)
         let earth_idx = self.solar_system.earth_index;
@@ -809,6 +863,153 @@ impl Game {
     }
 
     /// Update all colonies for the given simulation time step.
+    /// Check and award one-time discovery milestones (suborbital, orbit, per-body).
+    pub fn check_discovery_milestones(&mut self) {
+        use crate::colony::economy::{
+            SCIENCE_SUBORBITAL, SCIENCE_FIRST_ORBIT, SCIENCE_GEOSTATIONARY,
+            body_distance_au, orbit_science_reward, landing_science_reward,
+        };
+
+        let ship = &self.flight.ship;
+        let earth_idx = self.solar_system.earth_index;
+        let discoveries = &mut self.science.discoveries;
+
+        // Compute distance from body center
+        let dist = (ship.rel_position[0].powi(2) + ship.rel_position[1].powi(2)).sqrt();
+        let body = &self.solar_system.bodies[ship.soi_body];
+        let altitude = dist - body.radius;
+
+        // --- Earth milestones ---
+        if ship.soi_body == earth_idx {
+            // Suborbital: altitude > 100 km
+            if !discoveries.first_suborbital && altitude > 100_000.0 {
+                if matches!(ship.state, crate::ship::ShipState::Flying) {
+                    discoveries.first_suborbital = true;
+                    self.science.available += SCIENCE_SUBORBITAL;
+                    self.science.cumulative_discovery += SCIENCE_SUBORBITAL;
+                    log::info!("Discovery: First suborbital flight! +{} science", SCIENCE_SUBORBITAL);
+                }
+            }
+
+            // First orbit: in orbit (not suborbital) in Earth SOI
+            if !discoveries.first_orbit
+                && matches!(ship.state, crate::ship::ShipState::Flying)
+                && !ship.is_suborbital(&self.solar_system)
+            {
+                discoveries.first_orbit = true;
+                self.science.available += SCIENCE_FIRST_ORBIT;
+                self.science.cumulative_discovery += SCIENCE_FIRST_ORBIT;
+                log::info!("Discovery: First Earth orbit! +{} science", SCIENCE_FIRST_ORBIT);
+            }
+
+            // Geostationary: altitude > 35,786 km in Earth SOI + in orbit
+            if !discoveries.geostationary
+                && altitude > 35_786_000.0
+                && matches!(ship.state, crate::ship::ShipState::Flying)
+                && !ship.is_suborbital(&self.solar_system)
+            {
+                discoveries.geostationary = true;
+                self.science.available += SCIENCE_GEOSTATIONARY;
+                self.science.cumulative_discovery += SCIENCE_GEOSTATIONARY;
+                log::info!("Discovery: Geostationary altitude! +{} science", SCIENCE_GEOSTATIONARY);
+            }
+        }
+
+        // --- Per-body orbit ---
+        if matches!(ship.state, crate::ship::ShipState::Flying)
+            && !ship.is_suborbital(&self.solar_system)
+            && !discoveries.body_orbited.contains(&ship.soi_body)
+        {
+            // Don't count Earth orbit here (handled above as first_orbit)
+            if ship.soi_body != earth_idx {
+                discoveries.body_orbited.insert(ship.soi_body);
+                let dist_au = body_distance_au(ship.soi_body, &self.solar_system);
+                let reward = orbit_science_reward(dist_au);
+                self.science.available += reward;
+                self.science.cumulative_discovery += reward;
+                let name = &self.solar_system.bodies[ship.soi_body].name;
+                log::info!("Discovery: Orbit around {}! +{:.0} science", name, reward);
+            }
+        }
+
+        // --- Per-body landing ---
+        if let crate::ship::ShipState::Landed { body_index, .. } = ship.state {
+            if body_index != earth_idx && !discoveries.body_landed.contains(&body_index) {
+                discoveries.body_landed.insert(body_index);
+                let dist_au = body_distance_au(body_index, &self.solar_system);
+                let reward = landing_science_reward(dist_au);
+                self.science.available += reward;
+                self.science.cumulative_discovery += reward;
+                let name = &self.solar_system.bodies[body_index].name;
+                log::info!("Discovery: Landed on {}! +{:.0} science", name, reward);
+            }
+        }
+    }
+
+    /// Check active contracts for completion and award payouts.
+    pub fn check_contracts(&mut self) {
+        let ship = &self.flight.ship;
+        let dist = (ship.rel_position[0].powi(2) + ship.rel_position[1].powi(2)).sqrt();
+        let body = &self.solar_system.bodies[ship.soi_body];
+        let altitude = dist - body.radius;
+        let is_suborbital = ship.is_suborbital(&self.solar_system);
+
+        let has_crew = self.flight.vessel.as_ref()
+            .map_or(false, |v| v.total_crew_capacity(&self.part_definitions) > 0);
+
+        let mars_index = self.solar_system.bodies.iter()
+            .position(|b| b.name == "Mars")
+            .unwrap_or(usize::MAX);
+
+        let payout = self.contracts.check_completion(
+            &ship.state,
+            ship.soi_body,
+            altitude,
+            is_suborbital,
+            self.solar_system.earth_index,
+            self.solar_system.moon_index,
+            mars_index,
+            has_crew,
+        );
+
+        if payout > 0.0 {
+            self.company.money += payout;
+            log::info!("Contract completed! Payout: {}", crate::colony::format_money(payout));
+        }
+    }
+
+    /// Generate science from R&D budget spending over dt_sim seconds.
+    pub fn update_rd_science(&mut self, dt_sim: f64) {
+        if dt_sim <= 0.0 || self.company.rd_budget <= 0.0 {
+            return;
+        }
+
+        let years = dt_sim / (86400.0 * 365.0);
+        let budget = self.company.rd_budget;
+
+        // Deduct R&D budget cost from money (stop if broke)
+        let cost = budget * years;
+        if self.company.money <= 0.0 {
+            return;
+        }
+        let actual_cost = cost.min(self.company.money);
+        self.company.money -= actual_cost;
+        let actual_years = if cost > 0.0 { years * (actual_cost / cost) } else { 0.0 };
+
+        // base_rate = 25 * ln(1 + budget/1M) per year
+        let base_rate = 25.0 * (1.0 + budget / 1_000_000.0).ln();
+
+        // effective_rate = base_rate * max(0, 1 - cumulative_rd/50000) per year
+        let exhaustion = (1.0 - self.science.cumulative_rd / 50_000.0).max(0.0);
+        let effective_rate = base_rate * exhaustion;
+
+        let science_earned = effective_rate * actual_years;
+        if science_earned > 0.0 {
+            self.science.available += science_earned;
+            self.science.cumulative_rd += science_earned;
+        }
+    }
+
     pub fn update_colonies(&mut self, dt_sim: f64) {
         if dt_sim <= 0.0 {
             return;
@@ -849,6 +1050,29 @@ impl Game {
                 }
             }
         }
+
+        // Update fleet transit and automation
+        let body_names: Vec<String> = self.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
+        self.fleet.update_fleet(
+            total_days,
+            sim_time,
+            &mut self.colony_manager,
+            &mut self.company,
+            self.solar_system.earth_index,
+            &body_names,
+            &mut notifications,
+        );
+        self.fleet.check_automation(
+            sim_time,
+            &mut self.colony_manager,
+            &mut self.company,
+            self.solar_system.earth_index,
+            &self.solar_system,
+            &body_names,
+            &mut notifications,
+            &self.blueprints,
+            &self.part_definitions,
+        );
 
         self.notifications.extend(notifications);
     }

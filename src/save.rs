@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::colony::{ColonyManager, Company, Notification, ScienceState};
+use crate::colony::{ColonyManager, Company, ContractManager, FleetManager, Notification, ScienceState};
 use crate::game::{Game, VesselId, TrackedVessel};
 use crate::parts::{FlightVessel, VesselBlueprint};
 use crate::render::ManeuverNode;
@@ -46,6 +46,10 @@ pub struct SaveGame {
     pub tech_line_tiers: HashMap<String, u32>,
     #[serde(default)]
     pub notifications: Vec<Notification>,
+    #[serde(default)]
+    pub contracts: ContractManager,
+    #[serde(default)]
+    pub fleet: FleetManager,
     /// Editor blueprint at time of save (used by "Revert to Editor")
     #[serde(default)]
     pub editor_blueprint: Option<VesselBlueprint>,
@@ -136,6 +140,8 @@ impl SaveGame {
             tech_unlocked: game.tech_tree.unlocked.clone(),
             tech_line_tiers: game.tech_tree.line_tiers.clone(),
             notifications: game.notifications.clone(),
+            contracts: game.contracts.clone(),
+            fleet: game.fleet.clone(),
             editor_blueprint: game.editor.to_blueprint(&game.part_definitions).ok(),
         }
     }
@@ -443,6 +449,67 @@ impl SaveGame {
         quicksaves
     }
 
+    /// Migrate old-format tech IDs ("1.1", "2.3", etc.) to new descriptive IDs.
+    fn migrate_tech_ids(ids: HashSet<String>) -> HashSet<String> {
+        let map: &[(&str, &str)] = &[
+            ("1.1", "basic_rocketry"),
+            ("1.2", "structural_engineering"),
+            ("1.3", "kerolox_propulsion"),
+            ("1.4", "methalox_propulsion"),
+            ("1.5", "hydrolox_propulsion"),
+            ("1.6", "crewed_spaceflight"),
+            ("2.1", "medium_launch"),
+            ("2.2", "medium_hydrolox"),
+            ("2.3", "advanced_life_support"),
+            ("2.4", "heavy_lift"),
+            ("2.5", "large_cryogenic"),
+            ("2.6", "colony_engineering"),
+            ("3.1", "nuclear_thermal"),
+            ("3.2", "advanced_ntr"),
+            ("3.3", "ion_propulsion"),
+            ("3.4", "advanced_electric"),
+            ("3.5", "compact_fission"),
+            ("3.6", "heavy_fission"),
+            ("3.7", "super_heavy"),
+            ("3.8", "extended_missions"),
+            ("4.1", "mpd_propulsion"),
+            ("4.2", "deep_space_hab"),
+            ("4.3", "science_laboratory"),
+            ("5.1", "nuclear_pulse"),
+            ("5.2", "interstellar_fission"),
+            ("5.3", "passive_shielding"),
+            ("6.1", "fusion_probe"),
+            ("6.2", "fusion_full"),
+            ("6.3", "fusion_power"),
+            ("6.4", "advanced_fusion"),
+            ("6.5", "active_shielding"),
+            ("7.1", "am_catalyzed"),
+            ("7.2", "am_production"),
+            ("7.3", "geodesic_shielding"),
+            ("8.1", "am_torch"),
+            ("8.2", "am_power"),
+            ("8.3", "advanced_am_power"),
+            ("9.1", "photon_drive"),
+            ("9.2", "ring_accelerator"),
+        ];
+        ids.into_iter()
+            .map(|id| {
+                map.iter()
+                    .find(|(old, _)| *old == id.as_str())
+                    .map(|(_, new)| new.to_string())
+                    .unwrap_or(id)
+            })
+            .collect()
+    }
+
+    /// Migrate old-format efficiency line prerequisite node IDs in line_tiers.
+    /// The line IDs themselves haven't changed, so no migration needed for keys.
+    /// But we do need to check if any stored data references old node IDs.
+    fn migrate_line_tiers(tiers: HashMap<String, u32>) -> HashMap<String, u32> {
+        // Line tier keys (mining, metallurgy, etc.) haven't changed, so no migration needed
+        tiers
+    }
+
     /// Restore this save game's state into the given Game.
     /// Active vessel's maneuver nodes are loaded into `game.flight.active_maneuver_nodes`.
     pub fn restore_to_game(self, game: &mut Game) {
@@ -486,8 +553,12 @@ impl SaveGame {
         game.colony_manager = self.colonies;
         game.company = self.company;
         game.science = self.science;
-        game.tech_tree.apply_save_state(self.tech_unlocked, self.tech_line_tiers);
+        let migrated_unlocked = Self::migrate_tech_ids(self.tech_unlocked);
+        let migrated_tiers = Self::migrate_line_tiers(self.tech_line_tiers);
+        game.tech_tree.apply_save_state(migrated_unlocked, migrated_tiers);
         game.notifications = self.notifications;
+        game.contracts = self.contracts;
+        game.fleet = self.fleet;
     }
 }
 

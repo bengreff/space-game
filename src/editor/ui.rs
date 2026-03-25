@@ -62,6 +62,9 @@ pub enum EditorAction {
     LoadBlueprint(String),
     DeleteBlueprint(String),
     NewVessel,
+    SetRdBudget(f64),
+    OpenTechTree,
+    OpenContracts,
 }
 
 /// Body info for TWR calculation
@@ -104,6 +107,10 @@ pub fn render_editor_ui(
     bodies: &[BodyInfo],
     stage_delta_vs: &[f64],
     stage_burn_times: &[f64],
+    company_money: f64,
+    vessel_cost: f64,
+    tech_tree: &crate::colony::TechTree,
+    rd_budget: &mut f64,
 ) -> EditorAction {
     let mut action = EditorAction::None;
 
@@ -146,9 +153,36 @@ pub fn render_editor_ui(
                 }
             });
 
-            // Part count
+            ui.separator();
+
+            // Research button
+            if ui.button("Research").clicked() {
+                action = EditorAction::OpenTechTree;
+            }
+
+            // Contracts button
+            if ui.button("Contracts").clicked() {
+                action = EditorAction::OpenContracts;
+            }
+
+            // R&D budget
+            ui.label("R&D:");
+            let mut budget_m = *rd_budget / 1_000_000.0;
+            let drag = egui::DragValue::new(&mut budget_m)
+                .speed(0.5)
+                .clamp_range(0.0..=1000.0)
+                .suffix("M/yr");
+            if ui.add(drag).changed() {
+                *rd_budget = budget_m * 1_000_000.0;
+                action = EditorAction::SetRdBudget(*rd_budget);
+            }
+
+            // Right-aligned info
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(format!("Parts: {}", editor.part_count()));
+                ui.separator();
+                ui.label(egui::RichText::new(crate::colony::format_money(company_money))
+                    .color(egui::Color32::from_rgb(100, 200, 100)));
             });
         });
     });
@@ -216,6 +250,18 @@ pub fn render_editor_ui(
                 if total_dv > 0.0 {
                     ui.separator();
                     ui.label(format!("Δv: {}", format_delta_v(total_dv)));
+                }
+
+                // Vessel cost
+                if vessel_cost > 0.0 {
+                    ui.separator();
+                    let cost_color = if vessel_cost <= company_money {
+                        egui::Color32::from_rgb(100, 200, 100) // green = affordable
+                    } else {
+                        egui::Color32::from_rgb(220, 80, 80) // red = too expensive
+                    };
+                    ui.label(egui::RichText::new(format!("Cost: {}", crate::colony::format_money(vessel_cost)))
+                        .color(cost_color));
                 }
 
                 ui.separator();
@@ -287,7 +333,10 @@ pub fn render_editor_ui(
 
                 if category == PartCategory::Interstellar {
                     // Flat list for Interstellar (no size sub-grouping)
-                    let parts = part_defs.by_category(category);
+                    let parts: Vec<_> = part_defs.by_category(category)
+                        .into_iter()
+                        .filter(|p| tech_tree.is_part_available(&p.name))
+                        .collect();
                     if parts.is_empty() {
                         ui.label("No parts in this category");
                     } else {
@@ -307,12 +356,15 @@ pub fn render_editor_ui(
                     let mut any_parts = false;
 
                     for size in PartSize::all() {
-                        if !part_defs.has_parts_for_size(category, *size) {
+                        let parts: Vec<_> = part_defs.by_category_and_size(category, *size)
+                            .into_iter()
+                            .filter(|p| tech_tree.is_part_available(&p.name))
+                            .collect();
+
+                        if parts.is_empty() {
                             continue;
                         }
                         any_parts = true;
-
-                        let parts = part_defs.by_category_and_size(category, *size);
 
                         egui::CollapsingHeader::new(size.display_name())
                             .default_open(true)

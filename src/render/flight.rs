@@ -153,6 +153,9 @@ impl RenderState {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(egui::RichText::new(format!("{:.0} fps", fps)).size(11.0).color(egui::Color32::GRAY));
+                        ui.separator();
+                        ui.label(egui::RichText::new(format!("Sci: {:.0}", self.science_available)).size(11.0).color(egui::Color32::from_rgb(100, 180, 255)));
+                        ui.label(egui::RichText::new(crate::colony::format_money(self.company_money)).size(11.0).color(egui::Color32::from_rgb(100, 200, 100)));
                     });
                 });
 

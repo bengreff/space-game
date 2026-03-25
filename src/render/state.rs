@@ -152,6 +152,10 @@ pub struct RenderState {
     // Sprite atlas
     pub sprite_atlas: super::sprites::SpriteAtlas,
     pub plume_start_time: std::time::Instant,
+    // Economy/science HUD state
+    pub company_money: f64,
+    pub science_available: f64,
+    pub show_contracts: bool,
     // Colony UI state
     pub can_establish_colony: bool,
     pub has_colonies: bool,
@@ -161,6 +165,8 @@ pub struct RenderState {
     pub vessel_has_cargo: bool,  // Whether the vessel has non-empty cargo containers
     pub landed_body_has_colony: bool,  // Whether the body we're landed on has a colony
     pub open_colony_request: Option<usize>,  // body_index to open colony screen for
+    // Trade route creation wizard state
+    pub route_creation: super::trade_ui::RouteCreationState,
     // Toast notifications
     pub active_toasts: Vec<(String, std::time::Instant)>,
     // Egui state
@@ -534,6 +540,9 @@ impl RenderState {
             debug_infinite_fuel: false,
             debug_teleport_leo: false,
             debug_teleport_body: None,
+            company_money: 0.0,
+            science_available: 0.0,
+            show_contracts: false,
             can_establish_colony: false,
             has_colonies: false,
             landed_body_index: None,
@@ -542,6 +551,7 @@ impl RenderState {
             vessel_has_cargo: false,
             landed_body_has_colony: false,
             open_colony_request: None,
+            route_creation: Default::default(),
             active_toasts: Vec::new(),
             body_texture_bind_group,
             body_texture_map,
