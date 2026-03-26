@@ -685,3 +685,60 @@
 - [ ] Visual test: government milestones fire on first achievements
 - [ ] Visual test: size scaling: after 5+ completions, larger contracts appear
 - [ ] Visual test: old saves load without crash (fresh contract state)
+
+---
+
+# Ship Hangar UI & Wiring
+
+## Implementation
+- [x] Add `BuildingType::Hangar` to `BUILDABLE_BUILDINGS` array in colony_ui.rs
+- [x] Add `Hangar` to `colony_engineering` tech node in tree.ron
+- [x] Add `ScrapShip(usize, StoredShipId)` variant to `ColonyScreenAction`
+- [x] Add `render_hangar_card()` — capacity bar, stored ships grid with Scrap buttons
+- [x] Wire hangar card into colony screen (card 8, between trade and debug)
+- [x] Add `auto_build_ships` field to `RouteCreationState` + checkbox in scheduling section
+- [x] Wire `auto_build_ships` value into route creation (was hardcoded false)
+- [x] Call `migrate_stationed_ships()` on game load in save.rs
+- [x] Handle `ScrapShip` action in main.rs — scrap ship, emit notification
+- [x] Show ship names in construction queue via `effective_target()` check
+
+## Files Changed
+- `src/render/colony_ui.rs` — Hangar in BUILDABLE_BUILDINGS, ScrapShip action, render_hangar_card(), ship names in construction queue
+- `src/render/trade_ui.rs` — auto_build_ships field + checkbox + route wiring
+- `src/save.rs` — migrate_stationed_ships() call on load
+- `src/main.rs` — ScrapShip action handler with notification
+- `data/tech/tree.ron` — Hangar added to colony_engineering unlocks
+
+## Verification
+- [x] `cargo build` — compiles clean, zero warnings
+- [ ] Visual test: Hangar appears in construction dropdown (tech-gated)
+- [ ] Visual test: Hangar card shows capacity bar and stored ships
+- [ ] Visual test: Scrap button removes ship and recovers resources
+- [ ] Visual test: Ship construction items show ship name in queue
+- [ ] Visual test: auto_build_ships checkbox appears for colony-source routes
+- [ ] Visual test: Old saves load cleanly (migrate_stationed_ships runs)
+
+---
+
+# Bug Fixes: Save Menu, Contracts, Trade Routes
+
+## Changes
+- [x] **Save menu centering**: Save file buttons now fill available width using `add_sized()` instead of wrapping in `ui.horizontal` inside `vertical_centered`, which caused left-alignment
+- [x] **Contract replenishment on cancel**: Both editor and management cancel handlers now call `refill_pool()` so new contracts appear immediately
+- [x] **Trade route alert retry**: Removed the early-continue on `alert_reason` in `check_automation()` — routes now retry every cycle instead of getting permanently stuck. Alert still fires notification only on first failure (via `had_alert` guard)
+- [x] **Remove ManualLaunch**: Removed Launch button from fleet overview UI, removed `ManualLaunch` variant from `TradeAction`, removed handler from `handle_trade_action()`. Launches are now fully automatic
+- [x] **Quiet notifications**: Removed `ShipDeparted` and `ShipArrived` notification pushes from `launch_ship()` and `process_arrival()`. Only error notifications (RoutePaused) remain
+
+## Files Changed
+- `src/main.rs` — save button sizing, contract refill on cancel (2 sites), remove ManualLaunch handler
+- `src/render/trade_ui.rs` — remove Launch button from fleet overview
+- `src/render/types.rs` — remove ManualLaunch variant from TradeAction
+- `src/colony/trade.rs` — remove alert_reason skip, remove ShipDeparted/ShipArrived notifications, cleanup unused params
+
+## Verification
+- [x] `cargo build` — compiles clean, zero warnings
+- [ ] Visual test: save names centered in load dialog
+- [ ] Visual test: cancel contract → new contract appears in pool
+- [ ] Visual test: trade route with insufficient funds → alert appears → add funds → next cycle launches successfully
+- [ ] Visual test: no Launch button in fleet overview
+- [ ] Visual test: no departure/arrival toast notifications during time warp

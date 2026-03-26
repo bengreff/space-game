@@ -375,10 +375,23 @@ impl FlightState {
     }
 }
 
-/// Returns true if the given body supports vessel recovery (i.e. has infrastructure).
-/// Currently only Earth. Future colonies will add more indices.
-pub fn is_recoverable_body(body_index: usize, solar_system: &crate::bodies::SolarSystem) -> bool {
-    body_index == solar_system.earth_index
+/// Returns true if the given body supports vessel recovery.
+/// Earth always supports recovery. Colonies with a Launchpad also support recovery.
+pub fn is_recoverable_body(
+    body_index: usize,
+    solar_system: &crate::bodies::SolarSystem,
+    colony_manager: &crate::colony::ColonyManager,
+) -> bool {
+    if body_index == solar_system.earth_index {
+        return true;
+    }
+    // Colony with a launchpad
+    if let Some(colony) = colony_manager.get_by_body(body_index) {
+        return colony.buildings.iter().any(|b| {
+            b.building_type == crate::colony::BuildingType::Launchpad && b.operational
+        });
+    }
+    false
 }
 
 /// Central game state container
@@ -1176,6 +1189,8 @@ impl Game {
             self.solar_system.earth_index,
             &body_names,
             &mut notifications,
+            &self.blueprints,
+            &self.part_definitions,
         );
         self.fleet.check_automation(
             sim_time,

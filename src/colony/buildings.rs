@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::resources::{ResourceInventory, ResourceType};
+use super::trade::{StoredShip, StoredShipId};
+use crate::parts::VesselBlueprint;
 
 /// All colony building types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -27,6 +29,7 @@ pub enum BuildingType {
     ParticleAcceleratorMk2,
     ParticleAcceleratorMk3,
     ParticleAcceleratorMk4,
+    Hangar,
 }
 
 impl BuildingType {
@@ -55,6 +58,7 @@ impl BuildingType {
             Self::ParticleAcceleratorMk2,
             Self::ParticleAcceleratorMk3,
             Self::ParticleAcceleratorMk4,
+            Self::Hangar,
         ]
     }
 
@@ -87,6 +91,7 @@ impl BuildingType {
             Self::ParticleAcceleratorMk2 => "Particle Accelerator Mk II",
             Self::ParticleAcceleratorMk3 => "Particle Accelerator Mk III",
             Self::ParticleAcceleratorMk4 => "Particle Accelerator Mk IV",
+            Self::Hangar => "Hangar",
         }
     }
 
@@ -210,6 +215,11 @@ impl BuildingType {
                 (Superconductors, 200_000.0),
                 (PrecisionInstruments, 50.0),
             ],
+            Self::Hangar => vec![
+                (StructuralMetal, 50_000.0),
+                (HighTempAlloys, 10_000.0),
+                (Electronics, 5_000.0),
+            ],
         }
     }
 
@@ -238,6 +248,7 @@ impl BuildingType {
             Self::ParticleAcceleratorMk2 => 500_000_000.0, // 500 GW
             Self::ParticleAcceleratorMk3 => 5_000_000_000.0, // 5 TW
             Self::ParticleAcceleratorMk4 => 50_000.0, // 50 GW per km (scaled by circumference)
+            Self::Hangar => 50.0,
         }
     }
 
@@ -360,6 +371,10 @@ impl BuildingType {
                 (Electronics, 125.0),
                 (Superconductors, 250.0),
                 (PrecisionInstruments, 0.05),
+            ],
+            Self::Hangar => vec![
+                (StructuralMetal, 125.0),
+                (HighTempAlloys, 25.0),
             ],
         }
     }
@@ -584,6 +599,19 @@ impl BuildingInstance {
     }
 }
 
+/// What a construction queue item is building.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ConstructionTarget {
+    Building(BuildingType),
+    Ship {
+        name: String,
+        blueprint_name: String,
+        blueprint: VesselBlueprint,
+        dry_mass_kg: f64,
+        cached_delta_v: f64,
+    },
+}
+
 /// An item in the colony construction queue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -595,6 +623,17 @@ pub struct ConstructionQueueItem {
     pub mass_assembled: f64,
     /// Total mass to assemble (kg).
     pub total_mass: f64,
+    /// What is being constructed. None = legacy (use building_type).
+    #[serde(default)]
+    pub target: Option<ConstructionTarget>,
+}
+
+impl ConstructionQueueItem {
+    /// Returns the effective construction target, falling back to Building(self.building_type)
+    /// for backward compatibility with old saves.
+    pub fn effective_target(&self) -> ConstructionTarget {
+        self.target.clone().unwrap_or(ConstructionTarget::Building(self.building_type))
+    }
 }
 
 impl Default for ConstructionQueueItem {
@@ -604,6 +643,7 @@ impl Default for ConstructionQueueItem {
             reserved_resources: ResourceInventory::default(),
             mass_assembled: 0.0,
             total_mass: 0.0,
+            target: None,
         }
     }
 }
@@ -647,6 +687,12 @@ pub struct Colony {
     /// Fractional death accumulator — deaths only applied when this reaches >= 1.0.
     #[serde(default)]
     pub crew_death_accumulator: f64,
+    /// Ships stored in this colony's hangar(s).
+    #[serde(default)]
+    pub stored_ships: Vec<StoredShip>,
+    /// Next ID for stored ships at this colony.
+    #[serde(default)]
+    pub next_stored_ship_id: StoredShipId,
 }
 
 fn default_one() -> f64 {
@@ -674,6 +720,8 @@ impl Default for Colony {
             habitat_unpowered_notified: false,
             crew_at_crisis_start: None,
             crew_death_accumulator: 0.0,
+            stored_ships: Vec::new(),
+            next_stored_ship_id: 0,
         }
     }
 }
@@ -699,6 +747,8 @@ impl Colony {
             habitat_unpowered_notified: false,
             crew_at_crisis_start: None,
             crew_death_accumulator: 0.0,
+            stored_ships: Vec::new(),
+            next_stored_ship_id: 0,
         }
     }
 
@@ -747,6 +797,7 @@ impl Colony {
             reserved_resources: reserved,
             mass_assembled: 0.0,
             total_mass,
+            target: None,
         });
 
         Ok(())
@@ -758,6 +809,113 @@ impl Colony {
             return f64::INFINITY;
         }
         self.food_stored / (0.5 * self.crew as f64)
+    }
+
+    /// Total hangar capacity in kg (200,000 kg per operational Hangar building).
+    pub fn hangar_capacity(&self) -> f64 {
+        self.buildings
+            .iter()
+            .filter(|b| b.building_type == BuildingType::Hangar && b.operational)
+            .count() as f64
+            * 200_000.0
+    }
+
+    /// Total mass of ships currently stored in hangars (kg).
+    pub fn hangar_used(&self) -> f64 {
+        self.stored_ships.iter().map(|s| s.dry_mass_kg).sum()
+    }
+
+    /// Whether the colony has at least one operational Hangar building.
+    pub fn has_hangar(&self) -> bool {
+        self.buildings
+            .iter()
+            .any(|b| b.building_type == BuildingType::Hangar && b.operational)
+    }
+
+    /// Store a ship in the colony hangar. Assigns a new ID. Returns Err if insufficient capacity.
+    pub fn store_ship(&mut self, mut ship: StoredShip) -> Result<(), String> {
+        let remaining = self.hangar_capacity() - self.hangar_used();
+        if ship.dry_mass_kg > remaining + 1e-3 {
+            return Err("Insufficient hangar capacity".to_string());
+        }
+        ship.id = self.next_stored_ship_id;
+        self.next_stored_ship_id += 1;
+        self.stored_ships.push(ship);
+        Ok(())
+    }
+
+    /// Remove a ship from the colony hangar by ID. Returns the ship if found.
+    pub fn remove_ship(&mut self, id: StoredShipId) -> Option<StoredShip> {
+        let idx = self.stored_ships.iter().position(|s| s.id == id)?;
+        Some(self.stored_ships.remove(idx))
+    }
+
+    /// Find a stored ship matching a blueprint name. Returns its ID if found.
+    pub fn find_matching_ship(&self, blueprint_name: &str) -> Option<StoredShipId> {
+        self.stored_ships
+            .iter()
+            .find(|s| s.blueprint_name.as_deref() == Some(blueprint_name))
+            .map(|s| s.id)
+    }
+
+    /// Scrap a ship, converting its dry mass to resources via material breakdown.
+    /// Returns the resources recovered (for display).
+    pub fn scrap_ship(
+        &mut self,
+        id: StoredShipId,
+        part_defs: &crate::parts::PartDefinitions,
+    ) -> Option<Vec<(ResourceType, f64)>> {
+        let ship = self.remove_ship(id)?;
+        let costs =
+            crate::colony::economy::blueprint_material_costs(&ship.blueprint, part_defs);
+        for &(res, amount) in &costs {
+            self.resources.add(res, amount);
+        }
+        Some(costs)
+    }
+
+    /// Queue ship construction. Validates and consumes material resources upfront.
+    pub fn queue_ship_construction(
+        &mut self,
+        name: String,
+        blueprint_name: String,
+        blueprint: &VesselBlueprint,
+        part_defs: &crate::parts::PartDefinitions,
+    ) -> Result<(), String> {
+        let costs = crate::colony::economy::blueprint_material_costs(blueprint, part_defs);
+
+        // Check resources
+        for &(res, amount) in &costs {
+            if self.resources.get(res) < amount {
+                return Err(format!("Not enough {} (need {:.0} kg)", res.display_name(), amount));
+            }
+        }
+
+        // Consume resources
+        let mut reserved = ResourceInventory::new();
+        for &(res, amount) in &costs {
+            self.resources.remove(res, amount);
+            reserved.add(res, amount);
+        }
+
+        let dry_mass_kg = crate::colony::economy::blueprint_dry_mass_kg(blueprint, part_defs);
+        let cached_delta_v = crate::colony::transfer::blueprint_total_delta_v(blueprint, part_defs);
+
+        self.construction_queue.push(ConstructionQueueItem {
+            building_type: BuildingType::Habitat, // Placeholder for backward compat
+            reserved_resources: reserved,
+            mass_assembled: 0.0,
+            total_mass: dry_mass_kg,
+            target: Some(ConstructionTarget::Ship {
+                name,
+                blueprint_name,
+                blueprint: blueprint.clone(),
+                dry_mass_kg,
+                cached_delta_v,
+            }),
+        });
+
+        Ok(())
     }
 }
 

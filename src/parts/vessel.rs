@@ -3171,6 +3171,107 @@ impl FlightVessel {
             }
         }
     }
+
+    /// Create a `StoredShip` from a FlightVessel's current state.
+    /// Builds a dry blueprint from non-decoupled, non-destroyed parts with empty tanks.
+    pub fn to_stored_ship(
+        vessel: &FlightVessel,
+        part_defs: &PartDefinitions,
+        name: String,
+    ) -> crate::colony::trade::StoredShip {
+        use super::BlueprintPart;
+
+        // Build blueprint parts from active (non-decoupled, non-destroyed) flight parts
+        let active_indices: Vec<usize> = vessel.parts.iter().enumerate()
+            .filter(|(_, p)| !p.decoupled && !p.destroyed)
+            .map(|(i, _)| i)
+            .collect();
+
+        // Map old indices → new indices
+        let mut old_to_new = std::collections::HashMap::new();
+        for (new_idx, &old_idx) in active_indices.iter().enumerate() {
+            old_to_new.insert(old_idx, new_idx);
+        }
+
+        let mut blueprint_parts = Vec::new();
+        for &old_idx in &active_indices {
+            let part = &vessel.parts[old_idx];
+            let def = part_defs.get(&part.definition_id);
+
+            // Determine fuel type from the part's propellant resources (heuristic)
+            let fuel_type = if def.and_then(|d| d.tank.as_ref()).is_some() {
+                // Check what resources the tank has to determine fuel type
+                if part.max_resources.contains_key("rp1") {
+                    super::FuelType::Rp1
+                } else if part.max_resources.contains_key("methane") {
+                    super::FuelType::Methane
+                } else if part.max_resources.contains_key("hydrogen") {
+                    super::FuelType::Hydrogen
+                } else if part.max_resources.contains_key("xenon") {
+                    super::FuelType::Xenon
+                } else if part.max_resources.contains_key("fusion_fuel") || part.max_resources.contains_key("deuterium") {
+                    super::FuelType::FusionFuel
+                } else if part.max_resources.contains_key("antimatter") {
+                    super::FuelType::Antimatter
+                } else if part.max_resources.contains_key("nuclear_pulse") {
+                    super::FuelType::NuclearPulse
+                } else {
+                    super::FuelType::Empty
+                }
+            } else {
+                super::FuelType::Empty
+            };
+
+            blueprint_parts.push(BlueprintPart {
+                definition_id: part.definition_id.clone(),
+                position: part.local_position,
+                rotation: part.rotation,
+                parent_index: None, // We don't track parent in FlightPart
+                attachment_type: if old_idx == vessel.root_part_index {
+                    super::AttachmentType::Root
+                } else {
+                    super::AttachmentType::Stack
+                },
+                stage: 0,
+                fuel_type,
+                tank_filled: false,
+                fill_fraction: 1.0, // For delta-v calculation: assume full tanks
+                crossfeed_enabled: part.crossfeed_enabled,
+                mirror_partner_index: part.mirror_partner.and_then(|mi| old_to_new.get(&mi).copied()),
+                fairing_shape: part.fairing_shape.clone(),
+                deployed: part.deploy_target,
+                cargo_resources: Vec::new(),
+                cargo_buildings: Vec::new(),
+                cargo_payloads: Vec::new(),
+            });
+        }
+
+        let root_index = old_to_new.get(&vessel.root_part_index).copied().unwrap_or(0);
+
+        // Remap stages
+        let stages: Vec<Vec<usize>> = vessel.stages.iter()
+            .map(|stage| stage.iter().filter_map(|&idx| old_to_new.get(&idx).copied()).collect())
+            .collect();
+
+        let blueprint = VesselBlueprint {
+            name: name.clone(),
+            parts: blueprint_parts,
+            root_part_index: root_index,
+            stages,
+        };
+
+        let dry_mass_kg = crate::colony::economy::blueprint_dry_mass_kg(&blueprint, part_defs);
+        let cached_delta_v = crate::colony::transfer::blueprint_total_delta_v(&blueprint, part_defs);
+
+        crate::colony::trade::StoredShip {
+            id: 0, // Caller assigns the real ID
+            name,
+            blueprint_name: None, // Custom recovered ship
+            blueprint,
+            dry_mass_kg,
+            cached_delta_v,
+        }
+    }
 }
 
 /// Calculate the exposed (non-occluded) width of an interval [min, max]

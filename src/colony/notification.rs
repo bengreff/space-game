@@ -14,6 +14,9 @@ pub enum NotificationKind {
     ShipConstructionComplete { ship_name: String, location: String },
     ContractCompleted { name: String, payout: f64 },
     MilestoneAchieved { name: String, payout: f64 },
+    VesselRecovered { vessel_name: String, location: String, value_description: String },
+    ShipStoredInHangar { ship_name: String, colony_name: String },
+    ShipScrapped { ship_name: String, location: String },
 }
 
 impl NotificationKind {
@@ -63,6 +66,15 @@ impl NotificationKind {
             }
             NotificationKind::MilestoneAchieved { name, payout } => {
                 format!("{} — {}", name, crate::colony::format_money(*payout))
+            }
+            NotificationKind::VesselRecovered { vessel_name, location, value_description } => {
+                format!("{} recovered at {} — {}", vessel_name, location, value_description)
+            }
+            NotificationKind::ShipStoredInHangar { ship_name, colony_name } => {
+                format!("{} stored in {} hangar", ship_name, colony_name)
+            }
+            NotificationKind::ShipScrapped { ship_name, location } => {
+                format!("{} scrapped at {}", ship_name, location)
             }
         }
     }

@@ -135,7 +135,7 @@ Legacy scheduling (old saves with `automation != Manual`):
 - **FrequencyBased**: Launch when `sim_time - last_launch_time >= frequency_days * 86400`
 - **DvThreshold**: Launch when current Lambert delta-v < threshold
 
-Pre-launch validation: funds/resources available for ship build + fuel + cargo + food. On failure: set `alert_reason` on route (route stays active, stops retrying until alert is cleared), push RoutePaused notification only on first failure (stops warp). Alert clears on: manual launch (success), route edit, or route resume. Only one notification per failure — routes with an existing alert are skipped entirely by automation.
+Pre-launch validation: funds/resources available for ship build + fuel + cargo + food. On failure: set `alert_reason` on route, push RoutePaused notification only on first failure (stops warp). Routes **continue retrying** every cycle — if resources become available, the launch succeeds and alert clears automatically. Only one notification per failure (via `had_alert` guard). Alert clears on: successful launch, route edit, or route resume.
 
 Routes processed sorted by priority descending, then by id ascending.
 
@@ -144,16 +144,16 @@ Routes processed sorted by priority descending, then by id ascending.
 ### Source: `src/colony/notification.rs`
 
 New variants added:
-- `ShipArrived { ship_name, destination }` — informational
-- `ShipDeparted { ship_name, route_name }` — informational
 - `RoutePaused { route_name, reason }` — **stops warp** (critical: fuel/cargo shortage)
 - `ShipConstructionComplete { ship_name, location }` — informational
+
+Note: `ShipArrived` and `ShipDeparted` notification kinds exist in the enum but are not emitted — only error/failure notifications are shown to avoid toast spam during time warp.
 
 ## UI
 
 ### Source: `src/render/trade_ui.rs`
 
-**TradeAction** enum (in `types.rs`): None, CreateRoute, ManualLaunch, PauseRoute, ResumeRoute, DeleteRoute, DeleteShip, EditRoute, OpenEditor.
+**TradeAction** enum (in `types.rs`): None, CreateRoute, PauseRoute, ResumeRoute, DeleteRoute, DeleteShip, EditRoute, OpenEditor.
 
 **RouteCreationState** — Single-panel route creation/editing state (replaces old 7-step wizard):
 - User selections: route_name, blueprint_name, source_body, dest_body, cargo_items, crew, dv_budget, interval_days, ships_per_window
@@ -162,7 +162,7 @@ New variants added:
 - `start()` — new route with defaults
 - `start_from_route(route, fleet)` — edit existing route (pre-fills all fields)
 
-**Fleet Overview Panel** — Rendered in the colony overview screen below the colony list. Shows all routes with status (Active/Paused), source/destination, delta-v, and action buttons (pause/resume/delete/launch). Shows route alert inline (red warning text) when automation fails (alert clears on next successful launch). Ship status line appears when a ship is in transit, showing "In transit to [Dest] — X / Y days". Launch button builds and launches a new ship immediately (manual trigger). Lists unassigned ships separately. Each route has an Edit button (pencil icon) that opens the creation panel pre-filled.
+**Fleet Overview Panel** — Rendered in the colony overview screen below the colony list. Shows all routes with status (Active/Paused), source/destination, delta-v, and action buttons (pause/resume/delete). Shows route alert inline (red warning text) when automation fails (alert clears on next successful launch). Ship status line appears when a ship is in transit, showing "In transit to [Dest] — X / Y days". Launches are fully automatic — no manual launch button. Lists unassigned ships separately. Each route has an Edit button (pencil icon) that opens the creation panel pre-filled.
 
 **Colony Trade Section** — Rendered in the per-colony screen as a **read-only** card section. Shows routes involving this colony, ships stationed here. No creation or management controls — gray text "Manage routes in Colony Overview" directs users to the colony overview screen.
 
@@ -186,3 +186,49 @@ Cache invalidation: hash of (source, dest, blueprint_name, dv_budget, total_carg
 **Colony Overview "Colony Overview" Button** — Colony screen pause menu has a "Colony Overview" button that navigates back to the colony overview screen.
 
 **Action Handling** — ColonyOverviewAction and ColonyScreenAction both have `Trade(TradeAction)` variants. `handle_trade_action()` in main.rs dispatches all trade actions to FleetManager methods. `ManualLaunch` builds a new ship and launches it immediately. `OpenEditor` is intercepted at the colony overview call site (populates RouteCreationState before reaching handle_trade_action). `EditRoute` updates existing route fields while preserving id and last_launch_time.
+
+## Ship Hangar System
+
+### Source: `src/colony/trade.rs`, `src/colony/buildings.rs`
+
+Ships are persistent colony assets stored in hangars. When a trade ship arrives at a colony, it becomes a `StoredShip` in that colony's hangar. Trade routes source ships from hangars for launches.
+
+**StoredShipId** — type alias for `u64`.
+
+**StoredShip** — a ship stored in a colony hangar:
+- `id: StoredShipId`, `name: String`
+- `blueprint_name: Option<String>` — matches a named blueprint if built from one
+- `blueprint: VesselBlueprint` — the ship's dry-state blueprint
+- `dry_mass_kg: f64`, `cached_delta_v: f64`
+
+**BuildingType::Hangar** — colony building, 200,000 kg capacity per operational hangar. Tech-gated under `colony_engineering` (same tier as Launchpad). Build cost: 50,000 Structural Metal, 10,000 High-Temp Alloys, 5,000 Electronics. Power draw: 50 kW. Maintenance: 125 Structural Metal + 25 High-Temp Alloys per 30 days.
+
+**Colony hangar methods** (in `buildings.rs`):
+- `hangar_capacity()` — 200,000 kg × operational hangar count
+- `hangar_used()` — sum of stored ship dry masses
+- `has_hangar()` — at least one operational Hangar building
+- `store_ship(ship)` — stores ship if capacity allows, assigns ID
+- `remove_ship(id)` — removes and returns ship by ID
+- `find_matching_ship(blueprint_name)` — finds first ship matching blueprint
+- `scrap_ship(id, part_defs)` — removes ship, converts to resources via `blueprint_material_costs()`, adds resources to colony inventory
+- `queue_ship_construction(name, blueprint_name, blueprint, part_defs)` — queues ship as `ConstructionTarget::Ship` in construction queue
+
+**ConstructionTarget** — enum (in `buildings.rs`):
+- `Building(BuildingType)` — standard building construction
+- `Ship { name, blueprint_name, blueprint, dry_mass_kg, cached_delta_v }` — ship construction
+
+**TradeRoute.auto_build_ships** — `bool` (default false, serde default). When true, colony automation queues ship construction when hangar stock is low. Only meaningful for colony-source routes (Earth builds instantly).
+
+**migrate_stationed_ships()** — Called on game load. Converts old `Stationed` TradeShips from pre-hangar saves into `StoredShip` objects in the appropriate colony's hangar.
+
+### Hangar UI
+
+**Colony Screen Hangar Card** (card 8, between Trade and Debug):
+- Only shown if colony has at least one operational Hangar building
+- Capacity bar: `hangar_used() / hangar_capacity()`
+- Grid listing stored ships: name, blueprint name, dry mass, delta-v
+- Per-ship Scrap button — `ColonyScreenAction::ScrapShip(body_index, ship_id)`
+
+**Construction Queue Ship Display** — `render_construction_card()` uses `effective_target()` to detect `ConstructionTarget::Ship` items and displays "Ship: {name}" instead of the placeholder building type.
+
+**Route Creation auto_build_ships** — Checkbox in Scheduling section, only shown for colony-source routes (not Earth). Wired into `RouteCreationState.auto_build_ships` and carried through to `TradeRoute.auto_build_ships`.

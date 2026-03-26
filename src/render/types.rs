@@ -448,8 +448,6 @@ pub enum TradeAction {
     CreateRoute {
         route: crate::colony::TradeRoute,
     },
-    /// Build a ship and launch it on a route immediately (manual trigger).
-    ManualLaunch(crate::colony::TradeRouteId),
     PauseRoute(crate::colony::TradeRouteId),
     ResumeRoute(crate::colony::TradeRouteId),
     DeleteRoute(crate::colony::TradeRouteId),

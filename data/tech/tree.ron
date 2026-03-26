@@ -370,7 +370,7 @@
             col: 4,
             row: 4,
             unlocks_parts: [],
-            unlocks_buildings: [Habitat, Mine, Factory, SmallSolarFarm, Stockpile, LightConstructionRobot, ConstructionRobot, FoodStorage, Launchpad],
+            unlocks_buildings: [Habitat, Mine, Factory, SmallSolarFarm, Stockpile, LightConstructionRobot, ConstructionRobot, FoodStorage, Launchpad, Hangar],
         ),
         (
             id: "extended_missions",

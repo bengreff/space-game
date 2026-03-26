@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::colony::{BuildingType, Colony, ColonyManager, FactoryRecipe, FleetManager, ResourceType};
+use crate::colony::{BuildingType, Colony, ColonyManager, FactoryRecipe, FleetManager, ResourceType, StoredShipId};
 use super::types::TradeAction;
 
 // ============================================================
@@ -97,6 +97,7 @@ const BUILDABLE_BUILDINGS: &[BuildingType] = &[
     BuildingType::ScienceLab,
     BuildingType::Stockpile,
     BuildingType::FoodStorage,
+    BuildingType::Hangar,
 ];
 
 /// All factory recipes for the assignment UI.
@@ -142,6 +143,7 @@ pub enum ColonyScreenAction {
     DebugAddResource(usize, ResourceType, f64),
     DebugAddBuilding(usize, BuildingType),
     DebugAddCrew(usize, u32),
+    ScrapShip(usize, StoredShipId),
     Trade(TradeAction),
 }
 
@@ -986,9 +988,17 @@ fn render_construction_card(
                 } else {
                     0.0
                 };
+                let display_name = match item.effective_target() {
+                    crate::colony::ConstructionTarget::Building(bt) => {
+                        bt.display_name().to_string()
+                    }
+                    crate::colony::ConstructionTarget::Ship { name, .. } => {
+                        format!("Ship: {}", name)
+                    }
+                };
                 let text = format!(
                     "{} ({} / {})",
-                    item.building_type.display_name(),
+                    display_name,
                     format_colony_mass(item.mass_assembled),
                     format_colony_mass(item.total_mass),
                 );
@@ -1333,6 +1343,88 @@ fn render_resources_card(
 
 /// Render the full-screen colony management screen.
 /// Returns a ColonyScreenAction describing what the user wants to do.
+fn render_hangar_card(
+    ui: &mut egui::Ui,
+    colony: &Colony,
+    body_index: usize,
+    action: &mut ColonyScreenAction,
+) {
+    if !colony.has_hangar() {
+        return;
+    }
+
+    card_frame().show(ui, |ui| {
+        section_heading(ui, "Ship Hangar");
+
+        // Capacity bar
+        let used = colony.hangar_used();
+        let capacity = colony.hangar_capacity();
+        let frac = if capacity > 0.0 {
+            (used / capacity) as f32
+        } else {
+            0.0
+        };
+        let bar_color = if frac > 0.9 {
+            egui::Color32::from_rgb(200, 80, 80)
+        } else {
+            egui::Color32::from_rgb(80, 140, 200)
+        };
+        ui.add(
+            egui::ProgressBar::new(frac.clamp(0.0, 1.0))
+                .text(format!(
+                    "{} / {}",
+                    format_colony_mass(used),
+                    format_colony_mass(capacity),
+                ))
+                .fill(bar_color),
+        );
+
+        if colony.stored_ships.is_empty() {
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new("No ships stored.")
+                    .size(12.0)
+                    .color(COLOR_GRAY),
+            );
+        } else {
+            ui.add_space(4.0);
+            egui::Grid::new("cs_hangar_ships_grid")
+                .striped(true)
+                .min_col_width(60.0)
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("Ship").size(11.0).strong());
+                    ui.label(egui::RichText::new("Blueprint").size(11.0).strong());
+                    ui.label(egui::RichText::new("Dry Mass").size(11.0).strong());
+                    ui.label(egui::RichText::new("\u{0394}v").size(11.0).strong());
+                    ui.label(""); // Scrap button column
+                    ui.end_row();
+
+                    for ship in &colony.stored_ships {
+                        ui.label(egui::RichText::new(&ship.name).size(11.0));
+                        ui.label(
+                            egui::RichText::new(
+                                ship.blueprint_name.as_deref().unwrap_or("\u{2014}"),
+                            )
+                            .size(11.0)
+                            .color(COLOR_GRAY),
+                        );
+                        ui.label(
+                            egui::RichText::new(format_colony_mass(ship.dry_mass_kg)).size(11.0),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("{:.0} m/s", ship.cached_delta_v))
+                                .size(11.0),
+                        );
+                        if ui.small_button("Scrap").clicked() {
+                            *action = ColonyScreenAction::ScrapShip(body_index, ship.id);
+                        }
+                        ui.end_row();
+                    }
+                });
+        }
+    });
+}
+
 pub fn render_colony_screen(
     ctx: &egui::Context,
     body_index: usize,
@@ -1535,7 +1627,10 @@ pub fn render_colony_screen(
                     }
                 }
 
-                // 8. Debug section (no card frame)
+                // 8. Hangar card
+                render_hangar_card(ui, colony, body_index, &mut action);
+
+                // 9. Debug section (no card frame)
                 ui.add_space(4.0);
                 egui::CollapsingHeader::new("Debug")
                     .default_open(false)

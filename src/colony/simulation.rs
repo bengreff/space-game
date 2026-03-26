@@ -471,8 +471,8 @@ fn process_construction(
     colony: &mut Colony,
     days: f64,
     hab_mult: f64,
-    _notifications: &mut Vec<Notification>,
-    _sim_time: f64,
+    notifications: &mut Vec<Notification>,
+    sim_time: f64,
 ) {
     // Calculate robot construction capacity (after maintenance)
     let mut robot_construction_capacity = 0.0_f64;
@@ -510,18 +510,59 @@ fn process_construction(
     item.mass_assembled += remaining_capacity;
 
     if item.mass_assembled >= item.total_mass {
-        let building_type = item.building_type;
+        let target = item.effective_target();
         colony.construction_queue.remove(0);
 
-        // Add the new building
-        colony.buildings.push(super::buildings::BuildingInstance::new(building_type));
+        match target {
+            super::buildings::ConstructionTarget::Building(building_type) => {
+                // Add the new building
+                colony.buildings.push(super::buildings::BuildingInstance::new(building_type));
 
-        // Pre-stock food when a Habitat completes
-        if building_type == BuildingType::Habitat {
-            colony.food_stored += 1_000.0;
+                // Pre-stock food when a Habitat completes
+                if building_type == BuildingType::Habitat {
+                    colony.food_stored += 1_000.0;
+                }
+
+                notifications.push(Notification {
+                    kind: NotificationKind::ConstructionComplete {
+                        colony_name: colony.name.clone(),
+                        building: building_type.display_name().to_string(),
+                    },
+                    time: sim_time,
+                    read: false,
+                });
+            }
+            super::buildings::ConstructionTarget::Ship {
+                name,
+                blueprint_name,
+                blueprint,
+                dry_mass_kg,
+                cached_delta_v,
+            } => {
+                // Create a StoredShip and add to colony hangar
+                let stored = super::trade::StoredShip {
+                    id: colony.next_stored_ship_id,
+                    name: name.clone(),
+                    blueprint_name: Some(blueprint_name),
+                    blueprint,
+                    dry_mass_kg,
+                    cached_delta_v,
+                };
+                colony.next_stored_ship_id += 1;
+                // Best-effort store: if hangar is full, just push it anyway
+                // (the resources were already consumed)
+                colony.stored_ships.push(stored);
+
+                notifications.push(Notification {
+                    kind: NotificationKind::ShipConstructionComplete {
+                        ship_name: name,
+                        location: colony.name.clone(),
+                    },
+                    time: sim_time,
+                    read: false,
+                });
+            }
         }
-
-        // Construction complete — no notification (player monitors via colony UI)
     }
 }
 

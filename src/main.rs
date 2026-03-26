@@ -2290,7 +2290,7 @@ fn render_flight_frame(
              && game.flight.ship.is_suborbital(&game.solar_system))
     );
     let can_recover = match game.flight.ship.state {
-        ShipState::Landed { body_index, .. } => sunscatter::game::is_recoverable_body(body_index, &game.solar_system),
+        ShipState::Landed { body_index, .. } => sunscatter::game::is_recoverable_body(body_index, &game.solar_system, &game.colony_manager),
         _ => false,
     };
 
@@ -2354,6 +2354,216 @@ fn render_flight_frame(
                             &game.solar_system,
                             game.solar_system.time,
                         );
+                    }
+
+                    // Determine landing body
+                    let landed_body = match game.flight.ship.state {
+                        ShipState::Landed { body_index, .. } => Some(body_index),
+                        _ => None,
+                    };
+                    let is_earth = landed_body.map_or(false, |bi| bi == game.solar_system.earth_index);
+                    let vessel_name = game.flight.active_vessel_name.clone();
+
+                    if is_earth {
+                        // === Earth Recovery: convert everything to cash at 100% ===
+                        let mut total_value = 0.0_f64;
+
+                        if let Some(ref vessel) = game.flight.vessel {
+                            use sunscatter::colony::economy::{material_breakdown, fuel_price_per_kg, LOX_PRICE_PER_KG};
+
+                            // Part material value (non-decoupled parts only)
+                            for part in &vessel.parts {
+                                if part.decoupled || part.destroyed { continue; }
+                                if let Some(def) = game.part_definitions.get(&part.definition_id) {
+                                    let dry_mass_kg = def.mass * 1000.0;
+                                    let breakdown = material_breakdown(def);
+                                    let masses = breakdown.to_masses(dry_mass_kg);
+                                    total_value += masses.earth_cost();
+                                }
+                            }
+
+                            // Fuel value (remaining propellant in tanks)
+                            for part in &vessel.parts {
+                                if part.decoupled || part.destroyed { continue; }
+                                for (res_name, &amount) in &part.resources {
+                                    if amount <= 0.0 { continue; }
+                                    // Map ship resource names to ResourceType for earth_price
+                                    let price = match res_name.as_str() {
+                                        "lox" => Some(LOX_PRICE_PER_KG),
+                                        "rp1" => Some(fuel_price_per_kg(sunscatter::parts::FuelType::Rp1)),
+                                        "methane" => Some(fuel_price_per_kg(sunscatter::parts::FuelType::Methane)),
+                                        "hydrogen" => Some(fuel_price_per_kg(sunscatter::parts::FuelType::Hydrogen)),
+                                        "xenon" => Some(fuel_price_per_kg(sunscatter::parts::FuelType::Xenon)),
+                                        "fusion_fuel" | "deuterium" => Some(fuel_price_per_kg(sunscatter::parts::FuelType::FusionFuel)),
+                                        "antimatter" => Some(0.0), // Not purchasable
+                                        "nuclear_pulse" => Some(fuel_price_per_kg(sunscatter::parts::FuelType::NuclearPulse)),
+                                        _ => None,
+                                    };
+                                    if let Some(p) = price {
+                                        total_value += p * amount;
+                                    }
+                                }
+                            }
+
+                            // Cargo resource value
+                            for part in &vessel.parts {
+                                if part.decoupled || part.destroyed { continue; }
+                                let is_cargo = game.part_definitions.get(&part.definition_id)
+                                    .and_then(|d| d.cargo.as_ref()).is_some();
+                                if !is_cargo { continue; }
+                                for (res_name, &amount) in &part.resources {
+                                    if amount <= 0.0 { continue; }
+                                    if let Some(rt) = sunscatter::colony::ResourceType::from_display_name(res_name) {
+                                        if let Some(price) = rt.earth_price() {
+                                            total_value += price * amount;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        game.company.money += total_value;
+                        let value_str = sunscatter::colony::format_money(total_value);
+                        log::info!("Earth recovery: {} — {}", vessel_name, value_str);
+
+                        game.notifications.push(sunscatter::colony::Notification {
+                            kind: sunscatter::colony::NotificationKind::VesselRecovered {
+                                vessel_name: vessel_name.clone(),
+                                location: "Earth".to_string(),
+                                value_description: value_str,
+                            },
+                            time: game.solar_system.time,
+                            read: false,
+                        });
+                    } else if let Some(body_index) = landed_body {
+                        // === Colony Recovery ===
+                        let colony_name = game.colony_manager.get_by_body(body_index)
+                            .map(|c| c.name.clone()).unwrap_or_default();
+
+                        if let Some(ref mut vessel) = game.flight.vessel {
+                            // Extract crew to colony
+                            let crew_count = vessel.total_crew_capacity(&game.part_definitions);
+                            if let Some(colony) = game.colony_manager.get_by_body_mut(body_index) {
+                                colony.crew += crew_count;
+                            }
+
+                            // Extract cargo (food, resources, buildings)
+                            let (buildings, cargo_resources, food_kg) = vessel.extract_all_cargo(&game.part_definitions);
+                            if let Some(colony) = game.colony_manager.get_by_body_mut(body_index) {
+                                colony.food_stored += food_kg;
+                                for (name, amount) in &cargo_resources {
+                                    if let Some(rt) = sunscatter::colony::ResourceType::from_display_name(name) {
+                                        colony.resources.add(rt, *amount);
+                                    }
+                                }
+                                // Buildings are added to colony buildings as instances
+                                for name in &buildings {
+                                    if let Some(bt) = sunscatter::colony::BuildingType::from_display_name(name) {
+                                        colony.buildings.push(sunscatter::colony::BuildingInstance::new(bt));
+                                    }
+                                }
+                            }
+
+                            // Extract fuel from tanks to colony resources
+                            for part in &vessel.parts {
+                                if part.decoupled || part.destroyed { continue; }
+                                for (res_name, &amount) in &part.resources {
+                                    if amount <= 0.0 { continue; }
+                                    let rt = match res_name.as_str() {
+                                        "lox" => Some(sunscatter::colony::ResourceType::Lox),
+                                        "rp1" => Some(sunscatter::colony::ResourceType::Rp1),
+                                        "methane" => Some(sunscatter::colony::ResourceType::Methane),
+                                        "hydrogen" => Some(sunscatter::colony::ResourceType::LiquidHydrogen),
+                                        "xenon" => Some(sunscatter::colony::ResourceType::Xenon),
+                                        "fusion_fuel" | "deuterium" => Some(sunscatter::colony::ResourceType::Deuterium),
+                                        "antimatter" => Some(sunscatter::colony::ResourceType::Antimatter),
+                                        "nuclear_pulse" => Some(sunscatter::colony::ResourceType::NuclearPulseUnits),
+                                        _ => None,
+                                    };
+                                    if let Some(rt) = rt {
+                                        if let Some(colony) = game.colony_manager.get_by_body_mut(body_index) {
+                                            colony.resources.add(rt, amount);
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Check if stages were jettisoned (any decoupled parts)
+                            let stages_jettisoned = vessel.parts.iter().any(|p| p.decoupled);
+
+                            if stages_jettisoned {
+                                // Convert remaining dry mass to resources via material breakdown
+                                use sunscatter::colony::economy::material_breakdown;
+                                for part in &vessel.parts {
+                                    if part.decoupled || part.destroyed { continue; }
+                                    if let Some(def) = game.part_definitions.get(&part.definition_id) {
+                                        let dry_mass_kg = def.mass * 1000.0;
+                                        let breakdown = material_breakdown(def);
+                                        let masses = breakdown.to_masses(dry_mass_kg);
+                                        if let Some(colony) = game.colony_manager.get_by_body_mut(body_index) {
+                                            colony.resources.add(sunscatter::colony::ResourceType::StructuralMetal, masses.metal_kg);
+                                            colony.resources.add(sunscatter::colony::ResourceType::HighTempAlloys, masses.hta_kg);
+                                            colony.resources.add(sunscatter::colony::ResourceType::Electronics, masses.elec_kg);
+                                            if masses.super_kg > 0.0 {
+                                                colony.resources.add(sunscatter::colony::ResourceType::Superconductors, masses.super_kg);
+                                            }
+                                            if masses.pi_kg > 0.0 {
+                                                colony.resources.add(sunscatter::colony::ResourceType::PrecisionInstruments, masses.pi_kg);
+                                            }
+                                        }
+                                    }
+                                }
+                                log::info!("Colony recovery (staged): {} → resources at {}", vessel_name, colony_name);
+                                game.notifications.push(sunscatter::colony::Notification {
+                                    kind: sunscatter::colony::NotificationKind::VesselRecovered {
+                                        vessel_name: vessel_name.clone(),
+                                        location: colony_name.clone(),
+                                        value_description: "converted to resources (staged)".to_string(),
+                                    },
+                                    time: game.solar_system.time,
+                                    read: false,
+                                });
+                            } else {
+                                // Build a StoredShip from the vessel's non-decoupled parts
+                                let stored = sunscatter::parts::FlightVessel::to_stored_ship(
+                                    vessel,
+                                    &game.part_definitions,
+                                    vessel_name.clone(),
+                                );
+                                if let Some(colony) = game.colony_manager.get_by_body_mut(body_index) {
+                                    if colony.has_hangar() && colony.hangar_used() + stored.dry_mass_kg <= colony.hangar_capacity() + 1e-3 {
+                                        let ship_name = stored.name.clone();
+                                        let _ = colony.store_ship(stored);
+                                        log::info!("Colony recovery: {} stored in {} hangar", ship_name, colony_name);
+                                        game.notifications.push(sunscatter::colony::Notification {
+                                            kind: sunscatter::colony::NotificationKind::ShipStoredInHangar {
+                                                ship_name,
+                                                colony_name: colony_name.clone(),
+                                            },
+                                            time: game.solar_system.time,
+                                            read: false,
+                                        });
+                                    } else {
+                                        // No hangar or full — convert to resources
+                                        use sunscatter::colony::economy::blueprint_material_costs;
+                                        let costs = blueprint_material_costs(&stored.blueprint, &game.part_definitions);
+                                        for (res, amount) in &costs {
+                                            colony.resources.add(*res, *amount);
+                                        }
+                                        log::info!("Colony recovery: {} → resources at {} (no hangar space)", vessel_name, colony_name);
+                                        game.notifications.push(sunscatter::colony::Notification {
+                                            kind: sunscatter::colony::NotificationKind::VesselRecovered {
+                                                vessel_name: vessel_name.clone(),
+                                                location: colony_name.clone(),
+                                                value_description: "converted to resources (no hangar)".to_string(),
+                                            },
+                                            time: game.solar_system.time,
+                                            read: false,
+                                        });
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Discard maneuver nodes (vessel is recovered, not shelved)
@@ -2840,6 +3050,11 @@ fn render_editor_frame(
                     for part in game.editor.parts.values_mut() {
                         part.cargo_payloads.retain(|p| !cancelled_ids.contains(&p.contract_id));
                     }
+                    game.contracts.refill_pool(
+                        &game.science.discoveries,
+                        &game.solar_system,
+                        game.solar_system.time,
+                    );
                 }
                 _ => {}
             }
@@ -3298,27 +3513,30 @@ fn render_title_screen_frame(
                                 } else {
                                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                                         for save in save_list {
-                                            ui.vertical_centered(|ui| {
-                                                ui.horizontal(|ui| {
-                                                    let label = format!(
-                                                        "{} — {} vessels — {}",
-                                                        save.name,
-                                                        save.vessel_count,
-                                                        sunscatter::game::format_date(save.simulation_time),
-                                                    );
-                                                    if ui.button(egui::RichText::new(&label).size(16.0)).clicked() {
-                                                        action = TitleScreenAction::LoadGame(save.save_id.clone());
-                                                    }
-                                                    let delete_btn = ui.small_button(
-                                                        egui::RichText::new("\u{00d7}")
-                                                            .size(16.0)
-                                                            .color(egui::Color32::from_rgb(180, 80, 80)),
-                                                    );
-                                                    if delete_btn.clicked() {
-                                                        confirm_delete = Some(save.save_id.clone());
-                                                    }
-                                                    delete_btn.on_hover_text("Delete save");
-                                                });
+                                            let label = format!(
+                                                "{} — {} vessels — {}",
+                                                save.name,
+                                                save.vessel_count,
+                                                sunscatter::game::format_date(save.simulation_time),
+                                            );
+                                            ui.horizontal(|ui| {
+                                                let total_width = ui.available_width();
+                                                let button_resp = ui.add_sized(
+                                                    [total_width - 30.0, 0.0],
+                                                    egui::Button::new(egui::RichText::new(&label).size(16.0)),
+                                                );
+                                                if button_resp.clicked() {
+                                                    action = TitleScreenAction::LoadGame(save.save_id.clone());
+                                                }
+                                                let delete_btn = ui.small_button(
+                                                    egui::RichText::new("\u{00d7}")
+                                                        .size(16.0)
+                                                        .color(egui::Color32::from_rgb(180, 80, 80)),
+                                                );
+                                                if delete_btn.clicked() {
+                                                    confirm_delete = Some(save.save_id.clone());
+                                                }
+                                                delete_btn.on_hover_text("Delete save");
                                             });
                                         }
                                     });
@@ -3991,6 +4209,28 @@ fn render_colony_frame(
                         }
                     }
                 }
+                sunscatter::render::ColonyScreenAction::ScrapShip(bi, ship_id) => {
+                    let body_name = game.solar_system.bodies.get(bi)
+                        .map(|b| b.name.clone())
+                        .unwrap_or_else(|| "Unknown".to_string());
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        let ship_name = colony.stored_ships.iter()
+                            .find(|s| s.id == ship_id)
+                            .map(|s| s.name.clone())
+                            .unwrap_or_else(|| "Unknown".to_string());
+                        if colony.scrap_ship(ship_id, &game.part_definitions).is_some() {
+                            log::info!("Scrapped ship '{}' at {}", ship_name, body_name);
+                            game.notifications.push(sunscatter::colony::Notification {
+                                kind: sunscatter::colony::NotificationKind::ShipScrapped {
+                                    ship_name,
+                                    location: body_name,
+                                },
+                                time: game.solar_system.time,
+                                read: false,
+                            });
+                        }
+                    }
+                }
                 sunscatter::render::ColonyScreenAction::Trade(trade_action) => {
                     handle_trade_action(trade_action, game);
                 }
@@ -4020,81 +4260,11 @@ fn render_colony_frame(
 fn handle_trade_action(action: sunscatter::render::TradeAction, game: &mut Game) {
     use sunscatter::render::TradeAction;
 
-    let sim_time = game.time();
-
     match action {
         TradeAction::None => {}
         TradeAction::CreateRoute { route, .. } => {
             // Route is created; automation will build and launch ships on schedule
             game.fleet.create_route(route);
-        }
-        TradeAction::ManualLaunch(route_id) => {
-            // Build a new ship and launch it immediately (manual trigger)
-            let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
-            let mut notifications = Vec::new();
-
-            let (blueprint_name, source) = {
-                let route = match game.fleet.get_route(route_id) {
-                    Some(r) => r,
-                    None => return,
-                };
-                (route.blueprint_name.clone(), route.legs.first().and_then(|l| l.from_body))
-            };
-            let ship_name = format!("Manual Launch #{}", sim_time as u64 / 86400);
-
-            match game.fleet.build_ship(
-                ship_name,
-                blueprint_name,
-                source,
-                game.solar_system.earth_index,
-                &game.blueprints,
-                &game.part_definitions,
-                &mut game.colony_manager,
-                &mut game.company,
-                &body_names,
-                &mut notifications,
-                sim_time,
-            ) {
-                Ok(ship_id) => {
-                    if let Some(r) = game.fleet.get_route_mut(route_id) {
-                        r.assigned_ship_id = Some(ship_id);
-                    }
-                    if let Some(s) = game.fleet.get_ship_mut(ship_id) {
-                        s.assigned_route = Some(route_id);
-                    }
-                    match game.fleet.launch_ship(
-                        ship_id,
-                        route_id,
-                        &mut game.colony_manager,
-                        &mut game.company,
-                        game.solar_system.earth_index,
-                        &game.blueprints,
-                        &game.part_definitions,
-                        &body_names,
-                        &mut notifications,
-                        sim_time,
-                    ) {
-                        Err(e) => {
-                            log::error!("Manual launch failed: {}", e);
-                            if let Some(route) = game.fleet.get_route_mut(route_id) {
-                                route.alert_reason = Some(e);
-                            }
-                        }
-                        Ok(()) => {
-                            if let Some(route) = game.fleet.get_route_mut(route_id) {
-                                route.alert_reason = None;
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::error!("Manual launch ship build failed: {}", e);
-                    if let Some(route) = game.fleet.get_route_mut(route_id) {
-                        route.alert_reason = Some(e);
-                    }
-                }
-            }
-            game.notifications.extend(notifications);
         }
         TradeAction::PauseRoute(route_id) => {
             if let Some(route) = game.fleet.get_route_mut(route_id) {
@@ -4297,6 +4467,11 @@ fn render_management_frame(
                 }
                 sunscatter::render::ManagementAction::CancelContract(id) => {
                     game.contracts.cancel(id);
+                    game.contracts.refill_pool(
+                        &game.science.discoveries,
+                        &game.solar_system,
+                        game.solar_system.time,
+                    );
                 }
                 sunscatter::render::ManagementAction::SetRdBudget(budget) => {
                     game.company.rd_budget = budget;

@@ -83,6 +83,7 @@ pub struct RouteCreationState {
     pub interval_days: f64,
     pub ships_per_window: u32,
     pub build_new_ship: bool,
+    pub auto_build_ships: bool,
     // Cache (recomputed when inputs change)
     pub cached_category: Option<RouteCategory>,
     pub cached_leg: Option<crate::colony::transfer::LegResult>,
@@ -131,6 +132,7 @@ impl RouteCreationState {
             interval_days: route.interval_days,
             ships_per_window: route.ships_per_window,
             build_new_ship: false, // Don't build when editing
+            auto_build_ships: route.auto_build_ships,
             cached_category: Some(route.route_category),
             cargo_amount: 1000.0,
             ..Default::default()
@@ -241,15 +243,6 @@ pub fn render_fleet_overview_panel(
                             }
                         }
 
-                        // Manual launch button (builds and launches a new ship)
-                        let has_ship_in_transit = route.assigned_ship_id
-                            .and_then(|id| fleet.get_ship(id))
-                            .map_or(false, |s| s.state == TradeShipState::InTransit);
-                        if !route.paused && !has_ship_in_transit {
-                            if ui.small_button("Launch").on_hover_text("Build and launch a ship now").clicked() {
-                                action = TradeAction::ManualLaunch(route.id);
-                            }
-                        }
                     });
                 });
 
@@ -1105,6 +1098,19 @@ pub fn render_route_creation_panel(
                             }
                         }
                     }
+
+                    // Auto-build ships checkbox (colony sources only)
+                    if state.source_body.is_some() && state.source_body != Some(earth_index) {
+                        ui.checkbox(&mut state.auto_build_ships, "Auto-build replacement ships");
+                        ui.label(
+                            egui::RichText::new(
+                                "Colony will queue ship construction when hangar stock is low",
+                            )
+                            .size(11.0)
+                            .color(egui::Color32::from_rgb(160, 160, 160)),
+                        );
+                    }
+
                     ui.add_space(8.0);
 
                     // 10. Action buttons
@@ -1162,6 +1168,7 @@ pub fn render_route_creation_panel(
                                     interval_days: state.interval_days,
                                     ships_per_window: state.ships_per_window,
                                     alert_reason: None,
+                                    auto_build_ships: state.auto_build_ships,
                                 };
 
                                 if state.editing_route_id.is_some() {

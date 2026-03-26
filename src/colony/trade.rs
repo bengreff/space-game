@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::parts::VesselBlueprint;
 use super::resources::{ResourceInventory, ResourceType};
 
 /// Unique identifier for a trade ship.
@@ -9,6 +10,24 @@ pub type TradeShipId = u64;
 
 /// Unique identifier for a trade route.
 pub type TradeRouteId = u64;
+
+/// Unique identifier for a stored ship in a hangar.
+pub type StoredShipId = u64;
+
+/// A ship stored in a colony hangar (or Earth's virtual hangar).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredShip {
+    pub id: StoredShipId,
+    pub name: String,
+    /// Matches a named blueprint if built from one. None for recovered custom ships.
+    pub blueprint_name: Option<String>,
+    /// The blueprint representing the ship's dry state (fill_fraction=0 for all tanks).
+    pub blueprint: VesselBlueprint,
+    /// Cached dry mass in kg.
+    pub dry_mass_kg: f64,
+    /// Cached total delta-v (m/s) when fully fueled.
+    pub cached_delta_v: f64,
+}
 
 /// Current state of a trade ship.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -130,6 +149,9 @@ pub struct TradeRoute {
     /// Route stays active but shows this alert until a launch succeeds.
     #[serde(default)]
     pub alert_reason: Option<String>,
+    /// If true, automatically queue ship construction when no ship is available in hangar.
+    #[serde(default)]
+    pub auto_build_ships: bool,
 }
 
 impl Default for TradeRoute {
@@ -157,6 +179,7 @@ impl Default for TradeRoute {
             interval_days: 30.0,
             ships_per_window: 1,
             alert_reason: None,
+            auto_build_ships: false,
         }
     }
 }
@@ -196,6 +219,12 @@ pub struct TradeShip {
     pub assigned_route: Option<TradeRouteId>,
     /// Cached total delta-v of this ship's blueprint (m/s).
     pub cached_delta_v: f64,
+    /// Whether the ship will have jettisoned stages by arrival (computed at launch).
+    #[serde(default)]
+    pub stages_jettisoned: bool,
+    /// Cached dry mass in kg.
+    #[serde(default)]
+    pub dry_mass_kg: f64,
 }
 
 impl Default for TradeShip {
@@ -214,6 +243,8 @@ impl Default for TradeShip {
             transit_remaining: 0.0,
             assigned_route: None,
             cached_delta_v: 0.0,
+            stages_jettisoned: false,
+            dry_mass_kg: 0.0,
         }
     }
 }
@@ -226,6 +257,12 @@ pub struct FleetManager {
     pub routes: Vec<TradeRoute>,
     pub next_ship_id: TradeShipId,
     pub next_route_id: TradeRouteId,
+    /// Ships stored in Earth's virtual hangar (unlimited capacity).
+    #[serde(default)]
+    pub earth_stored_ships: Vec<StoredShip>,
+    /// Next ID for Earth-stored ships.
+    #[serde(default)]
+    pub next_earth_ship_id: StoredShipId,
 }
 
 impl FleetManager {
@@ -277,6 +314,8 @@ impl FleetManager {
             transit_remaining: 0.0,
             assigned_route: None,
             cached_delta_v,
+            stages_jettisoned: false,
+            dry_mass_kg: 0.0,
         });
         id
     }
@@ -318,6 +357,74 @@ impl FleetManager {
             .iter()
             .filter(|s| s.state == TradeShipState::Stationed && s.location == location)
             .collect()
+    }
+
+    /// Compute whether a blueprint will jettison stages for a given route delta-v.
+    pub fn compute_stages_jettisoned(
+        blueprint: &VesselBlueprint,
+        part_defs: &crate::parts::PartDefinitions,
+        route_total_dv: f64,
+    ) -> bool {
+        // Check if the ship has any decouplers at all
+        let has_decouplers = blueprint.parts.iter().any(|p| {
+            part_defs.get(&p.definition_id)
+                .map_or(false, |d| d.decoupler.is_some())
+        });
+        if !has_decouplers {
+            return false; // Single-stage, never jettisons
+        }
+
+        // Compute per-stage delta-v
+        let vessel = crate::parts::FlightVessel::from_blueprint(
+            blueprint, part_defs, [0.0, 0.0], [0.0, 0.0], 0,
+        );
+        let Ok(vessel) = vessel else { return false };
+        let stage_dvs = vessel.calculate_stage_delta_v(part_defs);
+        if stage_dvs.is_empty() {
+            return false;
+        }
+
+        // If route requires more dv than first stage provides, staging is required
+        let first_stage_dv = stage_dvs[0].0;
+        route_total_dv > first_stage_dv
+    }
+
+    /// Store a ship in Earth's virtual hangar (unlimited capacity).
+    pub fn store_earth_ship(&mut self, mut ship: StoredShip) {
+        ship.id = self.next_earth_ship_id;
+        self.next_earth_ship_id += 1;
+        self.earth_stored_ships.push(ship);
+    }
+
+    /// Find a stored ship at Earth matching a blueprint name. Returns its ID if found.
+    pub fn find_earth_ship(&self, blueprint_name: &str) -> Option<StoredShipId> {
+        self.earth_stored_ships
+            .iter()
+            .find(|s| s.blueprint_name.as_deref() == Some(blueprint_name))
+            .map(|s| s.id)
+    }
+
+    /// Remove a ship from Earth's hangar by ID.
+    pub fn remove_earth_ship(&mut self, id: StoredShipId) -> Option<StoredShip> {
+        let idx = self.earth_stored_ships.iter().position(|s| s.id == id)?;
+        Some(self.earth_stored_ships.remove(idx))
+    }
+
+    /// Scrap an Earth-stored ship for cash. Returns the cash value.
+    pub fn scrap_earth_ship(
+        &mut self,
+        id: StoredShipId,
+        part_defs: &crate::parts::PartDefinitions,
+    ) -> Option<f64> {
+        let ship = self.remove_earth_ship(id)?;
+        let costs = crate::colony::economy::blueprint_material_costs(&ship.blueprint, part_defs);
+        let mut total = 0.0;
+        for (res, amount) in &costs {
+            if let Some(price) = res.earth_price() {
+                total += price * amount;
+            }
+        }
+        Some(total)
     }
 
     /// Routes that originate from or terminate at a given body.
@@ -438,6 +545,8 @@ impl FleetManager {
         earth_index: usize,
         body_names: &[String],
         notifications: &mut Vec<super::Notification>,
+        blueprints: &crate::parts::BlueprintRegistry,
+        part_defs: &crate::parts::PartDefinitions,
     ) {
         let dt_seconds = dt_days * 86400.0;
 
@@ -464,21 +573,25 @@ impl FleetManager {
                 body_names,
                 notifications,
                 sim_time,
+                blueprints,
+                part_defs,
             );
         }
     }
 
     /// Process a ship arriving at its destination.
-    /// Routes are one-way: ship delivers cargo and stays at destination.
+    /// Routes are one-way: ship delivers cargo, then ship is stored in hangar or converted to resources.
     fn process_arrival(
         &mut self,
         ship_id: TradeShipId,
         colony_manager: &mut super::ColonyManager,
         company: &mut super::Company,
         earth_index: usize,
-        body_names: &[String],
-        notifications: &mut Vec<super::Notification>,
-        sim_time: f64,
+        _body_names: &[String],
+        _notifications: &mut Vec<super::Notification>,
+        _sim_time: f64,
+        blueprints: &crate::parts::BlueprintRegistry,
+        part_defs: &crate::parts::PartDefinitions,
     ) {
         // Find the ship and its route
         let ship_idx = match self.ships.iter().position(|s| s.id == ship_id) {
@@ -495,12 +608,6 @@ impl FleetManager {
             route.legs.get(leg_idx).and_then(|leg| leg.to_body)
         } else {
             self.ships[ship_idx].origin
-        };
-
-        let dest_name = match destination {
-            Some(idx) if idx < body_names.len() => body_names[idx].clone(),
-            None => "Earth".to_string(),
-            _ => "Unknown".to_string(),
         };
 
         // Check if destination is Earth
@@ -543,29 +650,91 @@ impl FleetManager {
             }
         }
 
-        // Ship has arrived at final destination — station it here
-        self.ships[ship_idx].state = TradeShipState::Stationed;
-        self.ships[ship_idx].returning = false;
-        self.ships[ship_idx].current_leg = 0;
-
-        // Unassign ship from route (one-way: a new ship will be built for next launch)
-        self.ships[ship_idx].assigned_route = None;
+        // Ship has arrived at final destination
+        // Unassign ship from route (one-way: a new ship will be used for next launch)
         if let Some(rid) = route_id {
             if let Some(route) = self.routes.iter_mut().find(|r| r.id == rid) {
                 route.assigned_ship_id = None;
             }
         }
 
-        let ship_name = self.ships[ship_idx].name.clone();
-        notifications.push(super::Notification {
-            kind: super::notification::NotificationKind::ShipArrived {
-                ship_name,
-                destination: dest_name,
-            },
-            time: sim_time,
-            read: false,
-        });
+        // Extract ship data before removing
+        let ship = &self.ships[ship_idx];
+        let ship_name = ship.name.clone();
+        let blueprint_name = ship.blueprint_name.clone();
+        let stages_jettisoned = ship.stages_jettisoned;
+        let dry_mass_kg = ship.dry_mass_kg;
+        let cached_delta_v = ship.cached_delta_v;
+
+        // Remove the TradeShip — it's consumed on arrival
+        self.ships.remove(ship_idx);
+
+        // Convert to StoredShip or resources at destination
+        let bp_opt = blueprints.get(&blueprint_name).cloned();
+
+        if is_earth {
+            if stages_jettisoned {
+                // Staged → convert to cash (material breakdown value)
+                if let Some(ref bp) = bp_opt {
+                    let costs = crate::colony::economy::blueprint_material_costs(bp, part_defs);
+                    for (res, amount) in &costs {
+                        if let Some(price) = res.earth_price() {
+                            company.money += price * amount;
+                        }
+                    }
+                } else {
+                    // Fallback: rough estimate from dry mass
+                    company.money += dry_mass_kg * 100.0;
+                }
+            } else if let Some(bp) = bp_opt.clone() {
+                // Un-staged → store in Earth hangar
+                let stored = StoredShip {
+                    id: 0,
+                    name: ship_name.clone(),
+                    blueprint_name: Some(blueprint_name.clone()),
+                    blueprint: bp,
+                    dry_mass_kg,
+                    cached_delta_v,
+                };
+                self.store_earth_ship(stored);
+            }
+        } else if let Some(dest_idx) = destination {
+            if stages_jettisoned {
+                // Staged → convert dry mass to resources at colony via material breakdown
+                if let Some(ref bp) = bp_opt {
+                    let costs = crate::colony::economy::blueprint_material_costs(bp, part_defs);
+                    if let Some(colony) = colony_manager.get_by_body_mut(dest_idx) {
+                        for (res, amount) in &costs {
+                            colony.resources.add(*res, *amount);
+                        }
+                    }
+                }
+            } else if let Some(bp) = bp_opt {
+                // Un-staged → store in colony hangar
+                let stored = StoredShip {
+                    id: 0,
+                    name: ship_name.clone(),
+                    blueprint_name: Some(blueprint_name.clone()),
+                    blueprint: bp,
+                    dry_mass_kg,
+                    cached_delta_v,
+                };
+                if let Some(colony) = colony_manager.get_by_body_mut(dest_idx) {
+                    if colony.has_hangar() && colony.hangar_used() + dry_mass_kg <= colony.hangar_capacity() + 1e-3 {
+                        let _ = colony.store_ship(stored);
+                    } else {
+                        // No hangar space → convert to resources via material breakdown
+                        let costs = crate::colony::economy::blueprint_material_costs(&stored.blueprint, part_defs);
+                        for (res, amount) in &costs {
+                            colony.resources.add(*res, *amount);
+                        }
+                    }
+                }
+            }
+        }
+
     }
+
 
     /// Launch a ship on a route. Consumes fuel and loads cargo from source.
     pub fn launch_ship(
@@ -578,7 +747,7 @@ impl FleetManager {
         blueprints: &crate::parts::BlueprintRegistry,
         part_defs: &crate::parts::PartDefinitions,
         _body_names: &[String],
-        notifications: &mut Vec<super::Notification>,
+        _notifications: &mut Vec<super::Notification>,
         sim_time: f64,
     ) -> Result<(), String> {
         // Validate ship exists and is stationed
@@ -647,7 +816,6 @@ impl FleetManager {
         let min_stockpile = route.min_stockpile;
         let crew_to_send = route.crew;
         let flight_time = first_leg.flight_time;
-        let route_name = route.name.clone();
 
         let loaded_cargo = if is_earth_source {
             // Buy cargo from Earth — pre-check total cost
@@ -731,16 +899,6 @@ impl FleetManager {
             route.assigned_ship_id = Some(ship_id);
             route.last_launch_time = sim_time;
         }
-
-        let ship_name = self.get_ship(ship_id).map(|s| s.name.clone()).unwrap_or_default();
-        notifications.push(super::Notification {
-            kind: super::notification::NotificationKind::ShipDeparted {
-                ship_name,
-                route_name,
-            },
-            time: sim_time,
-            read: false,
-        });
 
         Ok(())
     }
@@ -862,12 +1020,6 @@ impl FleetManager {
                 }
             }
 
-            // If route already has an alert (e.g. insufficient funds), don't retry every tick.
-            // Alert clears on manual launch or route edit.
-            if route.alert_reason.is_some() {
-                continue;
-            }
-
             let route_source = route.legs.first().and_then(|l| l.from_body);
 
             // Check if it's time to launch
@@ -943,68 +1095,166 @@ impl FleetManager {
             let route_name_for_log = route.name.clone();
             let blueprint_name = route.blueprint_name.clone();
             let had_alert = route.alert_reason.is_some();
+            let is_earth_source = route_source.map_or(true, |idx| idx == earth_index);
+            let auto_build = route.auto_build_ships;
+            let total_dv = route.total_delta_v;
 
-            // Build a new ship for this launch (one-way: each launch gets a fresh ship)
-            let ship_name = format!("{} #{}", route_name_for_log, sim_time as u64 / 86400);
-            log::info!("[trade] Building ship for route '{}'", route_name_for_log);
+            // === Get or build a ship for this launch ===
+            let ship_id: TradeShipId;
 
-            let build_result = self.build_ship(
-                ship_name,
-                blueprint_name,
-                route_source,
-                earth_index,
-                blueprints,
-                part_defs,
-                colony_manager,
-                company,
-                body_names,
-                notifications,
-                sim_time,
-            );
-
-            let ship_id = match build_result {
-                Ok(id) => {
-                    // Assign ship to route
-                    if let Some(r) = self.get_route_mut(route_id) {
-                        r.assigned_ship_id = Some(id);
+            if is_earth_source {
+                // Earth: check Earth hangar first, then build instantly
+                let earth_ship_id = self.find_earth_ship(&blueprint_name);
+                if let Some(stored_id) = earth_ship_id {
+                    // Use ship from Earth hangar
+                    let stored = self.remove_earth_ship(stored_id).unwrap();
+                    let cached_dv = stored.cached_delta_v;
+                    let dry_mass = stored.dry_mass_kg;
+                    let bp_name = stored.blueprint_name.clone().unwrap_or_default();
+                    ship_id = self.create_ship(stored.name, bp_name, None, cached_dv);
+                    if let Some(s) = self.get_ship_mut(ship_id) {
+                        s.dry_mass_kg = dry_mass;
                     }
-                    if let Some(s) = self.get_ship_mut(id) {
-                        s.assigned_route = Some(route_id);
+                } else {
+                    // Build instantly on Earth (as before)
+                    let ship_name = format!("{} #{}", route_name_for_log, sim_time as u64 / 86400);
+                    let build_result = self.build_ship(
+                        ship_name, blueprint_name.clone(), route_source, earth_index,
+                        blueprints, part_defs, colony_manager, company, body_names,
+                        notifications, sim_time,
+                    );
+                    match build_result {
+                        Ok(id) => { ship_id = id; }
+                        Err(reason) => {
+                            log::warn!("[trade] Route '{}': ship build failed: {}", route_name_for_log, reason);
+                            if let Some(r) = self.get_route_mut(route_id) {
+                                r.alert_reason = Some(reason.clone());
+                            }
+                            if !had_alert {
+                                notifications.push(super::Notification {
+                                    kind: super::notification::NotificationKind::RoutePaused {
+                                        route_name: route_name_for_log, reason,
+                                    },
+                                    time: sim_time, read: false,
+                                });
+                            }
+                            continue;
+                        }
                     }
-                    id
                 }
-                Err(reason) => {
-                    log::warn!("[trade] Route '{}': ship build failed: {}", route_name_for_log, reason);
-                    if let Some(route) = self.get_route_mut(route_id) {
-                        route.alert_reason = Some(reason.clone());
+            } else {
+                // Colony: check colony hangar for matching ship
+                let colony_ship_id = route_source.and_then(|bi| {
+                    colony_manager.get_by_body(bi).and_then(|c| c.find_matching_ship(&blueprint_name))
+                });
+
+                if let Some(stored_id) = colony_ship_id {
+                    // Take ship from colony hangar
+                    let stored = route_source.and_then(|bi| {
+                        colony_manager.get_by_body_mut(bi).and_then(|c| c.remove_ship(stored_id))
+                    });
+                    if let Some(stored) = stored {
+                        let cached_dv = stored.cached_delta_v;
+                        let dry_mass = stored.dry_mass_kg;
+                        let bp_name = stored.blueprint_name.clone().unwrap_or_default();
+                        ship_id = self.create_ship(stored.name, bp_name, route_source, cached_dv);
+                        if let Some(s) = self.get_ship_mut(ship_id) {
+                            s.dry_mass_kg = dry_mass;
+                        }
+                    } else {
+                        continue; // Shouldn't happen
                     }
-                    if !had_alert {
-                        notifications.push(super::Notification {
-                            kind: super::notification::NotificationKind::RoutePaused {
-                                route_name: route_name_for_log,
-                                reason,
-                            },
-                            time: sim_time,
-                            read: false,
+                } else {
+                    // No ship in hangar
+                    if auto_build {
+                        // Check if construction is already queued
+                        let already_queued = route_source.and_then(|bi| {
+                            colony_manager.get_by_body(bi)
+                        }).map_or(false, |c| {
+                            c.construction_queue.iter().any(|item| {
+                                matches!(&item.target, Some(super::buildings::ConstructionTarget::Ship { blueprint_name: bn, .. }) if *bn == blueprint_name)
+                            })
                         });
+
+                        if !already_queued {
+                            // Queue ship construction
+                            if let Some(bp) = blueprints.get(&blueprint_name).cloned() {
+                                if let Some(bi) = route_source {
+                                    if let Some(colony) = colony_manager.get_by_body_mut(bi) {
+                                        let ship_name = format!("{} #{}", route_name_for_log, sim_time as u64 / 86400);
+                                        match colony.queue_ship_construction(
+                                            ship_name, blueprint_name.clone(), &bp, part_defs,
+                                        ) {
+                                            Ok(()) => {
+                                                log::info!("[trade] Route '{}': queued ship construction", route_name_for_log);
+                                            }
+                                            Err(reason) => {
+                                                log::warn!("[trade] Route '{}': construction failed: {}", route_name_for_log, reason);
+                                                if let Some(r) = self.get_route_mut(route_id) {
+                                                    r.alert_reason = Some(reason.clone());
+                                                }
+                                                if !had_alert {
+                                                    notifications.push(super::Notification {
+                                                        kind: super::notification::NotificationKind::RoutePaused {
+                                                            route_name: route_name_for_log, reason,
+                                                        },
+                                                        time: sim_time, read: false,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Either way, skip this launch (ship under construction)
+                        continue;
+                    } else {
+                        // No auto-build, no ship available
+                        let reason = "No ship available in hangar".to_string();
+                        if let Some(r) = self.get_route_mut(route_id) {
+                            r.alert_reason = Some(reason.clone());
+                        }
+                        if !had_alert {
+                            notifications.push(super::Notification {
+                                kind: super::notification::NotificationKind::RoutePaused {
+                                    route_name: route_name_for_log, reason,
+                                },
+                                time: sim_time, read: false,
+                            });
+                        }
+                        continue;
                     }
-                    continue;
                 }
-            };
+            }
+
+            // Assign ship to route
+            if let Some(r) = self.get_route_mut(route_id) {
+                r.assigned_ship_id = Some(ship_id);
+            }
+            if let Some(s) = self.get_ship_mut(ship_id) {
+                s.assigned_route = Some(route_id);
+            }
+
+            // Compute stages_jettisoned for the trade ship
+            if let Some(bp) = blueprints.get(&blueprint_name) {
+                let jettisoned = Self::compute_stages_jettisoned(bp, part_defs, total_dv);
+                if let Some(s) = self.get_ship_mut(ship_id) {
+                    s.stages_jettisoned = jettisoned;
+                }
+                // Set dry_mass if not already set
+                if let Some(s) = self.get_ship_mut(ship_id) {
+                    if s.dry_mass_kg <= 0.0 {
+                        s.dry_mass_kg = crate::colony::economy::blueprint_dry_mass_kg(bp, part_defs);
+                    }
+                }
+            }
 
             // Launch the ship
             log::info!("[trade] Launching on route '{}'", route_name_for_log);
             let result = self.launch_ship(
-                ship_id,
-                route_id,
-                colony_manager,
-                company,
-                earth_index,
-                blueprints,
-                part_defs,
-                body_names,
-                notifications,
-                sim_time,
+                ship_id, route_id, colony_manager, company, earth_index,
+                blueprints, part_defs, body_names, notifications, sim_time,
             );
 
             match result {
@@ -1016,11 +1266,9 @@ impl FleetManager {
                     if !had_alert {
                         notifications.push(super::Notification {
                             kind: super::notification::NotificationKind::RoutePaused {
-                                route_name: route_name_for_log,
-                                reason,
+                                route_name: route_name_for_log, reason,
                             },
-                            time: sim_time,
-                            read: false,
+                            time: sim_time, read: false,
                         });
                     }
                 }
@@ -1031,6 +1279,66 @@ impl FleetManager {
                     }
                 }
             }
+        }
+    }
+
+    /// Migrate any Stationed TradeShips to StoredShips (backward compatibility).
+    /// Call once on game load or first tick.
+    pub fn migrate_stationed_ships(
+        &mut self,
+        colony_manager: &mut super::ColonyManager,
+        earth_index: usize,
+        blueprints: &crate::parts::BlueprintRegistry,
+        part_defs: &crate::parts::PartDefinitions,
+    ) {
+        let stationed_ids: Vec<TradeShipId> = self.ships.iter()
+            .filter(|s| s.state == TradeShipState::Stationed)
+            .map(|s| s.id)
+            .collect();
+
+        for ship_id in stationed_ids {
+            let ship_idx = match self.ships.iter().position(|s| s.id == ship_id) {
+                Some(idx) => idx,
+                None => continue,
+            };
+
+            let ship = &self.ships[ship_idx];
+            let location = ship.location;
+            let is_earth = location.map_or(true, |idx| idx == earth_index);
+            let blueprint_name = ship.blueprint_name.clone();
+            let ship_name = ship.name.clone();
+            let cached_dv = ship.cached_delta_v;
+
+            if let Some(bp) = blueprints.get(&blueprint_name).cloned() {
+                let dry_mass = crate::colony::economy::blueprint_dry_mass_kg(&bp, part_defs);
+                let stored = StoredShip {
+                    id: 0,
+                    name: ship_name,
+                    blueprint_name: Some(blueprint_name),
+                    blueprint: bp,
+                    dry_mass_kg: dry_mass,
+                    cached_delta_v: cached_dv,
+                };
+
+                if is_earth {
+                    self.store_earth_ship(stored);
+                } else if let Some(body_idx) = location {
+                    if let Some(colony) = colony_manager.get_by_body_mut(body_idx) {
+                        if colony.has_hangar() {
+                            let _ = colony.store_ship(stored);
+                        } else {
+                            // No hangar — convert to resources
+                            let costs = crate::colony::economy::blueprint_material_costs(&stored.blueprint, part_defs);
+                            for (res, amount) in &costs {
+                                colony.resources.add(*res, *amount);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Remove the old TradeShip
+            self.ships.remove(ship_idx);
         }
     }
 }

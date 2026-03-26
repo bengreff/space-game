@@ -648,6 +648,12 @@ impl SaveGame {
             game.solar_system.time,
         );
         game.fleet = self.fleet;
+        game.fleet.migrate_stationed_ships(
+            &mut game.colony_manager,
+            game.solar_system.earth_index,
+            &game.blueprints,
+            &game.part_definitions,
+        );
     }
 }
 

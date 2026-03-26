@@ -1,4 +1,5 @@
-use crate::parts::{FuelType, PartDefinition, Propellant, ShieldType};
+use crate::colony::resources::ResourceType;
+use crate::parts::{FuelType, PartDefinition, PartDefinitions, Propellant, ShieldType, VesselBlueprint};
 
 /// Material breakdown fractions for computing part cost.
 /// All fields sum to 1.0.
@@ -262,4 +263,47 @@ pub fn orbit_science_reward(dist_au: f64) -> f64 {
 /// Science reward for landing on a body at given AU distance.
 pub fn landing_science_reward(dist_au: f64) -> f64 {
     100.0 + 80.0 * (1.0 + dist_au).ln()
+}
+
+/// Compute the material costs of a blueprint as colony resources.
+/// Returns Vec of (ResourceType, kg) for each material used.
+pub fn blueprint_material_costs(
+    blueprint: &VesselBlueprint,
+    part_defs: &PartDefinitions,
+) -> Vec<(ResourceType, f64)> {
+    let mut totals = std::collections::HashMap::<ResourceType, f64>::new();
+
+    for part in &blueprint.parts {
+        let Some(def) = part_defs.get(&part.definition_id) else {
+            continue;
+        };
+        let dry_mass_kg = def.mass * 1000.0; // tonnes → kg
+        let breakdown = material_breakdown(def);
+        let masses = breakdown.to_masses(dry_mass_kg);
+
+        *totals.entry(ResourceType::StructuralMetal).or_default() += masses.metal_kg;
+        *totals.entry(ResourceType::HighTempAlloys).or_default() += masses.hta_kg;
+        *totals.entry(ResourceType::Electronics).or_default() += masses.elec_kg;
+        if masses.super_kg > 0.0 {
+            *totals.entry(ResourceType::Superconductors).or_default() += masses.super_kg;
+        }
+        if masses.pi_kg > 0.0 {
+            *totals.entry(ResourceType::PrecisionInstruments).or_default() += masses.pi_kg;
+        }
+    }
+
+    totals.into_iter().filter(|(_, v)| *v > 0.0).collect()
+}
+
+/// Compute the total dry mass of a blueprint in kg.
+pub fn blueprint_dry_mass_kg(
+    blueprint: &VesselBlueprint,
+    part_defs: &PartDefinitions,
+) -> f64 {
+    blueprint
+        .parts
+        .iter()
+        .filter_map(|p| part_defs.get(&p.definition_id))
+        .map(|d| d.mass * 1000.0) // tonnes → kg
+        .sum()
 }
