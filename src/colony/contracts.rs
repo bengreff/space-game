@@ -3,9 +3,21 @@ use std::collections::{HashMap, HashSet};
 
 use crate::bodies::SolarSystem;
 use crate::colony::tech::DiscoveryTracker;
+use crate::parts::FlightPart;
 use crate::ship::ShipState;
 
 const POOL_SIZE: usize = 5;
+
+const SUBORBITAL_TEST_PARTS: &[(&str, &str)] = &[
+    ("probe_tiny", "Tiny Probe Core"),
+    ("engine_hummingbird", "Hummingbird"),
+    ("engine_gecko", "Gecko"),
+    ("engine_firefly", "Firefly"),
+    ("fairing_tiny", "AE-FF0 Fairing"),
+    ("heatshield_tiny", "HS-1 Heat Shield"),
+];
+
+const SUBORBITAL_TEST_ALTITUDES: &[f64] = &[100_000.0, 200_000.0, 500_000.0];
 
 /// Destinations for payload delivery and tourism contracts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -140,6 +152,11 @@ pub enum ContractKind {
         /// Set to true when the ship reaches the destination during flight.
         destination_reached: bool,
     },
+    SuborbitalTest {
+        part_id: String,
+        part_name: String,
+        target_altitude: f64,
+    },
 }
 
 /// A single contract instance.
@@ -168,6 +185,7 @@ impl Contract {
         match &self.kind {
             ContractKind::Payload { destination, .. } => *destination,
             ContractKind::Tourism { destination, .. } => *destination,
+            ContractKind::SuborbitalTest { .. } => Destination::Suborbital,
         }
     }
 
@@ -183,6 +201,9 @@ impl Contract {
                 } else {
                     format!("Fly {} tourists to {} and return safely", passengers, dest_name)
                 }
+            }
+            ContractKind::SuborbitalTest { part_name, target_altitude, .. } => {
+                format!("Carry a {} above {:.0} km altitude", part_name, target_altitude / 1000.0)
             }
         }
     }
@@ -382,6 +403,53 @@ impl ContractManager {
         completed
     }
 
+    /// Check suborbital test flight contracts against current vessel state.
+    /// Returns list of (contract_name, payout) for completed contracts.
+    pub fn check_suborbital_test_contracts(
+        &mut self,
+        parts: &[FlightPart],
+        ship_state: &ShipState,
+        soi_body: usize,
+        altitude: f64,
+        solar_system: &SolarSystem,
+    ) -> Vec<(String, f64)> {
+        let earth_idx = solar_system.earth_index;
+
+        // Must be flying in Earth SOI
+        if soi_body != earth_idx || !matches!(ship_state, ShipState::Flying) {
+            return Vec::new();
+        }
+
+        let mut completed = Vec::new();
+
+        let ids_to_complete: Vec<u64> = self.active.iter()
+            .filter_map(|c| {
+                if let ContractKind::SuborbitalTest { part_id, target_altitude, .. } = &c.kind {
+                    if altitude >= *target_altitude {
+                        // Check vessel has a matching non-decoupled, non-destroyed part
+                        let has_part = parts.iter().any(|p| {
+                            !p.decoupled && !p.destroyed && p.definition_id == *part_id
+                        });
+                        if has_part {
+                            return Some(c.id);
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+
+        for id in ids_to_complete {
+            let name = self.active.iter().find(|c| c.id == id).map(|c| c.name.clone()).unwrap_or_default();
+            let payout = self.complete_contract(id);
+            if payout > 0.0 {
+                completed.push((name, payout));
+            }
+        }
+
+        completed
+    }
+
     /// Update tourism destination_reached flags based on current ship state.
     pub fn check_tourism_destinations(
         &mut self,
@@ -530,6 +598,15 @@ impl ContractManager {
         }
     }
 
+    /// Add exactly one new contract to the pool (if below POOL_SIZE).
+    pub fn refill_one(&mut self, discoveries: &DiscoveryTracker, solar_system: &SolarSystem, sim_time: f64) {
+        if self.available.len() < POOL_SIZE {
+            if let Some(contract) = self.generate_contract(discoveries, solar_system, sim_time) {
+                self.available.push(contract);
+            }
+        }
+    }
+
     /// Generate a single contract using deterministic PRNG.
     fn generate_contract(
         &mut self,
@@ -572,6 +649,29 @@ impl ContractManager {
                     passengers,
                     destination,
                     destination_reached: false,
+                },
+                payout,
+                name,
+            })
+        } else if destination == Destination::Suborbital {
+            // Suborbital non-tourism contracts are test flights
+            let part_idx = (seed / 11) as usize % SUBORBITAL_TEST_PARTS.len();
+            let (part_id, part_name) = SUBORBITAL_TEST_PARTS[part_idx];
+            let alt_idx = (seed / 19) as usize % SUBORBITAL_TEST_ALTITUDES.len();
+            let target_altitude = SUBORBITAL_TEST_ALTITUDES[alt_idx];
+            let payout = match alt_idx {
+                0 => 300_000.0,
+                1 => 600_000.0,
+                _ => 1_200_000.0,
+            };
+            let name = format!("{} Test Flight #{}", part_name, id);
+
+            Some(Contract {
+                id,
+                kind: ContractKind::SuborbitalTest {
+                    part_id: part_id.to_string(),
+                    part_name: part_name.to_string(),
+                    target_altitude,
                 },
                 payout,
                 name,

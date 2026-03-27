@@ -2348,8 +2348,8 @@ fn render_flight_frame(
                             read: false,
                         });
                     }
-                    if !tourism_completions.is_empty() {
-                        game.contracts.refill_pool(
+                    for _ in &tourism_completions {
+                        game.contracts.refill_one(
                             &game.science.discoveries,
                             &game.solar_system,
                             game.solar_system.time,
@@ -3050,7 +3050,7 @@ fn render_editor_frame(
                     for part in game.editor.parts.values_mut() {
                         part.cargo_payloads.retain(|p| !cancelled_ids.contains(&p.contract_id));
                     }
-                    game.contracts.refill_pool(
+                    game.contracts.refill_one(
                         &game.science.discoveries,
                         &game.solar_system,
                         game.solar_system.time,
@@ -4467,7 +4467,7 @@ fn render_management_frame(
                 }
                 sunscatter::render::ManagementAction::CancelContract(id) => {
                     game.contracts.cancel(id);
-                    game.contracts.refill_pool(
+                    game.contracts.refill_one(
                         &game.science.discoveries,
                         &game.solar_system,
                         game.solar_system.time,

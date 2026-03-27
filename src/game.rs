@@ -1026,9 +1026,40 @@ impl Game {
             });
         }
 
-        // Refill pool after completions
-        if !payload_completions.is_empty() {
-            self.contracts.refill_pool(
+        // Add one new contract per completion
+        for _ in &payload_completions {
+            self.contracts.refill_one(
+                &self.science.discoveries,
+                &self.solar_system,
+                self.solar_system.time,
+            );
+        }
+
+        // Check suborbital test flight contracts
+        let vessel_parts = self.flight.vessel.as_ref()
+            .map(|v| v.parts.as_slice())
+            .unwrap_or(&[]);
+
+        let test_completions = self.contracts.check_suborbital_test_contracts(
+            vessel_parts,
+            &ship.state,
+            ship.soi_body,
+            altitude,
+            &self.solar_system,
+        );
+
+        for (name, payout) in &test_completions {
+            self.company.money += payout;
+            log::info!("Contract completed: {} — {}", name, crate::colony::format_money(*payout));
+            self.notifications.push(Notification {
+                kind: NotificationKind::ContractCompleted { name: name.clone(), payout: *payout },
+                time: self.solar_system.time,
+                read: false,
+            });
+        }
+
+        for _ in &test_completions {
+            self.contracts.refill_one(
                 &self.science.discoveries,
                 &self.solar_system,
                 self.solar_system.time,

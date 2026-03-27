@@ -1,0 +1,58 @@
+
+──── Phase 1: Verify LEO ────
+Altitude: 400.0 km
+Speed: 7672.5 m/s
+SOI: Earth (index 4)
+
+──── Phase 2: Plan Hohmann Transfer ────
+Ship orbit: a=6771 km, e=0.000000
+Departure dv: 3083.7 m/s
+Arrival dv: 828.8 m/s
+Transfer time: 4.98 days
+Time to window: 0.67 hours
+Phase angle: current=-90.00 deg, required=114.67 deg
+
+──── Phase 3: Warp to Transfer Window ────
+Warped 2398.1s to departure position
+
+──── Phase 4: TLI Burn (3083.7 m/s prograde) ────
+Pre-burn speed: 7672.5 m/s
+Post-burn speed: 10727.8 m/s
+Speed gained: 3055.4 m/s
+Post-burn orbit: 406 x 370640 km, e=0.9647
+Predicted Moon orbit: a=-9110 km, e=1.0015
+Predicted Moon periapsis: 14 km (-1723 km altitude)
+
+──── Phase 5: Coast to Moon SOI ────
+Entered Moon SOI at t=352557.5s (4.08 days)
+
+──── Phase 6: Moon Encounter ────
+Distance from Moon center: 64180 km
+Actual Moon orbit: a=191894 km, e=0.9647
+Actual periapsis: 6777 km (5040 km altitude)
+Apoapsis: 377011 km from center
+Speed: 828.3 m/s
+Predicted periapsis: 14 km
+Actual periapsis:    6777 km
+Delta: 6763 km (threshold: 678 km)
+WARN: periapsis delta 6763 km exceeds threshold 678 km
+
+──── Phase 7: Deorbit to Moon Impact ────
+  Burned 100 m/s retro (total 100), periapsis now 6777 km (alt 5040 km)
+  Burned 100 m/s retro (total 200), periapsis now 6777 km (alt 5040 km)
+  Burned 100 m/s retro (total 300), periapsis now 6777 km (alt 5040 km)
+  Burned 100 m/s retro (total 400), periapsis now 6777 km (alt 5040 km)
+  Burned 100 m/s retro (total 500), periapsis now 6777 km (alt 5040 km)
+Periapsis 2 km < Moon radius 1737 km — impact trajectory!
+Total deorbit dv: 500 m/s retrograde
+
+──── Phase 8: Coast to Impact ────
+Speed: 326.6 m/s, altitude: 62424 km
+LANDED on Moon!
+Final altitude: 5.0 m
+Final speed: 0.000 m/s
+
+──── Summary ────
+Total sim time: 473448s (5.48 days)
+Screenshots: 7
+Result: PASS

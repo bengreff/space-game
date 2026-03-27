@@ -260,19 +260,22 @@ pub fn render_contracts_section(
                             },
                         );
                     });
-                    // Show status for tourism contracts
-                    let status_text = match &contract.kind {
+                    // Show status for active contracts
+                    let status_text: String = match &contract.kind {
                         ContractKind::Tourism { destination_reached, .. } => {
                             if *destination_reached {
-                                "Destination reached — return to Earth and recover vessel"
+                                "Destination reached — return to Earth and recover vessel".to_string()
                             } else {
-                                "Fly to destination"
+                                "Fly to destination".to_string()
                             }
                         }
-                        ContractKind::Payload { .. } => "Load payload in cargo container and deliver",
+                        ContractKind::Payload { .. } => "Load payload in cargo container and deliver".to_string(),
+                        ContractKind::SuborbitalTest { part_name, target_altitude, .. } => {
+                            format!("Build vessel with {} and reach {:.0} km", part_name, target_altitude / 1000.0)
+                        }
                     };
                     ui.label(
-                        egui::RichText::new(status_text)
+                        egui::RichText::new(&status_text)
                             .size(11.0)
                             .color(egui::Color32::from_rgb(160, 160, 160)),
                     );
