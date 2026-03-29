@@ -593,6 +593,7 @@ impl SaveGame {
     pub fn restore_to_game(self, game: &mut Game) {
         // Restore simulation time
         game.solar_system.time = self.simulation_time;
+        game.solar_system.init_sectors();
 
         // Restore editor vessel name
         game.editor.vessel_name = self.editor_vessel_name;

@@ -1,6 +1,7 @@
 pub mod bodies;
 pub mod colony;
 pub mod editor;
+pub mod galaxy;
 pub mod game;
 pub mod parts;
 pub mod render;

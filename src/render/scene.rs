@@ -4,6 +4,15 @@ use super::types::{
 };
 use super::state::RenderState;
 
+/// Pre-computed render data for a procedural star dot.
+/// Built in main.rs from GalaxyState, consumed by scene.rs.
+pub struct StarRenderData {
+    pub x: f64,   // world position in meters
+    pub y: f64,
+    pub color: [f32; 3],
+    pub luminosity: f32, // solar luminosities (determines dot size)
+}
+
 impl RenderState {
     /// Update geometry with multiple bodies and their orbits
     /// scale: world units per meter (e.g., 1e-9 means 1 billion meters = 1 world unit)
@@ -101,7 +110,7 @@ impl RenderState {
         }
 
         // Now draw bodies on top of orbit lines
-        self.add_body_vertices(&mut all_vertices, &mut all_indices, bodies, scale);
+        self.add_body_vertices(&mut all_vertices, &mut all_indices, bodies, scale, &[]);
 
         self.num_indices = all_indices.len() as u32;
 
@@ -119,7 +128,7 @@ impl RenderState {
         scale: f64,
         part_defs: Option<&crate::parts::PartDefinitions>,
     ) {
-        self.update_bodies_orbits_ship_and_vessels(bodies, orbits, ship, scale, part_defs, &[], &[], false);
+        self.update_bodies_orbits_ship_and_vessels(bodies, orbits, ship, scale, part_defs, &[], &[], false, &[], &[]);
     }
 
     /// Update geometry with bodies, orbits, optionally a ship, and background vessels
@@ -133,6 +142,8 @@ impl RenderState {
         background_vessels: &[TrackingVesselData],
         accretion_discs: &[Option<crate::bodies::AccretionDisc>],
         in_galaxy_view: bool,
+        procedural_stars: &[StarRenderData],
+        body_is_star: &[bool],
     ) {
         // Store ship info for UI display
         self.ship_orbit_info = ship.and_then(|s| s.orbit.clone());
@@ -208,6 +219,11 @@ impl RenderState {
 
         // Draw galaxy star field dots (behind orbits and bodies, on top of accretion disc)
         self.add_galaxy_texture_quad(&mut all_vertices, &mut all_indices, in_galaxy_view, scale);
+
+        // Draw procedural stars (on top of galaxy texture, behind sector grid)
+        self.add_procedural_stars(&mut all_vertices, &mut all_indices, procedural_stars, scale);
+
+        // Sector grid lines removed — procedural stars provide visual density cues
 
         // Draw all orbit lines (on top of atmosphere, behind bodies)
         for orbit_opt in orbits {
@@ -1009,7 +1025,7 @@ impl RenderState {
         }
 
         // Draw bodies on top of orbit lines
-        self.add_body_vertices(&mut all_vertices, &mut all_indices, bodies, scale);
+        self.add_body_vertices(&mut all_vertices, &mut all_indices, bodies, scale, body_is_star);
 
         // Draw launchpad on body surface (ship view only, not galaxy view)
         if let Some(ship_data) = ship.filter(|_| !in_galaxy_view) {
@@ -1977,8 +1993,8 @@ impl RenderState {
             None => return,
         };
 
-        // Galaxy image spans 100,000 ly centered on Sgr A* (body 0 at origin)
-        let half = 60_000.0 * crate::bodies::LIGHT_YEAR * scale;
+        // Galaxy image spans 100,000 ly centered on Sgr A* (50,000 ly per side)
+        let half = 50_000.0 * crate::bodies::LIGHT_YEAR * scale;
         let cam_x = self.camera.body_center[0];
         let cam_y = self.camera.body_center[1];
         let off_x = self.camera.ship_offset[0];
@@ -2008,6 +2024,69 @@ impl RenderState {
         all_indices.push(base + 3);
     }
 
+    /// Render procedural stars as small colored quads.
+    fn add_procedural_stars(
+        &self,
+        all_vertices: &mut Vec<Vertex>,
+        all_indices: &mut Vec<u32>,
+        stars: &[StarRenderData],
+        scale: f64,
+    ) {
+        if stars.is_empty() {
+            return;
+        }
+
+        // Precomputed unit circle offsets for 6-segment hexagon (indistinguishable
+        // from circle at 2-5px). Avoids 12 trig calls per star.
+        const OFFSETS: [(f32, f32); 6] = [
+            (1.0, 0.0),        // 0°
+            (0.5, 0.866025),   // 60°
+            (-0.5, 0.866025),  // 120°
+            (-1.0, 0.0),       // 180°
+            (-0.5, -0.866025), // 240°
+            (0.5, -0.866025),  // 300°
+        ];
+
+        // Pre-reserve capacity: 7 vertices + 18 indices per star
+        all_vertices.reserve(stars.len() * 7);
+        all_indices.reserve(stars.len() * 18);
+
+        let cam_x = (self.camera.body_center[0] + self.camera.ship_offset[0]) as f64;
+        let cam_y = (self.camera.body_center[1] + self.camera.ship_offset[1]) as f64;
+
+        let pixel_ndc = 1.0 / (self.camera.zoom as f64 * self.size.height as f64 * 0.5);
+
+        for star in stars {
+            let sx = (star.x * scale - cam_x) as f32;
+            let sy = (star.y * scale - cam_y) as f32;
+
+            // Dot size: 1–2.5 screen pixels depending on luminosity.
+            let lum_factor = (1.0 + (star.luminosity.max(0.001).ln() * 0.06) as f64).clamp(1.0, 2.5);
+            let half = (pixel_ndc * lum_factor * 2.0) as f32;
+
+            // Brightness: dim M-dwarfs, bright O/B stars
+            let alpha = (0.5 + 0.5 * (star.luminosity.max(0.001).log10() / 4.0).clamp(0.0, 1.0)) as f32;
+            let color = [star.color[0], star.color[1], star.color[2], alpha];
+
+            // 6-segment hexagon (triangle fan): center + 6 rim vertices
+            let base = all_vertices.len() as u32;
+            all_vertices.push(Vertex::new([sx, sy], color));
+            for &(ox, oy) in &OFFSETS {
+                all_vertices.push(Vertex::new([sx + half * ox, sy + half * oy], color));
+            }
+            all_indices.extend_from_slice(&[
+                base, base + 1, base + 2,
+                base, base + 2, base + 3,
+                base, base + 3, base + 4,
+                base, base + 4, base + 5,
+                base, base + 5, base + 6,
+                base, base + 6, base + 1,
+            ]);
+        }
+    }
+
+    /// Render sector grid lines in galaxy view.
+    /// Only draws lines visible on screen, culled to the camera viewport.
     /// Helper to add body vertices (extracted for reuse)
     fn add_body_vertices(
         &mut self,
@@ -2015,6 +2094,7 @@ impl RenderState {
         all_indices: &mut Vec<u32>,
         bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)],
         scale: f64,
+        body_is_star: &[bool],
     ) {
         // Store body data for hit testing
         self.bodies.clear();
@@ -2169,40 +2249,67 @@ impl RenderState {
             }
 
             if needs_indicator {
-                let base_index = all_vertices.len() as u32;
-                let ring_outer = indicator_world_radius as f32;
-                let ring_inner = (indicator_world_radius * 0.7) as f32;
-                let ring_segments = 64u32;
+                let is_star = body_is_star.get(*body_idx).copied().unwrap_or(false);
 
-                // Use body color for ring, but apply brightness floor for very dark bodies (e.g., black holes)
-                let ring_color = if color[0] + color[1] + color[2] < 0.1 {
-                    [0.7, 0.5, 0.3, 1.0] // Warm amber fallback
+                if is_star {
+                    // Stars get a small colored hexagon (like procedural stars)
+                    const STAR_OFFSETS: [(f32, f32); 6] = [
+                        (1.0, 0.0), (0.5, 0.866025), (-0.5, 0.866025),
+                        (-1.0, 0.0), (-0.5, -0.866025), (0.5, -0.866025),
+                    ];
+                    let pixel_ndc = 1.0 / (self.camera.zoom as f64 * self.size.height as f64 * 0.5);
+                    let half = (pixel_ndc * 2.0) as f32;
+                    let dot_color = *color;
+
+                    let base_index = all_vertices.len() as u32;
+                    all_vertices.push(Vertex::new([rel_x, rel_y], dot_color));
+                    for &(ox, oy) in &STAR_OFFSETS {
+                        all_vertices.push(Vertex::new([rel_x + half * ox, rel_y + half * oy], dot_color));
+                    }
+                    all_indices.extend_from_slice(&[
+                        base_index, base_index + 1, base_index + 2,
+                        base_index, base_index + 2, base_index + 3,
+                        base_index, base_index + 3, base_index + 4,
+                        base_index, base_index + 4, base_index + 5,
+                        base_index, base_index + 5, base_index + 6,
+                        base_index, base_index + 6, base_index + 1,
+                    ]);
                 } else {
-                    *color
-                };
+                    // Non-stars (planets, black holes) get the ring indicator
+                    let base_index = all_vertices.len() as u32;
+                    let ring_outer = indicator_world_radius as f32;
+                    let ring_inner = (indicator_world_radius * 0.7) as f32;
+                    let ring_segments = 64u32;
 
-                for i in 0..ring_segments {
-                    let angle = (i as f32 / ring_segments as f32) * std::f32::consts::TAU;
-                    let cos_a = angle.cos();
-                    let sin_a = angle.sin();
+                    let ring_color = if color[0] + color[1] + color[2] < 0.1 {
+                        [0.7, 0.5, 0.3, 1.0] // Warm amber fallback for black holes
+                    } else {
+                        *color
+                    };
 
-                    all_vertices.push(Vertex::new([rel_x + ring_outer * cos_a, rel_y + ring_outer * sin_a], ring_color));
-                    all_vertices.push(Vertex::new([rel_x + ring_inner * cos_a, rel_y + ring_inner * sin_a], [ring_color[0] * 0.3, ring_color[1] * 0.3, ring_color[2] * 0.3, ring_color[3] * 0.5]));
-                }
+                    for i in 0..ring_segments {
+                        let angle = (i as f32 / ring_segments as f32) * std::f32::consts::TAU;
+                        let cos_a = angle.cos();
+                        let sin_a = angle.sin();
 
-                for i in 0..ring_segments {
-                    let i0 = base_index + i * 2;
-                    let i1 = base_index + i * 2 + 1;
-                    let i2 = base_index + ((i + 1) % ring_segments) * 2;
-                    let i3 = base_index + ((i + 1) % ring_segments) * 2 + 1;
+                        all_vertices.push(Vertex::new([rel_x + ring_outer * cos_a, rel_y + ring_outer * sin_a], ring_color));
+                        all_vertices.push(Vertex::new([rel_x + ring_inner * cos_a, rel_y + ring_inner * sin_a], [ring_color[0] * 0.3, ring_color[1] * 0.3, ring_color[2] * 0.3, ring_color[3] * 0.5]));
+                    }
 
-                    all_indices.push(i0);
-                    all_indices.push(i2);
-                    all_indices.push(i1);
+                    for i in 0..ring_segments {
+                        let i0 = base_index + i * 2;
+                        let i1 = base_index + i * 2 + 1;
+                        let i2 = base_index + ((i + 1) % ring_segments) * 2;
+                        let i3 = base_index + ((i + 1) % ring_segments) * 2 + 1;
 
-                    all_indices.push(i1);
-                    all_indices.push(i2);
-                    all_indices.push(i3);
+                        all_indices.push(i0);
+                        all_indices.push(i2);
+                        all_indices.push(i1);
+
+                        all_indices.push(i1);
+                        all_indices.push(i2);
+                        all_indices.push(i3);
+                    }
                 }
             }
         }

@@ -44,6 +44,33 @@ pub struct AccretionDisc {
 /// One light-year in meters
 pub const LIGHT_YEAR: f64 = 9.461e15;
 
+// === Galactic Sector Grid ===
+// 1000x1000 grid of sectors, each 100 ly per side, centered on Sgr A*
+pub const SECTOR_GRID_SIZE: u16 = 1000;
+pub const SECTOR_SIDE_LY: f64 = 100.0;
+pub const SECTOR_SIDE_METERS: f64 = SECTOR_SIDE_LY * LIGHT_YEAR;
+/// Half the total grid extent in meters (grid spans 100,000 ly = 50,000 ly each side)
+pub const SECTOR_GRID_HALF_METERS: f64 = (SECTOR_GRID_SIZE as f64 / 2.0) * SECTOR_SIDE_METERS;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SectorCoord {
+    pub x: u16,
+    pub y: u16,
+}
+
+/// Convert a world position (meters, origin at Sgr A*) to sector coordinates.
+/// Returns None if the position is outside the grid bounds.
+pub fn position_to_sector(pos: [f64; 2]) -> Option<SectorCoord> {
+    let sx = (pos[0] + SECTOR_GRID_HALF_METERS) / SECTOR_SIDE_METERS;
+    let sy = (pos[1] + SECTOR_GRID_HALF_METERS) / SECTOR_SIDE_METERS;
+    let ix = sx.floor() as i64;
+    let iy = sy.floor() as i64;
+    if ix < 0 || ix >= SECTOR_GRID_SIZE as i64 || iy < 0 || iy >= SECTOR_GRID_SIZE as i64 {
+        return None;
+    }
+    Some(SectorCoord { x: ix as u16, y: iy as u16 })
+}
+
 /// Celestial body representation
 #[derive(Clone)]
 pub struct CelestialBody {
@@ -373,6 +400,8 @@ pub struct SolarSystem {
     pub earth_index: usize,
     /// Cached index of the Moon
     pub moon_index: usize,
+    /// Sector assignment for each body (parallel to `bodies`), not serialized
+    pub body_sectors: Vec<Option<SectorCoord>>,
 }
 
 impl SolarSystem {
@@ -993,7 +1022,9 @@ impl SolarSystem {
         let earth_index = bodies.iter().position(|b| b.name == "Earth").expect("Earth not found");
         let moon_index = bodies.iter().position(|b| b.name == "Moon").expect("Moon not found");
 
-        Self { bodies, time: 0.0, sun_index, earth_index, moon_index }
+        let mut ss = Self { bodies, time: 0.0, sun_index, earth_index, moon_index, body_sectors: vec![] };
+        ss.init_sectors();
+        ss
     }
 
     /// Get world position of a body at current time
@@ -1015,9 +1046,35 @@ impl SolarSystem {
         }
     }
 
+    /// Compute sector assignments for all bodies from current positions.
+    /// Root bodies (no parent) get center sector (500, 500) directly.
+    pub fn init_sectors(&mut self) {
+        let center = Some(SectorCoord { x: SECTOR_GRID_SIZE / 2, y: SECTOR_GRID_SIZE / 2 });
+        self.body_sectors = (0..self.bodies.len())
+            .map(|i| {
+                if self.bodies[i].parent.is_none() {
+                    center
+                } else {
+                    position_to_sector(self.body_position(i))
+                }
+            })
+            .collect();
+    }
+
+    /// Update sectors for stars orbiting Sgr A* (parent == Some(0)).
+    /// Sgr A* itself and planets/moons are skipped (too small to cross sectors).
+    fn update_sectors(&mut self) {
+        for i in 0..self.bodies.len() {
+            if self.bodies[i].parent == Some(0) {
+                self.body_sectors[i] = position_to_sector(self.body_position(i));
+            }
+        }
+    }
+
     /// Advance time
     pub fn update(&mut self, dt: f64) {
         self.time += dt;
+        self.update_sectors();
     }
 }
 

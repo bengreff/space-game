@@ -1,6 +1,7 @@
 use crate::bodies::SolarSystem;
 use crate::colony::{ColonyManager, Company, ContractManager, FleetManager, Notification, NotificationKind, ScienceState, TechTree};
 use crate::editor::EditorState;
+use crate::galaxy::GalaxyState;
 use crate::parts::{BlueprintRegistry, FlightVessel, PartDefinitions};
 use crate::render::ManeuverNode;
 use crate::ship::{Ship, ShipInput};
@@ -426,6 +427,8 @@ pub struct Game {
     pub colony_return_mode: Option<GameMode>,
     /// Which mode to return to when leaving the Tech Tree screen
     pub tech_tree_return_mode: Option<GameMode>,
+    /// Procedural galaxy star system
+    pub galaxy: GalaxyState,
 }
 
 impl Game {
@@ -486,6 +489,7 @@ impl Game {
             colony_view_body_index: None,
             colony_return_mode: None,
             tech_tree_return_mode: None,
+            galaxy: GalaxyState::new(),
         }
     }
 
@@ -501,6 +505,7 @@ impl Game {
     /// Reset game state for a new game
     pub fn reset_for_new_game(&mut self, name: String) {
         self.solar_system.time = 0.0;
+        self.solar_system.init_sectors();
         self.warp_index = 0;
         let ship = Ship::spawn_on_earth(&self.solar_system);
         self.flight = FlightState::new(ship);
@@ -522,6 +527,8 @@ impl Game {
                 log::error!("Failed to load tech tree: {}", e);
                 TechTree::default()
             });
+        // Reset galaxy state
+        self.galaxy = GalaxyState::new();
         // Reset contracts (milestones, active/available contracts)
         self.contracts = ContractManager::new();
         self.contracts.refill_pool(

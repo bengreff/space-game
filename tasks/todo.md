@@ -742,3 +742,93 @@
 - [ ] Visual test: trade route with insufficient funds → alert appears → add funds → next cycle launches successfully
 - [ ] Visual test: no Launch button in fleet overview
 - [ ] Visual test: no departure/arrival toast notifications during time warp
+
+---
+
+# Keplerian Circular Orbits for Procedural Stars
+
+## Implementation
+- [x] Step 1: Replace `vel: [f64; 2]` with `galactic_r`, `theta_0`, `omega` on ProceduralStar (galaxy/mod.rs)
+- [x] Step 2: Compute orbital elements in `generate_sector()` (galaxy/generation.rs)
+- [x] Step 3: Backward rotation for sector lookup + per-star Kepler propagation in `build_procedural_star_data()` (main.rs)
+- [x] Step 4: Build verification + spec creation
+
+## Files Changed
+- `src/galaxy/mod.rs` — ProceduralStar: replaced `vel` with `galactic_r`, `theta_0`, `omega`
+- `src/galaxy/generation.rs` — Compute `galactic_r`, `theta_0`, `omega` from position and circular velocity
+- `src/main.rs` — `build_procedural_star_data()`: backward rotation for sector lookup, per-star Kepler propagation
+- `openspec/specs/game/flight_rendering/galaxy/spec.md` — NEW: procedural star field spec
+
+## Verification
+- [x] `cargo build` — compiles clean
+- [ ] Visual test: galaxy view → zoom in on star field → increase time warp → stars co-rotate with Sun
+- [ ] Visual test: focus on body at different galactic radius → stars show differential rotation
+- [ ] Visual test: stars remain consistent when zooming in/out
+- [ ] Visual test: no stars popping in/out at sector boundaries
+
+---
+
+# Elliptical Orbits for Procedural Stars
+
+## Implementation
+- [x] Step 1: Replace 3 circular-orbit fields with 5 elliptical fields on ProceduralStar, add `solve_kepler_nr()` and `kepler_position()` helpers (galaxy/mod.rs)
+- [x] Step 2: Generate eccentricity from Rayleigh distribution, derive consistent orbital elements preserving t=0 position (galaxy/generation.rs)
+- [x] Step 3: Replace circular propagation with Kepler equation solving, increase sector margin for radial drift (main.rs)
+- [x] Step 4: Build verification + spec update
+
+## Files Changed
+- `src/galaxy/mod.rs` — ProceduralStar: replaced `galactic_r`/`theta_0`/`omega` with `semi_major_axis`/`mean_motion`/`mean_anomaly_0`/`eccentricity`/`arg_periapsis`; added `solve_kepler_nr()`, `kepler_position()`
+- `src/galaxy/generation.rs` — Rayleigh eccentricity generation with radius-dependent σ, element derivation preserving t=0 position
+- `src/main.rs` — `build_procedural_star_data()`: elliptical propagation via `kepler_position()`, margin = max(1 sector, 20% radius)
+- `openspec/specs/game/flight_rendering/galaxy/spec.md` — Updated: elliptical elements, eccentricity generation, Kepler helpers
+
+## Verification
+- [x] `cargo build` — compiles clean
+- [ ] Visual test: galaxy view — stars co-rotate with Sun, show differential rotation
+- [ ] Visual test: with time warp — stars show slight radial oscillation, not perfectly circular paths
+- [ ] Visual test: at t=0 — star positions identical to before (pos unchanged)
+- [ ] Visual test: no stars popping in/out at sector boundaries (margin handles drift)
+
+---
+
+# Evolved Stellar Types in Procedural Star Generation
+
+## Implementation
+- [x] Add secondary evolution roll after spectral type selection in `generation.rs`
+- [x] Spec update — evolved types section in galaxy spec
+
+## Files Changed
+- `src/galaxy/generation.rs` — Secondary evolution roll: ~6% white dwarfs, ~2% red giants, ~0.01% supergiants, ~0.1% neutron stars
+- `openspec/specs/game/flight_rendering/galaxy/spec.md` — Evolved stellar types requirement
+
+## Verification
+- [ ] `cargo build` — compiles clean
+- [ ] Visual test: galaxy view shows mostly dim red M-dwarfs + occasional bright red/orange dots (red giants)
+- [ ] Visual test: rare very bright dots (supergiants) visible
+- [ ] Visual test: white dwarfs appear as dim blue-white scatter
+- [ ] Visual test: star field looks richer/more varied than before
+
+---
+
+# Fix Star Rendering: Performance Near Sgr A* + Nearby Star Visibility
+
+## Implementation
+- [x] Cap sector star count — `MAX_STARS_PER_SECTOR = 2000` in `sector_star_count()` (density.rs)
+- [x] Lower min star radius — 0.1 ly threshold (was 1 ly), clamp query radius to 50 ly minimum
+- [x] Remove density bail — no more bail-to-empty behavior
+- [x] Distance-ordered sectors — sort sectors by distance from camera, iterate closest first
+- [x] MAX_STARS cap — stop at 50k stars instead of bailing to empty
+- [x] Spec update — updated rendering requirements in galaxy spec
+- [x] Build verification — compiles clean
+
+## Files Changed
+- `src/galaxy/density.rs` — `.min(MAX_STARS_PER_SECTOR)` cap on star count
+- `src/main.rs` — Rewritten `build_procedural_star_data()`: min radius 0.1 ly, star_radius clamped to 50 ly, no density bail, distance-ordered sector sort, MAX_STARS cap
+- `openspec/specs/game/flight_rendering/galaxy/spec.md` — Updated rendering requirements
+
+## Verification
+- [x] `cargo build` — compiles clean
+- [ ] Visual test: near Sgr A* — no lag, stars render (closest 50k shown)
+- [ ] Visual test: near Sun, zoomed in — nearby stars visible at intermediate zoom
+- [ ] Visual test: near Sun, zoomed out — same as before (all nearby stars shown)
+- [ ] Visual test: stars render closest-first (no distant stars before near ones)

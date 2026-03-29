@@ -31,7 +31,7 @@ const WARP_LEVELS: &[f64] = &[1.0, 2.0, 3.0, 5.0, 10.0, 100.0, 1000.0, 10000.0, 
 const BODY_SCALE: f64 = 1.0;
 
 // Galaxy view threshold: screen spans 0.1 light-years or more
-const GALAXY_VIEW_THRESHOLD_M: f64 = 10.0 * 9.461e15; // 10 light-years in meters
+const GALAXY_VIEW_THRESHOLD_M: f64 = 500.0 * 9.461e15; // 500 light-years in meters
 
 fn is_galaxy_view(camera_zoom: f32, _screen_height: u32) -> bool {
     let screen_span_m = 2.0 / (camera_zoom as f64 * SCALE);
@@ -1974,7 +1974,9 @@ fn render_flight_frame(
     }
 
     let accretion_discs = build_accretion_disc_data(game);
-    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions), &background_vessels, &accretion_discs, in_galaxy_view);
+    let procedural_stars = build_procedural_star_data(game, render_state);
+    let body_is_star = build_body_is_star(game);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions), &background_vessels, &accretion_discs, in_galaxy_view, &procedural_stars, &body_is_star);
 
     // Compute target angle for navigation target
     if let Some(target) = render_state.selected_target {
@@ -3226,6 +3228,147 @@ fn build_accretion_disc_data(game: &Game) -> Vec<Option<sunscatter::bodies::Accr
         .collect()
 }
 
+/// Build procedural star render data for stars near the Sun.
+/// Renders stars within screen-width distance of the Sun, capped at 1000 ly.
+fn build_procedural_star_data(
+    game: &mut Game,
+    render_state: &RenderState,
+) -> Vec<sunscatter::render::StarRenderData> {
+    use sunscatter::bodies::{G, LIGHT_YEAR, SECTOR_SIDE_METERS, SECTOR_GRID_HALF_METERS, SECTOR_GRID_SIZE, galactic_enclosed_mass};
+
+    let aspect = render_state.camera.aspect_ratio as f64;
+    let inv_zoom_scale = 1.0 / (render_state.camera.zoom as f64 * SCALE);
+
+    // Screen half-extents in meters
+    let half_w = aspect * inv_zoom_scale;
+    let half_h = inv_zoom_scale;
+
+    // Screen half-diagonal in meters
+    let radius = (half_w * half_w + half_h * half_h).sqrt();
+
+    // Stars become visible once zoomed out past solar-system scale (~0.1 ly)
+    // and disappear at galaxy view scale (screen spans 500+ ly).
+    if radius < 0.1 * LIGHT_YEAR || is_galaxy_view(render_state.camera.zoom, render_state.size.height) {
+        return Vec::new();
+    }
+
+    // Fixed render radius: always show stars within 500 ly of camera.
+    // This prevents stars from gradually appearing as you zoom out.
+    let star_radius = 500.0 * LIGHT_YEAR;
+
+    // Camera center in meters (current position at game time)
+    let center = [
+        (render_state.camera.body_center[0] + render_state.camera.ship_offset[0]) / SCALE,
+        (render_state.camera.body_center[1] + render_state.camera.ship_offset[1]) / SCALE,
+    ];
+
+    let game_time = game.solar_system.time;
+
+    // === Backward rotation for sector lookup ===
+    // Stars are cached at their t=0 positions. To find which sectors contain stars
+    // that are currently near the camera, rotate the camera position backward by
+    // its own angular displacement to estimate where nearby stars were at t=0.
+    let r_cam = (center[0] * center[0] + center[1] * center[1]).sqrt();
+    let lookup_center = if r_cam > 0.0 && game_time != 0.0 {
+        let omega_cam = (G * galactic_enclosed_mass(r_cam) / r_cam).sqrt() / r_cam;
+        let theta_cam = center[1].atan2(center[0]);
+        let theta_0_cam = theta_cam - omega_cam * game_time;
+        [r_cam * theta_0_cam.cos(), r_cam * theta_0_cam.sin()]
+    } else {
+        center
+    };
+
+    const MAX_STARS: usize = 50_000;
+
+    let radius_sq = star_radius * star_radius;
+
+    // Find sectors that overlap the render circle around the lookup center (t=0 space)
+    // Margin handles differential rotation + radial drift from eccentricity
+    let margin = SECTOR_SIDE_METERS.max(star_radius * 0.2);
+    let first_x = ((lookup_center[0] - star_radius - margin + SECTOR_GRID_HALF_METERS) / SECTOR_SIDE_METERS).floor() as i64;
+    let last_x = ((lookup_center[0] + star_radius + margin + SECTOR_GRID_HALF_METERS) / SECTOR_SIDE_METERS).ceil() as i64;
+    let first_y = ((lookup_center[1] - star_radius - margin + SECTOR_GRID_HALF_METERS) / SECTOR_SIDE_METERS).floor() as i64;
+    let last_y = ((lookup_center[1] + star_radius + margin + SECTOR_GRID_HALF_METERS) / SECTOR_SIDE_METERS).ceil() as i64;
+
+    let first_x = first_x.max(0).min(SECTOR_GRID_SIZE as i64) as u16;
+    let last_x = last_x.max(0).min(SECTOR_GRID_SIZE as i64) as u16;
+    let first_y = first_y.max(0).min(SECTOR_GRID_SIZE as i64) as u16;
+    let last_y = last_y.max(0).min(SECTOR_GRID_SIZE as i64) as u16;
+
+    // Collect sector coords and sort by distance from lookup center (closest first).
+    // This ensures nearby stars are always collected before distant ones, so the
+    // MAX_STARS cap preferentially keeps the closest stars.
+    let mut sectors: Vec<(u16, u16, f64)> = Vec::new();
+    for sy in first_y..last_y {
+        for sx in first_x..last_x {
+            let origin = sunscatter::galaxy::density::sector_origin_meters(sx, sy);
+            let sector_cx = origin[0] + 0.5 * SECTOR_SIDE_METERS;
+            let sector_cy = origin[1] + 0.5 * SECTOR_SIDE_METERS;
+            let dx = sector_cx - lookup_center[0];
+            let dy = sector_cy - lookup_center[1];
+            sectors.push((sx, sy, dx * dx + dy * dy));
+        }
+    }
+    sectors.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Collect stars, propagating each to current time via Kepler.
+    // Stop once MAX_STARS reached — closest sectors processed first.
+    let mut result: Vec<sunscatter::render::StarRenderData> = Vec::new();
+
+    for &(sx, sy, _) in &sectors {
+        let coord = sunscatter::bodies::SectorCoord { x: sx, y: sy };
+        let stars = game.galaxy.get_sector(coord);
+        for star in stars {
+            // Propagate star on elliptical orbit via Kepler's equation
+            let m = star.mean_anomaly_0 + star.mean_motion * game_time;
+            let [current_x, current_y] = sunscatter::galaxy::kepler_position(
+                star.semi_major_axis,
+                star.eccentricity as f64,
+                star.arg_periapsis as f64,
+                m,
+            );
+
+            // Distance check against camera's actual current position
+            let dx = current_x - center[0];
+            let dy = current_y - center[1];
+            let dist_sq = dx * dx + dy * dy;
+            if dist_sq > radius_sq {
+                continue;
+            }
+            result.push(sunscatter::render::StarRenderData {
+                x: current_x,
+                y: current_y,
+                color: star.color,
+                luminosity: star.luminosity,
+            });
+            if result.len() >= MAX_STARS {
+                break;
+            }
+        }
+        if result.len() >= MAX_STARS {
+            break;
+        }
+    }
+
+    // Tick galaxy cache (LRU eviction)
+    game.galaxy.tick();
+
+    result
+}
+
+/// Build per-body star flag: true for stars (parent is root, no accretion disc).
+fn build_body_is_star(game: &Game) -> Vec<bool> {
+    game.solar_system.bodies.iter().map(|body| {
+        match body.parent {
+            Some(parent_idx) => {
+                game.solar_system.bodies[parent_idx].parent.is_none()
+                    && body.accretion_disc.is_none()
+            }
+            None => false,
+        }
+    }).collect()
+}
+
 /// Build orbit render data from scaled positions
 fn build_orbit_data(game: &Game, scaled_positions: &[[f64; 2]], render_state: &RenderState) -> Vec<Option<OrbitRenderData>> {
     let pixels_per_world_unit = render_state.camera.zoom * render_state.size.height as f32 / 2.0;
@@ -3887,7 +4030,9 @@ fn render_tracking_station_frame(
     }
 
     let accretion_discs = build_accretion_disc_data(game);
-    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &tracking_vessels, &accretion_discs, in_galaxy_view);
+    let procedural_stars = build_procedural_star_data(game, render_state);
+    let body_is_star = build_body_is_star(game);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &tracking_vessels, &accretion_discs, in_galaxy_view, &procedural_stars, &body_is_star);
 
     let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
     let date_str = sunscatter::game::format_date(game.time());
@@ -4029,7 +4174,9 @@ fn render_colony_frame(
     let bodies = build_body_data(game, &scaled_positions, in_galaxy_view);
     let orbits = build_orbit_data(game, &scaled_positions, render_state);
     let accretion_discs = build_accretion_disc_data(game);
-    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view);
+    let procedural_stars = build_procedural_star_data(game, render_state);
+    let body_is_star = build_body_is_star(game);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view, &procedural_stars, &body_is_star);
 
     let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
     let date_str = sunscatter::game::format_date(game.time());
@@ -4334,7 +4481,9 @@ fn render_colony_overview_frame(
     let bodies = build_body_data(game, &scaled_positions, in_galaxy_view);
     let orbits = build_orbit_data(game, &scaled_positions, render_state);
     let accretion_discs = build_accretion_disc_data(game);
-    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view);
+    let procedural_stars = build_procedural_star_data(game, render_state);
+    let body_is_star = build_body_is_star(game);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view, &procedural_stars, &body_is_star);
 
     let body_names: Vec<String> = game.solar_system.bodies.iter().map(|b| b.name.clone()).collect();
     let date_str = sunscatter::game::format_date(game.time());
@@ -4435,7 +4584,9 @@ fn render_management_frame(
     let bodies = build_body_data(game, &scaled_positions, in_galaxy_view);
     let orbits = build_orbit_data(game, &scaled_positions, render_state);
     let accretion_discs = build_accretion_disc_data(game);
-    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view);
+    let procedural_stars = build_procedural_star_data(game, render_state);
+    let body_is_star = build_body_is_star(game);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view, &procedural_stars, &body_is_star);
 
     let date_str = sunscatter::game::format_date(game.time());
 
@@ -4529,7 +4680,9 @@ fn render_tech_tree_frame(
     let bodies = build_body_data(game, &scaled_positions, in_galaxy_view);
     let orbits = build_orbit_data(game, &scaled_positions, render_state);
     let accretion_discs = build_accretion_disc_data(game);
-    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view);
+    let procedural_stars = build_procedural_star_data(game, render_state);
+    let body_is_star = build_body_is_star(game);
+    render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view, &procedural_stars, &body_is_star);
 
     let date_str = sunscatter::game::format_date(game.time());
 

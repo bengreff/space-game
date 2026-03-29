@@ -388,8 +388,8 @@ impl RenderState {
         // Create large buffers for dynamic geometry (multiple bodies)
         // When zoomed in, one body can have up to 4096 segments
         // 20 bodies * ~4100 vertices each = ~82000, plus safety margin
-        let max_vertices = 500_000;
-        let max_indices = 1_500_000;
+        let max_vertices = 2_000_000;
+        let max_indices = 6_000_000;
 
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),
