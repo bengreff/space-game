@@ -14,7 +14,7 @@ The tracking station provides a solar system observatory view. It renders all ce
 - Vessel orbit lines in grey (`[0.6, 0.6, 0.6, 0.4]`). Only elliptical orbits (e < 1) are rendered using 256-segment parametric ellipse line approximation.
 
 ### Galaxy View
-- When the camera screen span exceeds 0.1 light-years (`GALAXY_VIEW_THRESHOLD_M = 0.1 * 9.461e15` meters), the tracking station enters galaxy view mode.
+- Galaxy view activates when the screen span exceeds a distance-dependent threshold: 120 ly near Sgr A*, linearly increasing to 800 ly at the Sun's distance (26,000 ly) and beyond.
 - In galaxy view, only the galactic center root body (Sagittarius A*) and its direct children (stars, i.e. the Sun) are visible. All planets, moons, and their orbits are hidden (radius set to 0, no indicator rings, not clickable or hoverable).
 - If the camera is tracking a planet or moon when entering galaxy view, tracking automatically redirects to the nearest star ancestor (walking up the parent chain until finding a body whose parent is the root).
 - Star orbits (e.g., Sun's orbit around Sgr A*) are only shown in galaxy view when the star is the currently tracked body. Panning the camera (which clears tracking) hides the star orbit.

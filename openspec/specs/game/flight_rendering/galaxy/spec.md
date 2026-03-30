@@ -101,11 +101,31 @@ Newton-Raphson solver for Kepler's equation M = E − e·sin(E). Initial guess E
 
 Full pipeline: solve Kepler → true anomaly → r = a(1 − e·cos(E)) → angle = ν + arg_peri → (x, y). Used by both generation (element derivation) and propagation.
 
+## Star Classification
+
+### Requirement: StarType enum
+
+Each ProceduralStar stores a `StarType` enum classifying its evolutionary state:
+- `MainSequence(char)` — spectral class O/B/A/F/G/K/M, determined from the spectral roll
+- `WhiteDwarf` — from evolution roll < 6.0
+- `RedGiant` — from evolution roll 6.0–8.0
+- `Supergiant` — from evolution roll 8.0–8.01
+- `NeutronStar` — from evolution roll 8.01–8.11
+
+`display_name()` returns human-readable strings like "G-type Main Sequence", "White Dwarf", etc.
+
+### Requirement: Physical radius calculation
+
+Star physical radius is computed from luminosity and temperature via Stefan-Boltzmann law:
+`R = R_sun * sqrt(L_solar) / (T / T_sun)^2`
+
+This is used for real circle rendering when zoomed in close enough that the star subtends > 1 pixel.
+
 ## Rendering
 
 ### Requirement: Star visibility threshold
 
-Stars become visible once the screen diagonal covers at least 0.1 light-years (~100 AU) and disappear at galaxy view scale (screen spans 500+ light-years). A fixed render radius of 500 light-years is used regardless of zoom level — this prevents stars from gradually appearing as the camera zooms out and ensures the star set is constant across zoom levels.
+Stars become visible once the screen diagonal covers at least 0.1 light-years (~100 AU) and disappear at galaxy view scale. The galaxy view threshold scales with distance from the galactic center: 144 ly screen span near Sgr A* (dense region), linearly increasing to 640 ly at the Sun's distance (26,000 ly) and beyond. Stars are culled to rectangular screen bounds (no off-screen stars loaded). Sector lookup uses the screen half-diagonal plus a rotation margin, capped at 1,000 ly.
 
 ### Requirement: Sector star count cap
 
@@ -113,16 +133,85 @@ Each sector is capped at 2,000 stars (`MAX_STARS_PER_SECTOR`). This bounds galac
 
 ### Requirement: Distance-ordered sector iteration
 
-Sectors are sorted by distance from the camera (closest first) before iterating. This ensures nearby stars are always collected before distant ones. Collection stops at 50,000 stars (`MAX_STARS`), so in dense regions the closest stars are preferentially kept rather than bailing to empty.
+Sectors are sorted by distance from the camera (closest first) before iterating. All on-screen stars from all searched sectors are collected, then if the total exceeds the cap, the closest stars by actual distance from the camera are kept via partial sort.
 
 ### Requirement: Star count cap
 
-Total rendered stars are capped at 50,000 (`MAX_STARS`). Unlike the previous bail-to-empty approach, reaching the cap simply stops collecting further stars — the closest stars (from distance-ordered sectors) are always rendered.
+Total rendered stars are capped at 50,000 (`MAX_STARS`). When the cap is exceeded, stars are trimmed by distance from the camera center (closest kept), producing a smooth circular boundary rather than cutting off at sector edges.
+
+### Requirement: Adaptive circle rendering
+
+When a star's physical radius is large enough on screen (> 1 pixel), it is rendered as a real filled circle with adaptive segment count (`clamp(circumference/3, 16, 256)`) instead of the standard hexagon dot. This provides smooth visual scaling as the camera zooms in on individual stars.
+
+### Requirement: Screen position storage for hit testing
+
+During star rendering, each on-screen star's screen pixel coordinates are stored in `procedural_star_screen_positions`. These positions account for camera rotation and are used for hover detection and click handling.
+
+## Interaction
+
+### Requirement: Star hover detection
+
+`update_star_hover()` in `interaction.rs` checks stored screen positions to find the closest star within a 20px screen radius. Body hover takes priority — star hover only activates when no body is hovered.
+
+### Requirement: Star hover labels
+
+When a star is hovered, its catalog name is displayed above the star in both flight mode and tracking station. Labels are rendered in a light blue color (200, 200, 255) to distinguish from body labels. Hover is cleared when the cursor moves onto an egui panel or leaves the window.
+
+### Requirement: Star double-click focus
+
+Double-clicking a procedural star in flight or tracking station:
+1. Centers the camera on the star's world position (meters * SCALE)
+2. Sets `focused_star` index and `focused_star_name` for tracking
+3. Clears body/vessel tracking
+4. The camera follows the star each frame via `update_tracking()` using `focused_star_world_pos`
+
+The focused star is re-resolved by name each frame when the star list is rebuilt. If the star goes out of the visible set, the index is cleared (preventing stale data) but the world position is preserved for continued camera tracking.
+
+### Requirement: Unified info panel (tracking station)
+
+Both solar system bodies and procedural stars use the same `BodyInfoData` struct and the same right-side info panel in the tracking station. The panel is shown when a body is tracked OR a procedural star is focused (body tracking takes priority).
+
+Panel sections:
+- **Name** — light blue (200, 200, 255) for stars, white for non-stars
+- **Description** — star type string (italic, light blue-grey) for stars, or body description for non-stars
+- **Physical Properties** — Radius (R☉ + metric for stars, metric only for non-stars), surface gravity, mass (M☉ for stars, metric for non-stars)
+- **Stellar Properties** (stars only) — luminosity (L☉), temperature (K), SOI
+- **Atmosphere** (non-stars only) — pressure + height, or "No atmosphere"
+- **Orbit** — labeled "Galactic Orbit" with pc/kpc formatting when `is_galactic_orbit` is true; otherwise standard metric formatting
+- **SOI** (non-star bodies only)
+- **Colony Prospects** (non-star bodies with resources/habitability)
+
+### Requirement: BodyInfoData extended fields
+
+BodyInfoData includes:
+- `luminosity_solar: Option<f64>` — solar luminosities (stars only)
+- `star_type: Option<String>` — e.g. "G-type Main Sequence" (stars only)
+- `temperature_k: Option<f64>` — surface temperature in Kelvin (stars only)
+- `soi_radius_m: Option<f64>` — SOI radius in meters (all bodies with finite SOI)
+- `is_galactic_orbit: bool` — true for bodies/stars orbiting Sgr A* (orbit section uses pc/kpc)
+
+For solar system stars: L ∝ M^3.5 luminosity relation, temperature from Stefan-Boltzmann law. Special cases: Sgr A* (supermassive black hole) has no luminosity/temperature; the Sun is hardcoded at 1.0 L☉, 5778 K.
+
+### Requirement: Procedural star SOI
+
+Procedural stars have SOIs computed as `calculate_soi(sma, mass_kg, galactic_enclosed_mass(sma)) / 20.0`, using the same 1/20 scaling factor as the Sun's SOI. The SOI is displayed in the stellar properties section of the info panel.
+
+## Star Naming
+
+### Requirement: Catalog naming scheme
+
+Procedural stars are named `{PREFIX}-{sector_x:04}-{sector_y:04}-{sector_index:04}`, where PREFIX is the star type catalog prefix (e.g. "G" for G-type main sequence, "WD" for white dwarf, "RG" for red giant, "SG" for supergiant, "NS" for neutron star). Names are stable across frames for the same star and are used for cross-frame identity tracking of focused stars.
 
 ## Files
 
-- `src/galaxy/mod.rs` — ProceduralStar struct, GalaxyState cache, solve_kepler_nr(), kepler_position()
-- `src/galaxy/generation.rs` — Per-sector star generation with elliptical orbital elements
-- `src/galaxy/density.rs` — Sector star count from galactic position, capped at MAX_STARS_PER_SECTOR (2000)
-- `src/main.rs` — `build_procedural_star_data()`: backward rotation, distance-ordered sectors, Kepler propagation, MAX_STARS cap
-- `src/render/scene.rs` — StarRenderData struct, dot rendering
+- `src/galaxy/mod.rs` — ProceduralStar struct, StarType enum, GalaxyState cache, solve_kepler_nr(), kepler_position()
+- `src/galaxy/generation.rs` — Per-sector star generation with elliptical orbital elements and StarType classification
+- `src/galaxy/density.rs` — Sector star count from galactic position (exponential disk + Gaussian bulge), capped at MAX_STARS_PER_SECTOR (2000)
+- `src/main.rs` — `build_procedural_star_data()`: backward rotation, distance-ordered sectors, Kepler propagation, MAX_STARS cap, star metadata population; `lookup_focused_star()`: resolves focused star by name from galaxy cache when below visibility threshold; star double-click handling in flight and tracking station
+- `src/render/scene.rs` — StarRenderData struct, adaptive dot/circle rendering, screen position storage
+- `src/render/state.rs` — Star hover/focus state fields on RenderState
+- `src/render/interaction.rs` — `update_star_hover()`, `star_at_screen_pos()`, star focus tracking in `update_tracking()`
+- `src/render/menus.rs` — Star hover labels and info panel in tracking station
+- `src/render/flight.rs` — Star hover labels in flight mode
+- `src/render/types.rs` — BodyInfoData with luminosity_solar, star_type, temperature_k, soi_radius_m, is_galactic_orbit fields
+- `src/bodies.rs` — `calculate_soi()` (public), `galactic_enclosed_mass()` used for star SOI computation

@@ -108,6 +108,15 @@ impl RenderState {
 
         let active_toasts = self.active_toasts.clone();
 
+        // Procedural star hover state: capture name and screen pos for label
+        let hovered_star_label: Option<(String, [f32; 2])> = self.hovered_star.and_then(|idx| {
+            let name = self.current_procedural_stars.get(idx).map(|s| s.format_name())?;
+            let screen_pos = self.procedural_star_screen_positions.iter()
+                .find(|&&(i, _)| i == idx)
+                .map(|&(_, pos)| pos)?;
+            Some((name, screen_pos))
+        });
+
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             // Time warp panel at top of screen
@@ -527,6 +536,23 @@ impl RenderState {
                         );
                     }
                 }
+            }
+
+            // Draw label for hovered procedural star
+            if let Some((ref star_name, star_pos)) = hovered_star_label {
+                let painter = ctx.layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    egui::Id::new("star_labels"),
+                ));
+                let sx = star_pos[0] / scale_factor;
+                let sy = star_pos[1] / scale_factor - 20.0;
+                painter.text(
+                    egui::pos2(sx, sy),
+                    egui::Align2::CENTER_BOTTOM,
+                    star_name,
+                    egui::FontId::proportional(12.0),
+                    egui::Color32::from_rgb(200, 200, 255),
+                );
             }
 
             // Draw Apoapsis and Periapsis labels
@@ -2112,6 +2138,8 @@ impl RenderState {
 
             // Toast notifications
             render_toasts(ctx, &active_toasts);
+
+            super::state::fps_overlay(ctx, fps);
         });
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);

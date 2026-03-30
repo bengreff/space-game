@@ -2,7 +2,7 @@ use crate::bodies::{G, SECTOR_SIDE_LY, LIGHT_YEAR, galactic_enclosed_mass};
 use super::prng::Rng64;
 use super::density;
 use super::star_color;
-use super::{ProceduralStar, solve_kepler_nr};
+use super::{ProceduralStar, StarType, solve_kepler_nr};
 
 /// Generate all stars for a sector, deterministically from the galaxy seed.
 pub fn generate_sector(
@@ -57,33 +57,48 @@ pub fn generate_sector(
         let mut temperature = rng.range_f64(temp_lo, temp_hi) as f32;
         let mut mass_solar = rng.range_f64(mass_lo, mass_hi);
 
+        // Determine spectral class from initial temperature range
+        let spectral_class = if spectral_roll < 76.0 { 'M' }
+            else if spectral_roll < 88.0 { 'K' }
+            else if spectral_roll < 95.0 { 'G' }
+            else if spectral_roll < 98.0 { 'F' }
+            else if spectral_roll < 99.5 { 'A' }
+            else if spectral_roll < 99.9 { 'B' }
+            else { 'O' };
+
         // Secondary evolution roll: override to evolved stellar type
         // ~6% white dwarfs, ~2% red giants, ~0.01% supergiants, ~0.1% neutron stars
         let evolution_roll = rng.next_f64() * 100.0;
         let luminosity;
+        let star_type;
         if evolution_roll < 6.0 {
             // White Dwarf: remnant core, hot but tiny surface area → very dim
             mass_solar = rng.range_f64(0.5, 0.8);
             temperature = rng.range_f64(4_000.0, 40_000.0) as f32;
             luminosity = rng.range_f64(0.0001, 0.01) as f32;
+            star_type = StarType::WhiteDwarf;
         } else if evolution_roll < 8.0 {
             // Red Giant: evolved off main sequence, cool but enormous → very bright
             mass_solar = rng.range_f64(0.8, 8.0);
             temperature = rng.range_f64(3_000.0, 5_000.0) as f32;
             luminosity = rng.range_f64(50.0, 2_000.0) as f32;
+            star_type = StarType::RedGiant;
         } else if evolution_roll < 8.01 {
             // Supergiant: massive evolved star, enormous luminosity
             mass_solar = rng.range_f64(10.0, 70.0);
             temperature = rng.range_f64(3_500.0, 30_000.0) as f32;
             luminosity = rng.range_f64(10_000.0, 500_000.0) as f32;
+            star_type = StarType::Supergiant;
         } else if evolution_roll < 8.11 {
             // Neutron Star: ultra-dense remnant, extremely hot but tiny → nearly invisible
             mass_solar = rng.range_f64(1.4, 2.1);
             temperature = rng.range_f64(100_000.0, 1_000_000.0) as f32;
             luminosity = rng.range_f64(0.00001, 0.0001) as f32;
+            star_type = StarType::NeutronStar;
         } else {
             // Main Sequence: L ∝ M^3.5
             luminosity = (mass_solar.powf(3.5)) as f32;
+            star_type = StarType::MainSequence(spectral_class);
         }
 
         let mass_kg = mass_solar * 1.989e30; // solar mass in kg
@@ -136,8 +151,10 @@ pub fn generate_sector(
             temperature,
             luminosity,
             color: star_color::stellar_color(temperature),
+            radius_m: StarType::radius_meters(luminosity, temperature),
             sector_index: i,
             flags: 0,
+            star_type,
         });
     }
 

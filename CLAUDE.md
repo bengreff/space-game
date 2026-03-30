@@ -43,7 +43,7 @@ A 2D space game (KSP-like) with 1:1 real-scale orbital mechanics. Build rockets 
 - **Specs update WITH code, not after**: Every code change MUST have its corresponding spec updated in the SAME task, before moving to the next task. Never batch spec updates as a separate step. When you finish implementing a feature or fix, update the relevant spec file immediately — the task is not done until the spec reflects the code.
 - **No code-only changes**: If you change behavior, add a feature, or fix a bug, the spec must be updated as part of that same unit of work. Do not commit code without its spec update. Do not defer spec updates to "later" or "cleanup."
 - **Merge into existing specs**: When syncing delta specs from an opsx change (design/proposal), merge new requirements into the pre-existing spec files under `openspec/specs/game/`. Only create a new spec file/folder if the change introduces something entirely new that doesn't fit any existing spec.
-- **Spec structure**: `openspec/specs/game/<domain>/<capability>/spec.md`. Domains: `editor`, `editor_rendering`, `flight_rendering`, `orbits`, `physics`. See existing files for the pattern.
+- **Spec structure**: `openspec/specs/game/<domain>/<capability>/spec.md`. Domains: `editor`, `editor_rendering`, `flight_rendering`, `orbits`, `physics`, `colony`, `vessels`, `tracking_station`, `main_menu`, `pause_system`. See existing files for the pattern.
 - **If no spec exists yet**: Create one in the closest matching domain/capability. If the area is entirely new, create the domain folder and spec file.
 
 ## Task Management
@@ -70,22 +70,29 @@ A 2D space game (KSP-like) with 1:1 real-scale orbital mechanics. Build rockets 
 
 ## Game Modes
 
-Two modes, toggled via `GameMode` enum in `src/game.rs`:
-- **Editor** (`GameMode::Editor`): Build vessels on a grid, save/load blueprints
-- **Flight** (`GameMode::Flight`): Fly vessels with orbital mechanics, staging, maneuver nodes
+Nine modes via `GameMode` enum in `src/game.rs`:
+- **TitleScreen**: Initial launch screen
+- **MainMenu**: New game / load game / resume
+- **Editor**: Build vessels on a grid, save/load blueprints
+- **Flight**: Fly vessels with orbital mechanics, staging, maneuver nodes
+- **TrackingStation**: View all vessels and colonies, switch vessels
+- **Colony**: Manage a specific colony (buildings, resources, production)
+- **ColonyOverview**: Summary of all player colonies
+- **Management**: Company-level finances and fleet operations
+- **TechTree**: Technology research and unlock progression
 
 ## Project Structure
 
 ```
 src/
-├── main.rs              # Entry point, event loop, render orchestration (1086 lines)
-│                        # render_flight_frame(), render_editor_frame()
+├── main.rs              # Entry point, event loop, render orchestration
 │                        # Input handling, flight/editor mouse+keyboard dispatch
 ├── lib.rs               # Module re-exports
-├── game.rs              # Game struct (central state), GameMode, FlightState
-│                        # launch_from_editor(), save/load blueprint coordination
-├── bodies.rs            # CelestialBody, Orbit, SolarSystem (hardcoded Sun/Earth/Moon/Mars)
+├── game.rs              # Game struct (central state), GameMode (9 modes), FlightState
+│                        # launch_from_editor(), save/load coordination
+├── bodies.rs            # CelestialBody, Orbit, SolarSystem (21 hardcoded bodies)
 │                        # Kepler equation solver, orbital position/velocity from time
+├── save.rs              # Save/load game state serialization (RON format)
 │
 ├── ship/                # Ship physics (the point-mass that flies)
 │   ├── mod.rs           # Ship struct, Velocity Verlet integration, thrust/rotation
@@ -93,57 +100,73 @@ src/
 │   │                    # VesselPhysicsData (bridges FlightVessel -> Ship physics)
 │   ├── orbit.rs         # State vectors <-> orbital elements conversion
 │   ├── patched_conics.rs # Trajectory prediction across SOI boundaries
+│   ├── transfer.rs      # Lambert solver, porkchop plots
 │   └── soi.rs           # SOI transition detection, frame conversion, on-rails mode
 │
 ├── parts/               # Part definition and vessel systems
-│   ├── definition.rs    # PartDefinition, PartCategory, PartShape, PartSize
-│   │                    # EngineData, TankData, PodData, DecouplerData
-│   │                    # Propellant enum (Kerolox/Methalox/Hydrolox), FuelType
-│   │                    # PartDefinitions registry (loads from RON)
+│   ├── definition.rs    # PartDefinition, PartCategory (9), PartSize (5)
+│   │                    # Propellant enum (8 families), PartDefinitions registry
 │   ├── blueprint.rs     # VesselBlueprint, PlacedPart (serializable vessel design)
-│   │                    # blueprint_to_parts / parts_to_blueprint conversion
+│   │                    # Mirror symmetry, blueprint_to_parts conversion
 │   ├── registry.rs      # BlueprintRegistry (save/load from data/blueprints/)
 │   └── vessel.rs        # FlightVessel, FlightPart (runtime vessel with physics)
-│                        # from_blueprint(), fuel consumption, staging activation
-│                        # calculate_delta_v(), calculate_stage_delta_v()
-│                        # Terrain/launchpad collision detection
+│                        # Fuel zones, staging activation, delta-v calculation
 │
 ├── editor/              # Vehicle editor
 │   ├── state.rs         # EditorState (parts HashMap, stages, camera, ghost preview)
 │   │                    # Part placement, dragging, deletion, stats calculation
-│   │                    # calculate_stage_delta_v() for editor parts
 │   ├── ui.rs            # egui UI: toolbar, stats bar, parts palette, staging panel
-│   │                    # Part info panel, save/load dialogs
-│   │                    # Drag-and-drop staging (StagingDrag enum)
+│   │                    # Part info panel, save/load dialogs, drag-and-drop staging
 │   └── render.rs        # Vertex generation for editor scene
-│                        # Grid, placed parts, ghost preview, engine/pod/decoupler details
-│                        # Procedural rendering (engine chambers, pod windows, fairings)
-│                        # screen_to_world(), world_to_screen(), part_at_screen_pos()
+│                        # Grid, placed parts, ghost preview, procedural details
 │
-└── render/              # Flight rendering and HUD
+├── colony/              # Colony simulation
+│   ├── mod.rs           # Colony struct, building placement, resource storage
+│   ├── buildings.rs     # Building definitions, construction, upgrades
+│   ├── contracts.rs     # Contract generation, tracking, rewards
+│   ├── economy.rs       # Company finances, pricing, market simulation
+│   ├── notification.rs  # Colony event notifications
+│   ├── resources.rs     # ResourceType enum (26 types), extraction rates
+│   ├── simulation.rs    # Colony tick: production, consumption, maintenance
+│   ├── tech.rs          # Tech tree nodes, unlock requirements, research
+│   ├── trade.rs         # Trade route management, cargo scheduling
+│   └── transfer.rs      # Resource transfer logic
+│
+├── galaxy/              # Procedural galaxy generation
+│   ├── mod.rs           # GalaxyState, ProceduralStar, StarType enum
+│   ├── density.rs       # Stellar density: exponential disk, bulge, spiral arms
+│   ├── generation.rs    # Per-sector star generation, spectral types, orbits
+│   ├── prng.rs          # Deterministic PRNG for reproducible galaxies
+│   └── star_color.rs    # Blackbody temperature -> RGB color mapping
+│
+└── render/              # Rendering and UI
+    ├── state.rs         # RenderState struct, wgpu/egui setup, resize
     ├── camera.rs        # Camera struct (position, zoom, body tracking)
-    ├── editor_render.rs # render_editor(), set_editor_camera(), egui_context()
-    ├── flight.rs        # render() — flight HUD (egui), velocity, orbit info, staging
-    ├── formatting.rs    # format_duration, format_distance, format_mass, blackbody_color, etc.
-    ├── geometry.rs      # create_circle(), create_ring(), create_ship_triangle()
-    ├── interaction.rs   # update_hover, body_at_screen_pos, focus_on_body, update_tracking
+    ├── flight.rs        # Flight HUD (egui): velocity, orbit info, staging, autopilot
+    ├── scene.rs         # Geometry generation: bodies, orbits, ships, atmosphere glow
+    ├── interaction.rs   # Hover/click detection, body/vessel selection
     ├── maneuver.rs      # Maneuver node management (create/delete/drag/burn)
-    ├── menus.rs         # render_main_menu, render_title_screen, render_tracking_station
-    ├── scene.rs         # Geometry generation: update_bodies, add_*_vertices
-    ├── types.rs         # ShipRenderData, ShipPartRenderData, StagedPartInfo
-    │                    # ManeuverNode, ManeuverDeltaV, OrbitRenderData
-    │                    # Vertex struct (position + color, bytemuck)
-    └── state.rs         # RenderState struct, new(), resize(), wgpu/egui setup
+    ├── menus.rs         # Title screen, main menu, tracking station, pause
+    ├── colony_ui.rs     # Colony management screen
+    ├── colony_overview_ui.rs # All-colonies summary screen
+    ├── management_ui.rs # Company management screen
+    ├── tech_tree_ui.rs  # Tech tree visualization and interaction
+    ├── trade_ui.rs      # Trade route UI
+    ├── editor_render.rs # Editor scene rendering
+    ├── formatting.rs    # Number/distance/duration formatting
+    ├── geometry.rs      # Circle, ring, triangle primitives
+    ├── sprites.rs       # Sprite atlas loading
+    ├── textures.rs      # Texture management
+    └── types.rs         # Render data structures, vertex format
 ```
 
 ```
 data/
-├── parts/
-│   ├── engines.ron      # 16 engines (Tiny to Large, Kerolox/Methalox/Hydrolox)
-│   ├── pods.ron         # Command pods
-│   ├── tanks.ron        # Fuel tanks (multiple sizes per category)
-│   └── structural.ron   # Decouplers (4 sizes: tiny/small/medium/large)
-└── blueprints/          # User-saved vessel designs (RON files)
+├── parts/               # 22 RON files defining 148 parts across 9 categories
+├── sprites/             # Engine and plume sprite atlas
+├── blueprints/          # User-saved vessel designs (RON files)
+├── saves/               # Save games (auto-save + quicksave)
+└── bodies/              # Body definitions (stale/unused — bodies hardcoded in bodies.rs)
 ```
 
 ## Key Architecture Details
@@ -168,6 +191,8 @@ data/
 
 ### Part System
 - **PartDefinition**: Loaded from RON files. Has mass (tonnes), dimensions, optional EngineData/TankData/PodData/DecouplerData.
+- **5 part sizes**: Tiny=1, Small=3, Medium=5, Large=9, XL=13 grid squares wide.
+- **9 categories**: Pods, Propulsion, Fuel Tanks, Structural, Aerodynamic, Utility, Electricity, Interstellar, Cargo.
 - **PlacedPart**: Editor representation with position, fuel_type, tank_filled state.
 - **FlightPart**: Runtime part with resources HashMap, engine state, decoupled flag.
 - **Three hitbox types**: Build/flight hitbox (collision), welding hitbox (5% larger, for connections), visual sprite (what's drawn).
@@ -183,7 +208,7 @@ data/
 
 ### Fuel System
 - Fuel is **shared** across all non-decoupled tanks (no crossfeed control).
-- Three propellant types: Kerolox (RP-1), Methalox (CH4), Hydrolox (LH2).
+- Eight propellant families: Kerolox (RP-1), Methalox (CH4), Hydrolox (LH2), Hydrogen (NTR), Xenon (Electric), Fusion Fuel, Antimatter, Nuclear Pulse.
 - Each tank stores LOX + one fuel type. Capacity scales linearly with grid area.
 - Engines consume fuel proportionally from all available tanks.
 - Tank dry mass: 35 kg per grid square.
@@ -200,6 +225,27 @@ data/
 - Simulates staging sequentially: fire decouplers, enable engines, burn all fuel, next stage.
 - Isp is thrust-weighted average of active engines (vacuum).
 - Displayed per-stage (green text) in staging panel and as total in stats bar.
+
+### Colony System
+- Colony state per-body in `game.colonies: HashMap<usize, Colony>`.
+- Buildings produce/consume resources each tick via `colony/simulation.rs`.
+- 26 resource types (9 raw, 5 processed, 11 fuels, 1 consumable) in `colony/resources.rs`.
+- Tech tree gates building unlocks and part availability.
+- Trade routes transfer cargo between colonies on a schedule.
+- Contracts provide objectives and rewards (money + science).
+
+### Galaxy System
+- Procedurally generated stars per-sector from deterministic seed.
+- `GalaxyState` caches generated sectors in a `HashMap<SectorCoord, Vec<ProceduralStar>>`.
+- Density model: exponential disk (8,500 ly scale) + Gaussian bulge (σ=2,000 ly) + 2-arm spiral (12.6° pitch).
+- Each star has: spectral type, temperature, luminosity, mass, galactic orbital elements.
+- Stars orbit Sgr A\* on elliptical paths using enclosed galactic mass model.
+- Galaxy view activates at ~400 ly camera span.
+
+### Save System
+- `src/save.rs` handles full game state serialization (RON format).
+- Auto-save every 5 minutes, quicksave slots.
+- Saves: ship state, vessel, all colony data, tech progress, economy, time.
 
 ## Terminology
 

@@ -168,6 +168,10 @@ All rendering SHALL use wgpu with a custom vertex shader (`shader.wgsl`) and 4x 
 
 All UI SHALL be rendered using egui 0.27 in immediate mode. The egui integration SHALL consume input events before game input handlers, preventing input passthrough when the pointer is over UI.
 
+### Requirement: FPS overlay
+
+A non-interactive FPS counter SHALL be displayed in the top-right corner of every screen (flight, editor, title, main menu, tracking station, colony, colony overview, management, tech tree). It uses an exponential moving average (`fps` field on `RenderState`) and renders as a small grey label via `fps_overlay()` in `state.rs`.
+
 ## Component Data
 
 ### Requirement: Engine data

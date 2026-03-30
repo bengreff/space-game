@@ -21,7 +21,11 @@ impl RenderState {
 
         // Build egui UI
         let raw_input = self.egui_state.take_egui_input(&self.window);
-        let full_output = self.egui_ctx.run(raw_input, egui_callback);
+        let fps = self.fps;
+        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+            egui_callback(ctx);
+            super::state::fps_overlay(ctx, fps);
+        });
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
 

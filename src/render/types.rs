@@ -513,6 +513,11 @@ pub struct BodyInfoData {
     pub mineable_resources: Vec<ResourceType>,
     pub atmospheric_resources: Vec<ResourceType>,
     pub habitability_score: u32,
+    pub luminosity_solar: Option<f64>,  // solar luminosities (for stars)
+    pub star_type: Option<String>,      // e.g. "G-type Main Sequence" (for stars)
+    pub temperature_k: Option<f64>,     // surface temperature in Kelvin (stars only)
+    pub soi_radius_m: Option<f64>,      // SOI radius in meters
+    pub is_galactic_orbit: bool,        // true → orbit section uses pc/kpc formatting
 }
 
 /// A single point in the porkchop plot grid

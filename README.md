@@ -5,7 +5,8 @@ A 2D spaceflight game with **1:1 real-scale** orbital mechanics and interstellar
 ## What Makes It Different
 
 - **Real scale**: Earth LEO at 7.8 km/s, Moon at 384,400 km, no scaled-down physics
-- **Galactic scope**: 20 celestial bodies from Sagittarius A\* to Martian moons, with enclosed galactic mass modeling
+- **Galactic scope**: 21 celestial bodies from Sagittarius A\* to Neptune, plus a procedurally generated Milky Way with billions of stars
+- **Colony economy**: Deploy habitats, extract resources, refine materials, trade between colonies, research technology
 - **Relativistic flight**: Speed-of-light limiting, Lorentz thrust reduction, gravitational time dilation near compact objects, split ship/Earth clocks
 - **No game engine**: Custom Rust physics loop, wgpu rendering, egui UI — built for precision at every layer
 
@@ -24,9 +25,9 @@ The core gameplay loop is complete and playable end-to-end: design vessels, laun
 - Autopilot: Prograde, Retrograde, Radial In/Out, Maneuver Node
 
 ### Vehicle Editor
-- 148 parts across 8 categories (Pods, Engines, Fuel Tanks, Structural, Aerodynamic, Utility, Electricity, Interstellar)
+- 148 parts across 9 categories (Pods, Propulsion, Fuel Tanks, Structural, Aerodynamic, Utility, Electricity, Interstellar, Cargo)
 - 5 part sizes: Tiny (0.5m) to XL (6.5m)
-- 6 propellant families: Kerolox, Methalox, Hydrolox, Fusion Fuel, Antimatter, Nuclear Pulse
+- 8 propellant families: Kerolox, Methalox, Hydrolox, Hydrogen (NTR), Xenon (Electric), Fusion Fuel, Antimatter, Nuclear Pulse
 - Sprite-based rendering with procedural fallbacks (engine nozzles, pod windows, decoupler adapters)
 - Mirror symmetry, part rotation, ghost preview with overlap detection
 - Payload fairings: click-to-build symmetric shells
@@ -51,8 +52,29 @@ The core gameplay loop is complete and playable end-to-end: design vessels, laun
 - Velocity display switches to %c above 1% light speed
 - Lorentz gamma display, ship proper time vs. Earth coordinate time
 
+### Colony System
+- Deploy habitats and build infrastructure on any body
+- Extract resources (9 raw + 5 processed + 11 fuels + food), refine materials
+- Power management: solar panels, RTGs, fission and fusion reactors (with fuel consumption)
+- Greenhouses with water allocation for food production
+- Trade routes between colonies with cargo scheduling
+- Contracts: delivery objectives with money and science rewards
+- Company economy: finances, pricing, market simulation
+
+### Tech Tree
+- 4-layer progression tree with science point unlocks
+- Gates building construction and part availability
+- Research visualization and interaction UI
+
+### Galaxy
+- Procedurally generated Milky Way with exponential disk, Gaussian bulge, and 2-arm logarithmic spiral
+- 7 spectral classes (OBAFGKM) + evolved types (White Dwarf, Red Giant, Supergiant, Neutron Star)
+- Deterministic per-sector star generation from seed
+- Stars orbit Sgr A\* on elliptical paths with enclosed galactic mass model
+- Galaxy view activates at ~400 ly camera span
+
 ### Solar System
-20 bodies with full orbital mechanics:
+21 bodies with full orbital mechanics:
 
 | Region | Bodies |
 |--------|--------|
@@ -63,14 +85,14 @@ The core gameplay loop is complete and playable end-to-end: design vessels, laun
 Atmospheres on Earth, Venus, Mars, Jupiter, Titan. Accretion disc on Sgr A\*.
 
 ### Game Infrastructure
-- Title screen, main menu, tracking station
+- Title screen, main menu, tracking station with multi-vessel management
+- Colony management, colony overview, company management, tech tree screens
 - Save/load with auto-save (5 min) and quicksave slots
 - Pause overlay with save/load/quit
 
 ## Planned
 
-- **Colonies**: Deploy habitats, extract resources, refine fuel, build infrastructure, grow food, manage crew and power
-- **Career mode**: Tech tree progression, part unlocks, funds
+- **Career mode**: Funds, reputation, milestone rewards (tech tree implemented)
 - **Docking**: Port alignment, vessel merge/split, resource transfer
 - **Crew system**: Capacity, life support, transfer
 - **Multiple star systems**: Galaxy-level SOI hierarchy, interstellar SOI transitions
@@ -131,37 +153,69 @@ No game engine. Custom physics loop for full control over orbital mechanics inte
 
 ```
 src/
-  main.rs                # Event loop, render orchestration, input dispatch
-  game.rs                # Game state machine, vessel management, save/load
-  bodies.rs              # 20 celestial bodies, Kepler solver, galactic mass model
-  ship/
-    mod.rs               # Velocity Verlet integration, thrust, autopilot, relativity
-    orbit.rs             # State vectors <-> orbital elements
-    patched_conics.rs    # Trajectory prediction, galactic mass subdivision
-    transfer.rs          # Lambert solver, porkchop plots
-    soi.rs               # SOI transitions, frame conversion, on-rails
-  parts/
-    definition.rs        # 148 part definitions, engines, tanks, pods, interstellar
-    blueprint.rs         # Vessel blueprints, mirror symmetry, serialization
-    registry.rs          # Blueprint save/load
-    vessel.rs            # Flight vessel, fuel zones, staging, delta-v
-  editor/
-    state.rs             # Part placement, dragging, symmetry
-    ui.rs                # Parts palette, staging panel, part info
-    render.rs            # Grid, parts, ghost preview, procedural details
-  render/
-    state.rs             # wgpu pipeline, flight HUD, body/orbit/ship rendering
-    camera.rs            # Camera position, zoom, body tracking
-    maneuver.rs          # Maneuver node create/drag/burn
-    sprites.rs           # Sprite atlas loading
-    types.rs             # Render data structures, vertex format
+  main.rs              # Event loop, render orchestration, input dispatch
+  game.rs              # Game state machine (9 modes), vessel management, save/load
+  bodies.rs            # 21 celestial bodies, Kepler solver, galactic mass model
+  save.rs              # Save/load game state serialization
+  lib.rs               # Module re-exports
+  ship/                # Ship physics
+    mod.rs             # Velocity Verlet, thrust, autopilot, relativity
+    orbit.rs           # State vectors <-> orbital elements
+    patched_conics.rs  # Trajectory prediction, galactic mass subdivision
+    transfer.rs        # Lambert solver, porkchop plots
+    soi.rs             # SOI transitions, frame conversion, on-rails
+  parts/               # Part definitions and vessel systems
+    definition.rs      # 148 parts, 9 categories, 8 propellant families
+    blueprint.rs       # Vessel blueprints, mirror symmetry
+    registry.rs        # Blueprint save/load
+    vessel.rs          # Flight vessel, fuel zones, staging, delta-v
+  editor/              # Vehicle editor
+    state.rs           # Part placement, dragging, symmetry, stats
+    ui.rs              # Parts palette, staging panel, part info
+    render.rs          # Grid, parts, ghost preview, procedural details
+  colony/              # Colony simulation
+    mod.rs             # Colony struct, building placement, resource storage
+    buildings.rs       # Building definitions, construction, upgrades
+    contracts.rs       # Contract generation, tracking, rewards
+    economy.rs         # Company finances, pricing, market simulation
+    notification.rs    # Colony event notifications
+    resources.rs       # ResourceType enum (26 types), extraction rates
+    simulation.rs      # Colony tick: production, consumption, maintenance
+    tech.rs            # Tech tree nodes, unlock requirements, research
+    trade.rs           # Trade route management, cargo scheduling
+    transfer.rs        # Resource transfer logic
+  galaxy/              # Procedural galaxy generation
+    mod.rs             # GalaxyState, ProceduralStar, StarType enum
+    density.rs         # Stellar density: exponential disk, bulge, spiral arms
+    generation.rs      # Per-sector star generation, spectral types, orbits
+    prng.rs            # Deterministic PRNG for reproducible galaxies
+    star_color.rs      # Blackbody temperature -> RGB color mapping
+  render/              # Rendering and UI
+    state.rs           # wgpu pipeline, egui setup, resize
+    camera.rs          # Camera position, zoom, body tracking
+    flight.rs          # Flight HUD: velocity, orbit info, staging, autopilot
+    scene.rs           # Geometry: bodies, orbits, ships, atmosphere glow
+    interaction.rs     # Hover/click detection, body/vessel selection
+    maneuver.rs        # Maneuver node create/drag/burn
+    menus.rs           # Title screen, main menu, tracking station, pause
+    colony_ui.rs       # Colony management screen
+    colony_overview_ui.rs  # All-colonies summary screen
+    management_ui.rs   # Company management screen
+    tech_tree_ui.rs    # Tech tree visualization and interaction
+    trade_ui.rs        # Trade route UI
+    editor_render.rs   # Editor scene rendering
+    formatting.rs      # Number/distance/duration formatting
+    geometry.rs        # Circle, ring, triangle primitives
+    sprites.rs         # Sprite atlas loading
+    textures.rs        # Texture management
+    types.rs           # Render data structures, vertex format
 
 data/
-  parts/                 # 22 RON files defining 148 parts
-  sprites/               # Engine and plume sprite atlas
-  blueprints/            # User-saved vessel designs
-  saves/                 # Save games
-  bodies/                # Body definitions (RON)
+  parts/               # 22 RON files defining 148 parts
+  sprites/             # Engine and plume sprite atlas
+  blueprints/          # User-saved vessel designs
+  saves/               # Save games (auto-save + quicksave)
+  bodies/              # Body definitions (stale/unused — bodies hardcoded in bodies.rs)
 ```
 
 ## License

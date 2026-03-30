@@ -6,6 +6,66 @@ pub mod star_color;
 use std::collections::HashMap;
 use crate::bodies::SectorCoord;
 
+/// Classification of a procedural star's evolutionary state.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StarType {
+    MainSequence(char), // spectral class: 'O','B','A','F','G','K','M'
+    WhiteDwarf,
+    RedGiant,
+    Supergiant,
+    NeutronStar,
+}
+
+impl StarType {
+    /// Human-readable display name, e.g. "G-type Main Sequence"
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            StarType::MainSequence('O') => "O-type Main Sequence",
+            StarType::MainSequence('B') => "B-type Main Sequence",
+            StarType::MainSequence('A') => "A-type Main Sequence",
+            StarType::MainSequence('F') => "F-type Main Sequence",
+            StarType::MainSequence('G') => "G-type Main Sequence",
+            StarType::MainSequence('K') => "K-type Main Sequence",
+            StarType::MainSequence('M') => "M-type Main Sequence",
+            StarType::MainSequence(_) => "Main Sequence",
+            StarType::WhiteDwarf => "White Dwarf",
+            StarType::RedGiant => "Red Giant",
+            StarType::Supergiant => "Supergiant",
+            StarType::NeutronStar => "Neutron Star",
+        }
+    }
+
+    /// Short prefix for catalog naming, e.g. "G" for G-type main sequence, "WD" for white dwarf
+    pub fn catalog_prefix(&self) -> &'static str {
+        match self {
+            StarType::MainSequence(c) => match c {
+                'O' => "O",
+                'B' => "B",
+                'A' => "A",
+                'F' => "F",
+                'G' => "G",
+                'K' => "K",
+                'M' => "M",
+                _ => "MS",
+            },
+            StarType::WhiteDwarf => "WD",
+            StarType::RedGiant => "RG",
+            StarType::Supergiant => "SG",
+            StarType::NeutronStar => "NS",
+        }
+    }
+
+    /// Physical radius in meters from luminosity and temperature via Stefan-Boltzmann law.
+    /// R = R_sun * sqrt(L / L_sun) / (T / T_sun)^2
+    pub fn radius_meters(luminosity_solar: f32, temperature_k: f32) -> f64 {
+        const R_SUN: f64 = 6.957e8; // meters
+        const T_SUN: f64 = 5778.0;  // Kelvin
+        let l = luminosity_solar.max(1e-10) as f64;
+        let t_ratio = temperature_k as f64 / T_SUN;
+        R_SUN * l.sqrt() / (t_ratio * t_ratio)
+    }
+}
+
 /// A procedurally generated star. Lives only in the sector cache.
 #[derive(Clone, Debug)]
 pub struct ProceduralStar {
@@ -19,8 +79,10 @@ pub struct ProceduralStar {
     pub temperature: f32,       // Kelvin (determines render color)
     pub luminosity: f32,        // solar luminosities (determines dot size)
     pub color: [f32; 3],        // pre-computed RGB from temperature (cached)
+    pub radius_m: f64,          // physical radius in meters (cached from Stefan-Boltzmann)
     pub sector_index: u32,      // unique ID within sector
     pub flags: u32,             // bit 0: is_predefined, bit 1: has_system
+    pub star_type: StarType,    // evolutionary classification
 }
 
 /// Solve Kepler's equation M = E - e·sin(E) via Newton-Raphson.
@@ -82,7 +144,8 @@ pub struct GalaxyState {
 }
 
 /// Maximum number of sectors to keep cached before eviction.
-const MAX_CACHED_SECTORS: usize = 200;
+/// 1000 ly render radius / 100 ly per sector = 10 sector radius → π×10² ≈ 314 + margin
+const MAX_CACHED_SECTORS: usize = 500;
 /// Sectors unused for this many frames get evicted.
 const EVICTION_AGE_FRAMES: u64 = 300; // ~5 seconds at 60fps
 

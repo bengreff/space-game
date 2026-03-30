@@ -386,7 +386,7 @@ pub fn galactic_enclosed_mass(r: f64) -> f64 {
 }
 
 /// Calculate sphere of influence radius
-fn calculate_soi(semi_major_axis: f64, mass: f64, parent_mass: f64) -> f64 {
+pub fn calculate_soi(semi_major_axis: f64, mass: f64, parent_mass: f64) -> f64 {
     semi_major_axis * (mass / parent_mass).powf(0.4)
 }
 

@@ -28,6 +28,7 @@ impl RenderState {
         let mut menu_action = MainMenuAction::None;
         let mut new_warp_index = current_warp_index;
 
+        let fps = self.fps;
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             // Time warp panel at top
@@ -59,6 +60,7 @@ impl RenderState {
             });
 
             menu_action = egui_callback(ctx);
+            super::state::fps_overlay(ctx, fps);
         });
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
@@ -144,10 +146,12 @@ impl RenderState {
 
         let mut action = TitleScreenAction::None;
 
+        let fps = self.fps;
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
             // No time warp panel — just the callback
             action = egui_callback(ctx);
+            super::state::fps_overlay(ctx, fps);
         });
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
@@ -250,6 +254,15 @@ impl RenderState {
         let camera_rotation = self.camera.rotation;
         let aspect_ratio = self.camera.aspect_ratio;
         let scale_factor = self.window.scale_factor() as f32;
+
+        // Procedural star hover state: capture name and screen pos for label
+        let hovered_star_label: Option<(String, [f32; 2])> = self.hovered_star.and_then(|idx| {
+            let name = self.current_procedural_stars.get(idx).map(|s| s.format_name())?;
+            let screen_pos = self.procedural_star_screen_positions.iter()
+                .find(|&&(i, _)| i == idx)
+                .map(|&(_, pos)| pos)?;
+            Some((name, screen_pos))
+        });
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
@@ -367,31 +380,89 @@ impl RenderState {
                     });
             }
 
-            // Body info right panel (shown when a body is tracked)
-            if let Some(idx) = self.tracked_body {
-                if let Some(info) = body_info.get(idx) {
-                    egui::SidePanel::right("body_info_panel")
-                        .default_width(220.0)
-                        .resizable(false)
-                        .show(ctx, |ui| {
-                            egui::ScrollArea::vertical().show(ui, |ui| {
-                                ui.heading(egui::RichText::new(&info.name).size(18.0).color(egui::Color32::WHITE));
-                                if !info.description.is_empty() {
-                                    ui.label(egui::RichText::new(&info.description)
-                                        .size(12.0)
-                                        .italics()
-                                        .color(egui::Color32::from_rgb(160, 160, 160)));
+            // Unified info panel (body or focused procedural star)
+            let panel_info: Option<&BodyInfoData> = if let Some(idx) = self.tracked_body {
+                body_info.get(idx)
+            } else {
+                self.focused_star_info.as_ref()
+            };
+            if let Some(info) = panel_info {
+                egui::SidePanel::right("body_info_panel")
+                    .default_width(220.0)
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            let is_star = info.star_type.is_some();
+                            // Name — light blue for stars, white otherwise
+                            let name_color = if is_star {
+                                egui::Color32::from_rgb(200, 200, 255)
+                            } else {
+                                egui::Color32::WHITE
+                            };
+                            ui.heading(egui::RichText::new(&info.name).size(18.0).color(name_color));
+
+                            // Description — star type (italic) or body description
+                            if let Some(ref st) = info.star_type {
+                                ui.label(egui::RichText::new(st)
+                                    .size(12.0)
+                                    .italics()
+                                    .color(egui::Color32::from_rgb(160, 160, 200)));
+                            } else if !info.description.is_empty() {
+                                ui.label(egui::RichText::new(&info.description)
+                                    .size(12.0)
+                                    .italics()
+                                    .color(egui::Color32::from_rgb(160, 160, 160)));
+                            }
+                            ui.separator();
+
+                            // Physical properties
+                            ui.label(egui::RichText::new("Physical Properties").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                            ui.add_space(2.0);
+                            const R_SUN: f64 = 6.957e8;
+                            const M_SUN: f64 = 1.989e30;
+                            if is_star {
+                                // Stars: radius in solar radii + metric
+                                let radius_solar = info.radius_m / R_SUN;
+                                if radius_solar >= 1.0 {
+                                    ui.label(format!("Radius: {:.2} R\u{2609}", radius_solar));
+                                } else {
+                                    ui.label(format!("Radius: {:.4} R\u{2609}", radius_solar));
                                 }
-                                ui.separator();
-
-                                // Physical properties
-                                ui.label(egui::RichText::new("Physical Properties").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
-                                ui.add_space(2.0);
+                                ui.label(format!("  ({})", format_distance(info.radius_m)));
+                            } else {
                                 ui.label(format!("Radius: {}", format_distance(info.radius_m)));
-                                ui.label(format!("Surface gravity: {:.2} m/s\u{b2}", info.surface_gravity_ms2));
+                            }
+                            ui.label(format!("Surface gravity: {:.2} m/s\u{b2}", info.surface_gravity_ms2));
+                            if is_star {
+                                let mass_solar = info.mass_kg / M_SUN;
+                                ui.label(format!("Mass: {:.2} M\u{2609}", mass_solar));
+                            } else {
                                 ui.label(format!("Mass: {}", format_mass(info.mass_kg)));
+                            }
 
-                                // Atmosphere
+                            // Stellar properties (for stars)
+                            if is_star {
+                                ui.add_space(4.0);
+                                ui.separator();
+                                ui.label(egui::RichText::new("Stellar Properties").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                                ui.add_space(2.0);
+                                if let Some(lum) = info.luminosity_solar {
+                                    if lum >= 1.0 {
+                                        ui.label(format!("Luminosity: {:.1} L\u{2609}", lum));
+                                    } else {
+                                        ui.label(format!("Luminosity: {:.4} L\u{2609}", lum));
+                                    }
+                                }
+                                if let Some(temp) = info.temperature_k {
+                                    ui.label(format!("Temperature: {:.0} K", temp));
+                                }
+                                if let Some(soi) = info.soi_radius_m {
+                                    ui.label(format!("SOI: {}", format_distance(soi)));
+                                }
+                            }
+
+                            // Atmosphere (non-star bodies only)
+                            if !is_star {
                                 ui.add_space(4.0);
                                 if let Some(pressure) = info.atmosphere_pressure_pa {
                                     ui.label(egui::RichText::new("Atmosphere").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
@@ -405,54 +476,77 @@ impl RenderState {
                                         .size(12.0)
                                         .color(egui::Color32::from_rgb(120, 120, 120)));
                                 }
+                            }
 
-                                // Orbit (skip for root body / Sun)
-                                if let Some(sma) = info.orbit_semi_major_axis_m {
-                                    ui.add_space(4.0);
-                                    ui.separator();
-                                    ui.label(egui::RichText::new("Orbit").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
-                                    ui.add_space(2.0);
+                            // Orbit
+                            if let Some(sma) = info.orbit_semi_major_axis_m {
+                                ui.add_space(4.0);
+                                ui.separator();
+                                let orbit_label = if info.is_galactic_orbit { "Galactic Orbit" } else { "Orbit" };
+                                ui.label(egui::RichText::new(orbit_label).size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                                ui.add_space(2.0);
+                                if info.is_galactic_orbit {
+                                    const KPC: f64 = 3.086e19; // 1 kpc in meters
+                                    let sma_kpc = sma / KPC;
+                                    if sma_kpc >= 1.0 {
+                                        ui.label(format!("Semi-major axis: {:.2} kpc", sma_kpc));
+                                    } else {
+                                        ui.label(format!("Semi-major axis: {:.0} pc", sma_kpc * 1000.0));
+                                    }
+                                } else {
                                     ui.label(format!("Semi-major axis: {}", format_distance(sma)));
-                                    if let Some(ecc) = info.orbit_eccentricity {
+                                }
+                                if let Some(ecc) = info.orbit_eccentricity {
+                                    if info.is_galactic_orbit {
+                                        ui.label(format!("Eccentricity: {:.3}", ecc));
+                                    } else {
                                         ui.label(format!("Eccentricity: {:.4}", ecc));
                                     }
-                                    if let Some(period) = info.orbit_period_s {
-                                        ui.label(format!("Period: {}", format_duration(period)));
-                                    }
                                 }
+                                if let Some(period) = info.orbit_period_s {
+                                    ui.label(format!("Period: {}", format_duration(period)));
+                                }
+                            }
 
-                                // Colony info
-                                if !info.mineable_resources.is_empty() || !info.atmospheric_resources.is_empty() || info.habitability_score > 0 {
+                            // SOI (non-star bodies)
+                            if !is_star {
+                                if let Some(soi) = info.soi_radius_m {
                                     ui.add_space(4.0);
-                                    ui.separator();
-                                    ui.label(egui::RichText::new("Colony Prospects").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
-                                    ui.add_space(2.0);
+                                    ui.label(format!("SOI: {}", format_distance(soi)));
+                                }
+                            }
 
-                                    ui.label(format!("Habitability: {}/100", info.habitability_score));
+                            // Colony prospects (non-star bodies)
+                            if !is_star && (!info.mineable_resources.is_empty() || !info.atmospheric_resources.is_empty() || info.habitability_score > 0) {
+                                ui.add_space(4.0);
+                                ui.separator();
+                                ui.label(egui::RichText::new("Colony Prospects").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                                ui.add_space(2.0);
 
-                                    if !info.mineable_resources.is_empty() {
-                                        ui.add_space(4.0);
-                                        ui.label(egui::RichText::new("Mineable Resources")
-                                            .size(12.0)
-                                            .color(egui::Color32::from_rgb(180, 180, 180)));
-                                        for res in &info.mineable_resources {
-                                            ui.label(format!("  {}", res.display_name()));
-                                        }
-                                    }
+                                ui.label(format!("Habitability: {}/100", info.habitability_score));
 
-                                    if !info.atmospheric_resources.is_empty() {
-                                        ui.add_space(4.0);
-                                        ui.label(egui::RichText::new("Atmospheric Resources")
-                                            .size(12.0)
-                                            .color(egui::Color32::from_rgb(180, 180, 180)));
-                                        for res in &info.atmospheric_resources {
-                                            ui.label(format!("  {}", res.display_name()));
-                                        }
+                                if !info.mineable_resources.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.label(egui::RichText::new("Mineable Resources")
+                                        .size(12.0)
+                                        .color(egui::Color32::from_rgb(180, 180, 180)));
+                                    for res in &info.mineable_resources {
+                                        ui.label(format!("  {}", res.display_name()));
                                     }
                                 }
-                            });
+
+                                if !info.atmospheric_resources.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.label(egui::RichText::new("Atmospheric Resources")
+                                        .size(12.0)
+                                        .color(egui::Color32::from_rgb(180, 180, 180)));
+                                    for res in &info.atmospheric_resources {
+                                        ui.label(format!("  {}", res.display_name()));
+                                    }
+                                }
+                            }
                         });
-                }
+                    });
             }
 
             // Bottom panel: Tracking Station label
@@ -488,6 +582,18 @@ impl RenderState {
                 }
             }
 
+            // Hovered procedural star label
+            if let Some((ref star_name, star_pos)) = hovered_star_label {
+                let sx = star_pos[0] / scale_factor;
+                let sy = star_pos[1] / scale_factor - 20.0;
+                egui::Area::new(egui::Id::new("star_label"))
+                    .fixed_pos(egui::pos2(sx, sy))
+                    .pivot(egui::Align2::CENTER_BOTTOM)
+                    .show(ctx, |ui| {
+                        ui.label(egui::RichText::new(star_name).color(egui::Color32::from_rgb(200, 200, 255)).size(14.0));
+                    });
+            }
+
             // Pause overlay
             if paused {
                 egui::Area::new(egui::Id::new("pause_overlay"))
@@ -512,6 +618,8 @@ impl RenderState {
 
             // Toast notifications
             super::flight::render_toasts(ctx, &self.active_toasts);
+
+            super::state::fps_overlay(ctx, self.fps);
         });
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
@@ -639,6 +747,7 @@ impl RenderState {
                 new_warp_index = *idx;
             }
             colony_action = result;
+            super::state::fps_overlay(ctx, self.fps);
         });
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
@@ -763,6 +872,7 @@ impl RenderState {
                 new_warp_index = *idx;
             }
             overview_action = result;
+            super::state::fps_overlay(ctx, self.fps);
         });
 
         self.egui_state
@@ -892,6 +1002,7 @@ impl RenderState {
             if let ManagementAction::ChangeWarp(idx) = act {
                 new_warp_index = idx;
             }
+            super::state::fps_overlay(ctx, self.fps);
         });
 
         self.egui_state
@@ -1017,6 +1128,7 @@ impl RenderState {
             if let TechTreeScreenAction::ChangeWarp(idx) = result {
                 new_warp_index = idx;
             }
+            super::state::fps_overlay(ctx, self.fps);
         });
 
         self.egui_state

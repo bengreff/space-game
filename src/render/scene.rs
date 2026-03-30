@@ -6,11 +6,40 @@ use super::state::RenderState;
 
 /// Pre-computed render data for a procedural star dot.
 /// Built in main.rs from GalaxyState, consumed by scene.rs.
+#[derive(Clone)]
 pub struct StarRenderData {
     pub x: f64,   // world position in meters
     pub y: f64,
     pub color: [f32; 3],
-    pub luminosity: f32, // solar luminosities (determines dot size)
+    pub luminosity: f32,    // solar luminosities (determines dot size)
+    pub radius_m: f64,      // physical radius in meters (for real circle rendering)
+    pub temperature: f32,   // Kelvin
+    pub mass_solar: f64,    // solar masses
+    pub star_type: &'static str,  // display string e.g. "G-type Main Sequence"
+    // Decomposed catalog ID (avoids per-frame String allocation)
+    pub catalog_prefix: &'static str, // e.g. "G", "WD", "RG"
+    pub sector_x: u16,
+    pub sector_y: u16,
+    pub sector_index: u32,
+    // Pre-computed rendering values (avoids per-frame log/ln)
+    pub alpha: f32,       // brightness alpha from luminosity
+    pub lum_factor: f32,  // hexagon size factor from luminosity
+    // Galactic orbital characteristics
+    pub semi_major_axis_m: f64,  // galactic orbit semi-major axis (meters)
+    pub eccentricity: f32,       // galactic orbit eccentricity
+    pub orbital_period_s: f64,   // galactic orbital period (seconds)
+}
+
+impl StarRenderData {
+    /// Format the full catalog name on demand (only needed for UI display).
+    pub fn format_name(&self) -> String {
+        format!("{}-{:04}-{:04}-{:04}", self.catalog_prefix, self.sector_x, self.sector_y, self.sector_index)
+    }
+
+    /// Check if this star matches the given sector identity.
+    pub fn matches_id(&self, sector_x: u16, sector_y: u16, sector_index: u32) -> bool {
+        self.sector_x == sector_x && self.sector_y == sector_y && self.sector_index == sector_index
+    }
 }
 
 impl RenderState {
@@ -142,8 +171,8 @@ impl RenderState {
         background_vessels: &[TrackingVesselData],
         accretion_discs: &[Option<crate::bodies::AccretionDisc>],
         in_galaxy_view: bool,
-        procedural_stars: &[StarRenderData],
         body_is_star: &[bool],
+        procedural_stars: &[StarRenderData],
     ) {
         // Store ship info for UI display
         self.ship_orbit_info = ship.and_then(|s| s.orbit.clone());
@@ -221,7 +250,27 @@ impl RenderState {
         self.add_galaxy_texture_quad(&mut all_vertices, &mut all_indices, in_galaxy_view, scale);
 
         // Draw procedural stars (on top of galaxy texture, behind sector grid)
-        self.add_procedural_stars(&mut all_vertices, &mut all_indices, procedural_stars, scale);
+        self.current_procedural_stars = procedural_stars.to_vec();
+        // Clear hovered_star since screen positions are rebuilt each frame.
+        self.hovered_star = None;
+        // Re-resolve focused star by sector ID in the current star list
+        if let Some((sx, sy, si)) = self.focused_star_id {
+            if let Some(new_idx) = self.current_procedural_stars.iter()
+                .position(|s| s.matches_id(sx, sy, si))
+            {
+                self.focused_star = Some(new_idx);
+                let star = &self.current_procedural_stars[new_idx];
+                self.focused_star_world_pos = Some([star.x, star.y]);
+            } else {
+                // Star not in current visible set — clear index but keep world pos for tracking.
+                // This prevents the info panel from showing a wrong star.
+                self.focused_star = None;
+            }
+        }
+        Self::add_procedural_stars_impl(
+            &self.camera, self.size, &mut self.procedural_star_screen_positions,
+            &mut all_vertices, &mut all_indices, &self.current_procedural_stars, scale,
+        );
 
         // Sector grid lines removed — procedural stars provide visual density cues
 
@@ -1751,6 +1800,12 @@ impl RenderState {
             }
         }
 
+        // Truncate to buffer capacity to avoid wgpu overrun
+        let max_verts = self.vertex_buffer.size() as usize / std::mem::size_of::<Vertex>();
+        let max_idx = self.index_buffer.size() as usize / std::mem::size_of::<u32>();
+        all_vertices.truncate(max_verts);
+        all_indices.truncate(max_idx);
+
         self.num_indices = all_indices.len() as u32;
 
         self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&all_vertices));
@@ -2024,14 +2079,20 @@ impl RenderState {
         all_indices.push(base + 3);
     }
 
-    /// Render procedural stars as small colored quads.
-    fn add_procedural_stars(
-        &self,
+    /// Render procedural stars as small colored hexagons (or real circles when zoomed in).
+    /// Also stores screen positions for hover/click hit testing.
+    /// Static method to avoid borrow conflicts with self.current_procedural_stars.
+    fn add_procedural_stars_impl(
+        camera: &super::camera::Camera,
+        size: winit::dpi::PhysicalSize<u32>,
+        screen_positions: &mut Vec<(usize, [f32; 2])>,
         all_vertices: &mut Vec<Vertex>,
         all_indices: &mut Vec<u32>,
         stars: &[StarRenderData],
         scale: f64,
     ) {
+        screen_positions.clear();
+
         if stars.is_empty() {
             return;
         }
@@ -2047,41 +2108,106 @@ impl RenderState {
             (0.5, -0.866025),  // 300°
         ];
 
-        // Pre-reserve capacity: 7 vertices + 18 indices per star
-        all_vertices.reserve(stars.len() * 7);
-        all_indices.reserve(stars.len() * 18);
+        // Reserve for on-screen stars only (off-screen culling skips most).
+        // Estimate ~20% visible at typical zoom; cap to avoid over-allocation.
+        let visible_estimate = (stars.len() / 5).min(500_000);
+        all_vertices.reserve(visible_estimate * 7);
+        all_indices.reserve(visible_estimate * 18);
 
-        let cam_x = (self.camera.body_center[0] + self.camera.ship_offset[0]) as f64;
-        let cam_y = (self.camera.body_center[1] + self.camera.ship_offset[1]) as f64;
+        // Two-step camera subtraction for precision at galaxy scale.
+        // body_center and ship_offset are kept separate in f64, subtracted
+        // sequentially before casting to f32 — same pattern as body rendering.
+        let cam_x = camera.body_center[0] as f64;
+        let cam_y = camera.body_center[1] as f64;
+        let off_x = camera.ship_offset[0] as f64;
+        let off_y = camera.ship_offset[1] as f64;
 
-        let pixel_ndc = 1.0 / (self.camera.zoom as f64 * self.size.height as f64 * 0.5);
+        let pixel_ndc = 1.0 / (camera.zoom as f64 * size.height as f64 * 0.5);
+        let screen_half_w = size.width as f32 * 0.5;
+        let screen_half_h = size.height as f32 * 0.5;
+        let aspect = camera.aspect_ratio;
+        let zoom = camera.zoom;
+        let cos_r = camera.rotation.cos();
+        let sin_r = camera.rotation.sin();
 
-        for star in stars {
-            let sx = (star.x * scale - cam_x) as f32;
-            let sy = (star.y * scale - cam_y) as f32;
+        // Culling margins: generous enough to include stars whose hexagons
+        // or circles extend past the viewport edge
+        let cull_margin = 100.0f32;
+        let screen_w = size.width as f32;
+        let screen_h = size.height as f32;
 
-            // Dot size: 1–2.5 screen pixels depending on luminosity.
-            let lum_factor = (1.0 + (star.luminosity.max(0.001).ln() * 0.06) as f64).clamp(1.0, 2.5);
-            let half = (pixel_ndc * lum_factor * 2.0) as f32;
+        for (i, star) in stars.iter().enumerate() {
+            let sx = (star.x * scale - cam_x - off_x) as f32;
+            let sy = (star.y * scale - cam_y - off_y) as f32;
 
-            // Brightness: dim M-dwarfs, bright O/B stars
-            let alpha = (0.5 + 0.5 * (star.luminosity.max(0.001).log10() / 4.0).clamp(0.0, 1.0)) as f32;
-            let color = [star.color[0], star.color[1], star.color[2], alpha];
+            // Convert to screen pixel coords (must include camera rotation)
+            let rot_x = sx * cos_r - sy * sin_r;
+            let rot_y = sx * sin_r + sy * cos_r;
+            let ndc_x = rot_x * zoom / aspect;
+            let ndc_y = rot_y * zoom;
+            let screen_px = (ndc_x + 1.0) * screen_half_w;
+            let screen_py = (1.0 - ndc_y) * screen_half_h;
 
-            // 6-segment hexagon (triangle fan): center + 6 rim vertices
-            let base = all_vertices.len() as u32;
-            all_vertices.push(Vertex::new([sx, sy], color));
-            for &(ox, oy) in &OFFSETS {
-                all_vertices.push(Vertex::new([sx + half * ox, sy + half * oy], color));
+            // Skip vertex generation entirely for off-screen stars
+            if screen_px < -cull_margin || screen_px > screen_w + cull_margin
+                || screen_py < -cull_margin || screen_py > screen_h + cull_margin
+            {
+                continue;
             }
-            all_indices.extend_from_slice(&[
-                base, base + 1, base + 2,
-                base, base + 2, base + 3,
-                base, base + 3, base + 4,
-                base, base + 4, base + 5,
-                base, base + 5, base + 6,
-                base, base + 6, base + 1,
-            ]);
+
+            // Store screen position for hit testing (hover/click)
+            screen_positions.push((i, [screen_px, screen_py]));
+
+            // Check if physical radius is large enough on screen for a real circle
+            // radius_world is in camera-relative world units (shader applies zoom)
+            let radius_world = star.radius_m * scale as f64;
+            let radius_px = radius_world * zoom as f64 * size.height as f64 * 0.5;
+
+            // Use pre-computed alpha from build_procedural_star_data
+            let color = [star.color[0], star.color[1], star.color[2], star.alpha];
+
+            if radius_px > 1.0 {
+                // Draw a real circle with adaptive segment count
+                // Use full opacity for real circles — dimming is only for distant dots
+                let circle_color = [star.color[0], star.color[1], star.color[2], 1.0f32];
+                let r_ndc = radius_world as f32;
+                let circumference = 2.0 * std::f64::consts::PI * radius_px;
+                let segments = (circumference / 3.0).clamp(16.0, 256.0) as usize;
+
+                let base = all_vertices.len() as u32;
+                // Center vertex
+                all_vertices.push(Vertex::new([sx, sy], circle_color));
+                for seg in 0..segments {
+                    let angle = (seg as f32 / segments as f32) * std::f32::consts::TAU;
+                    all_vertices.push(Vertex::new(
+                        [sx + r_ndc * angle.cos(), sy + r_ndc * angle.sin()],
+                        circle_color,
+                    ));
+                }
+                for seg in 0..segments {
+                    let next = if seg + 1 < segments { seg + 1 } else { 0 };
+                    all_indices.push(base);
+                    all_indices.push(base + 1 + seg as u32);
+                    all_indices.push(base + 1 + next as u32);
+                }
+            } else {
+                // Small hexagon dot — use pre-computed lum_factor
+                let half = (pixel_ndc * star.lum_factor as f64 * 2.0) as f32;
+
+                let base = all_vertices.len() as u32;
+                all_vertices.push(Vertex::new([sx, sy], color));
+                for &(ox, oy) in &OFFSETS {
+                    all_vertices.push(Vertex::new([sx + half * ox, sy + half * oy], color));
+                }
+                all_indices.extend_from_slice(&[
+                    base, base + 1, base + 2,
+                    base, base + 2, base + 3,
+                    base, base + 3, base + 4,
+                    base, base + 4, base + 5,
+                    base, base + 5, base + 6,
+                    base, base + 6, base + 1,
+                ]);
+            }
         }
     }
 

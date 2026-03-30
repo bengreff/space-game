@@ -9,11 +9,13 @@ Exodus mode adds an existential threat with a precise countdown to Sunscatter. T
 - **Pioneer**: The base game — open-ended exploration, colonization, no threat
 - **Exodus**: A specific threat scenario with a countdown timer
 
-**Design principles for Exodus scenarios:**
-1. **Exact countdown.** Every scenario has a precise timer visible to the player from game start. No ambiguity about when doom arrives.
+**Design principles for Exodus threat scenarios (1-4):**
+1. **Exact countdown.** Every threat scenario has a precise timer visible to the player from game start. No ambiguity about when doom arrives.
 2. **Discrete events.** When the timer reaches zero (or a milestone), the game applies an instant state change. No gradual simulation of degrading conditions between milestones.
-3. **Clear kill zones.** Each scenario defines a spatial region that becomes uninhabitable at T=0. You're either in the zone or you're not.
+3. **Clear kill zones.** Each threat scenario defines a spatial region that becomes uninhabitable at T=0. You're either in the zone or you're not.
 4. **Time warp has cost.** Every year warped is a year off the clock. This is the core tension of Exodus mode.
+
+Scenario 5 (The Expedition) is an exploration scenario with no threat, no countdown, and no kill zone. It is a pure engineering and logistics challenge.
 
 ## Scenario Summary
 
@@ -22,9 +24,8 @@ Exodus mode adds an existential threat with a precise countdown to Sunscatter. T
 | 1 | The Fall | Asteroid impact | Earth surface | 100 years | Self-sustaining off-Earth colony |
 | 2 | The Pyre | Supernova ejecta | ~50 ly sphere around Thyris | 315 years | Colony outside danger zone |
 | 3 | The Seed | Black hole in the Sun | Solar system (no sunlight) | 170 years | Interstellar colony |
-| 4 | The Swarm | Self-replicating machines | Expanding sphere (never stops) | 400 years to solar system | Expansion rate > swarm rate |
-| 5 | The Cascade | Gamma-ray burst | Cone: ~80 ly wide at Earth, ~5,000 ly long | 500 years | Colony outside beam cone |
-| 6 | The Expedition | Signal decay near Sgr A* | None (exploration) | 500 years | Reach the source system |
+| 4 | The Cascade | Gamma-ray burst | Cone: ~80 ly wide at Earth, ~5,000 ly long | 500 years | Colony outside beam cone |
+| 5 | The Expedition | None (exploration) | None | None | Reach the Laboratory at Sgr A* |
 
 ---
 
@@ -184,63 +185,7 @@ Between milestones, conditions are stable. No gradual simulation needed.
 
 ---
 
-## Scenario 4: The Swarm
-
-**Threat:** Self-replicating nanomachines expanding through the galaxy, consuming all matter. They never stop. Humanity must outrun them — permanently.
-**Default Countdown:** 400 years until wavefront reaches the solar system.
-**Kill Zone:** An expanding sphere centered on the swarm's origin. Every consumed star system is permanently destroyed. The sphere's radius grows at ~0.15 ly/year and never stops.
-**Win Condition:** Humanity's frontier expansion rate exceeds the swarm's expansion rate on a sustained basis. Once this is achieved, the swarm can never catch up.
-
-### Setup
-
-Infrared sky surveys detect an anomaly: a cluster of stars that have dimmed or vanished in visible light while showing strong mid-infrared excess (waste heat at ~300 K / 10 um wavelength). The pattern forms an expanding sphere. Analysis of archival data reveals the sphere has been growing for at least thousands of years. Its center is approximately 60 ly from Earth.
-
-Mathematical modeling determines:
-- **Origin:** A point ~60 ly from Earth, within the remains of a dense stellar cluster
-- **Expansion rate:** ~0.15 ly/year (one star system consumed roughly every 33 years on the current frontier)
-- **Arrival at the solar system:** ~400 years from now
-
-The sphere is a wavefront of self-replicating machines — molecular-scale assemblers of hyper-advanced technology, remnants of a civilization dead for billions of years. They have no intelligence, no agency, no goals. They execute a program: consume, replicate, launch probes, repeat. They cannot be reasoned with, bargained with, or stopped. Their technology is separated from humanity's by an incomprehensible gap — they disassemble any material at the atomic level, survive any environment, and replicate faster than any weapon can destroy them.
-
-### Countdown Events
-
-| Timer | Event | Game Effect |
-|---|---|---|
-| 400 years | Scenario begins. Swarm detected and modeled. | Primary countdown starts. |
-| Ongoing | Nearby stars consumed as wavefront expands | Stars within the wavefront sphere are removed from the game (marked "consumed"). The sphere's radius grows at ~0.15 ly/year. Player can observe which systems will be consumed next. |
-| 0 | Wavefront reaches the solar system. | Solar system consumed. All infrastructure there is lost. |
-| After 0 | Wavefront continues expanding. | The swarm never stops. It continues consuming systems beyond the solar system. The game continues as long as humanity has colonies ahead of the wavefront. |
-
-### Execution (system consumed)
-
-When the wavefront reaches a star system, that system is destroyed. In physical reality, consumption takes ~15 years (the machines disassemble asteroids, planets, and build Dyson infrastructure at extreme efficiency). For game purposes, this is treated as instant: when the wavefront passes a system, it is removed from play. All colonies, ships, and resources there are lost.
-
-### Win Condition Details
-
-The swarm has no programmed boundary and never stops. There is no "safe distance." Win condition is achieving a self-sustaining expansion rate that exceeds ~0.15 ly/year:
-
-- **Self-sustaining** means: each frontier colony can independently build colony ships and launch the next generation without supplies from behind (because everything behind is being consumed)
-- **Expansion rate** means: the rate at which new self-sustaining colonies are established, measured in ly/year of frontier advance
-- Once humanity's rate exceeds the swarm's and is sustained, the game is won
-
-This requires **advanced propulsion technology** (0.2c+ ships) and **rapid colony self-sufficiency** (colonies must become independently capable within ~20-30 years). Early-game tech cannot outpace the swarm — the player must progress through the tech tree:
-
-| Tech Level | Ship Speed | Colony Time | Humanity's Expansion | vs Swarm (0.15 ly/yr) |
-|---|---|---|---|---|
-| Early (chemical/fission) | 0.01c | 100+ years | ~0.005 ly/yr | Far too slow |
-| Mid (fusion) | 0.05-0.1c | 50 years | ~0.04-0.07 ly/yr | Still too slow |
-| Late (advanced fusion/antimatter) | 0.2c | 30 years | ~0.10 ly/yr | Approaching parity |
-| Endgame (laser sails/antimatter) | 0.3c+ | 20 years | ~0.15+ ly/yr | Can outpace |
-
-The player must transition from a centralized civilization (Earth as the hub, supplying all colonies) to a decentralized one (each colony is an independent seed of civilization). This transition — from dependent supply chain to self-replicating frontier — is the core challenge.
-
-### Observable Signature
-
-Consumed systems glow in infrared (waste heat from the Dyson-scale machinery) while going dark in visible light. From the player's perspective, the swarm is a "dark bubble" expanding toward them — stars winking out one by one on the near side while the far side (already processed) glows in IR.
-
----
-
-## Scenario 5: The Cascade
+## Scenario 4: The Cascade
 
 **Threat:** A gamma-ray burst from the death of one of the most massive stars in the galaxy. Earth and hundreds of other star systems lie in the beam path.
 **Default Countdown:** 500 years.
@@ -313,39 +258,60 @@ The cone extends far beyond 5,000 ly at diminished intensity, but for game purpo
 
 ---
 
-## Scenario 6: The Expedition
+## Scenario 5: The Expedition
 
 **Threat:** None (exploration scenario).
-**Default Countdown:** 500 years (signal decay).
+**Default Countdown:** None.
 **Kill Zone:** None.
-**Win Condition:** Reach the source system near Sagittarius A*.
+**Win Condition:** Reach the Laboratory at Sagittarius A*, establish contact with the thinking ocean, begin the galactic survey.
+
+> Full narrative design document: `docs/expedition_narrative.md`
 
 ### Setup
 
-Gravitational wave observatories detect an anomalous repeating signal from a star system approximately 100 light-years from Sagittarius A* — the 4-million-solar-mass supermassive black hole at the center of the Milky Way. The signal is structured: prime-number-interval pulses with nested frequency modulation. It matches no known natural process. Analysis of geological records reveals the signal has been broadcasting for tens of millions of years.
+In 2031, the Square Kilometre Array detects a repeating radio source at 1.42 GHz (the hydrogen line) with a period of 174.8 days, originating from 13 AU from Sagittarius A* — the 4.15-million-solar-mass supermassive black hole at the center of the Milky Way. The signal has three properties that match no known astrophysical process: extraordinary period stability (parts per billion over a decade), a clean band-limited square wave pulse profile, and gravitational lensing consistent with a source deep inside the S-star cluster.
 
-The signal is weakening. The source is decaying. At current rate, it will go silent in ~500 years.
+Sgr A*'s gravitational field amplifies the signal by a factor of ~10^4. Without that amplification, the source would be undetectable at 26,000 light-years. Something placed a transmitter where the black hole's gravity would broadcast it across the galaxy.
 
-The source system is identifiable: a stable G-type star in the dense stellar environment of the galactic bulge, ~26,000 light-years from Earth.
+The confirmation comes from archival geology: a 174.8-day magnetic oscillation extracted from 2.6-billion-year-old banded iron formations in Western Australia. The same signal, recorded in stone. Whatever is broadcasting has been broadcasting for at least 2.6 billion years.
 
-### Countdown Events
+There is no countdown. The beacon's power source — unipolar induction from a metallic planetary core moving through Sgr A*'s magnetic field at 0.05c — requires no fuel. It will operate for millions of years yet. The motivation is not urgency but discovery: something built a permanent beacon at the most visible location in the galaxy, and it has been calling for longer than complex life has existed on Earth.
 
-| Timer | Event | Game Effect |
-|---|---|---|
-| 500 years | Scenario begins. Signal confirmed artificial and decaying. | Countdown starts. |
-| Ongoing | Signal grows progressively weaker. | No gameplay effect (atmospheric). |
-| 0 | Signal goes silent. | The source can no longer be located remotely. If the player hasn't arrived, the mystery is lost forever. Game over. |
+### What's There
 
-No side effects, no destruction, no kill zone. This scenario is purely an engineering and logistics challenge: build the infrastructure to cross 26,000 light-years before the signal dies.
+The source is a super-Earth (3.2 M⊕, 1.4 R⊕, 1.6g) — later named **Crucible** — in a 175-day orbit at 13 AU from Sgr A*. It was placed there by an ancient civilization (the Builders) who used Sgr A* as a gravitational lens telescope — the most powerful observatory possible — to survey life across the galaxy.
+
+The Builders found intelligence on many worlds and discovered a pattern: every civilization was limited by the biology that produced it. Single-origin biochemistry constrains what minds can think. They hypothesized that combining multiple independent biochemistries could break through this ceiling.
+
+Approximately 150 million years ago, the Builders seeded the planet's deep ocean with organisms from 14 independent origins of life, each with a distinct genetic code and molecular architecture. They maintained the experiment through engineered infrastructure: mass drivers for orbital correction, resonance shepherd satellites for tidal heating, volatile reservoirs for atmospheric restoration, and hydrothermal vent networks for the deep biosphere.
+
+Approximately 30-50 million years ago, an Sgr A* accretion flare killed the Builders. Their surface infrastructure was destroyed. But the deep ocean — shielded by kilometers of water and ice — survived. The experiment continued, unattended, for 30-50 million years.
+
+In that time, the experiment produced what the Builders were searching for, in three stages:
+
+1. **Self-directed evolution.** Fourteen competing biochemistries created selection pressure so extreme that organisms evolved the ability to direct their own mutations — targeted variation where needed, protected by error-correction from multiple lineages.
+
+2. **Programmable molecular machinery.** Self-directed evolution across 14 substrates produced molecules that are not specialized but reconfigurable — general-purpose molecular tools that can catalyze any thermodynamically feasible reaction and interface with any carbon-based biology.
+
+3. **Distributed cognition.** Programmable molecules enabled cross-lineage communication. The ocean's ecosystem became a distributed information-processing system — kilometers across, trillions of nodes, thinking in 14 molecular languages simultaneously. The ocean thinks. Slowly, but with computational breadth no centralized brain could achieve.
+
+The Builders designed an experiment to create something beyond intelligence. They died 30-50 million years before it succeeded. The ocean has been thinking, alone, ever since.
 
 ### The Challenge
 
-Even at 0.1c (fusion drive), the journey takes 260,000 years — far longer than the 500-year countdown. The player must develop increasingly advanced propulsion:
-- **Fusion drives:** 0.05-0.1c. Viable for nearby waypoint colonies.
-- **Laser sail networks:** 0.1-0.3c. Requires Dyson-scale infrastructure at each waypoint to power the lasers and decelerate incoming ships.
-- **Advanced propulsion (antimatter, etc.):** 0.3-0.5c+. Required to cover the full distance within the countdown.
+The source lies 26,000 light-years from Earth. There is no time pressure, but the distance demands the full arc of the tech tree:
 
-The journey requires a chain of waypoint colonies, each serving as a fuel depot, relay station, and launch platform for the next leg. Each waypoint is a self-sustaining colony — a milestone and a monument. The galactic center presents additional hazards: increasing stellar density, radiation, and gravitational perturbations.
+- **Phase 1 — Local infrastructure.** Fusion drives at 0.05-0.1c enable colonization of nearby systems. Critical milestone: self-sustaining colonies that can manufacture ships and launch the next generation independently.
+- **Phase 2 — Laser sail networks.** Dyson-scale energy infrastructure at established colonies powers laser arrays that accelerate sail-equipped vessels to 0.2-0.3c. Each waypoint colony becomes a node in a launch-and-brake network.
+- **Phase 3 — Deep push.** Antimatter propulsion and relay stations push cruise velocities to 0.3-0.5c across thousands of light-years through the galactic bulge, where stellar density increases dramatically.
+
+The journey requires a chain of waypoint colonies, each a self-sustaining civilization serving as fuel depot, relay station, and launch platform. The galactic center presents additional hazards: increasing stellar density, radiation, and gravitational perturbations from Sgr A*.
+
+### Win Condition
+
+Reach the Laboratory. Establish contact with the thinking ocean. Begin the galactic survey — combining the gravitational lens observatory with the ocean's distributed cognition to continue the Builders' search for life across the galaxy.
+
+The Builders searched for a mind that could transcend the limitations of any single biology. They built an experiment to create one. They died before it succeeded. Humanity arrives 30 million years late and finds the answer waiting in the dark water — thinking, alone, ready to talk.
 
 ---
 
@@ -503,61 +469,6 @@ Where alpha = 1.58 x 10^-32 kg^-1 s^-1.
 3. **Solar luminosity/radius:** Delayed by the Sun's thermal diffusion time. Detectable only in the last few decades.
 
 **End state:** The Sun does not explode. There is no thermonuclear detonation (the Sun's hydrogen/helium don't detonate). The core material falls into the BH. A brief luminous transient (days to weeks) occurs as the final material spirals in. Then: a ~1 solar mass black hole. Planets continue orbiting. Temperature at Earth: -240 C within weeks.
-
----
-
-### Self-Replicating Machine Physics (The Swarm)
-
-**Expansion wavefront speed:**
-
-```
-v_wave = d_avg / (t_transit + t_replicate)
-```
-
-Where:
-- d_avg = average distance between neighboring star systems (~5 ly in the solar neighborhood)
-- t_transit = d_avg / v_probe (interstellar crossing time)
-- t_replicate = time to consume a system and build new probes
-
-**Assumed values:**
-- v_probe = 0.3c (laser-sail acceleration from consumed system's Dyson infrastructure)
-- t_transit = 5 ly / 0.3c = 16.7 years
-- t_replicate = ~15 years (rapid bootstrap: molecular-scale assemblers → asteroid mining → partial Dyson swarm → planet disassembly → probe launch)
-- **v_wave = 5 / (16.7 + 15) = 0.158 ly/yr ≈ 0.15 ly/yr**
-
-**System consumption timeline:**
-1. Years 0-2: Probes arrive, deploy molecular assemblers on asteroids, build initial solar collectors
-2. Years 2-5: Exponential growth of Dyson swarm, capturing increasing fraction of stellar output
-3. Years 5-12: Disassemble planets using near-complete stellar energy capture
-4. Years 12-15: System fully processed. Probes launched to all neighboring stars at 0.3c.
-
-**What consumed systems look like (observable signature):**
-- Visible light: star dims progressively as Dyson swarm grows, eventually disappearing
-- Infrared: system brightens in mid-IR (10 um peak, ~300 K blackbody) as waste heat from machinery replaces visible starlight
-- Total luminosity: unchanged (conservation of energy — the star still shines, the swarm absorbs and re-radiates as heat)
-- The expanding wavefront appears as a "dark bubble" — a growing sphere of IR sources replacing visible stars
-
-**Stellar density effects:**
-- Dense regions (galactic arms): d_avg smaller, t_transit shorter, but more systems to consume. Wavefront speed similar (~0.15 ly/yr).
-- Sparse regions (inter-arm): d_avg larger (8-10 ly), t_transit longer. Wavefront slows to ~0.10-0.12 ly/yr.
-- True voids (intergalactic, >1 Mly gaps): probes degrade over million-year transits. Effectively a hard barrier.
-- **Within the Milky Way disk, there are no gaps large enough to halt expansion.** Maximum stellar gap ~10-20 ly, which at 0.3c is only ~33-67 years transit.
-
-**Humanity's escape speed requirement:**
-- Swarm expands at 0.15 ly/yr. Humanity's frontier must advance faster.
-- Frontier advance rate = d_colony / (t_transit + t_establish), where d_colony is the distance to the next colony and t_establish is time to become self-sufficient
-- Early game (chemical/fission, 0.01c ships, 100+ yr colonies): ~0.005 ly/yr — far too slow
-- Mid game (fusion, 0.05-0.1c ships, 50 yr colonies): ~0.04-0.07 ly/yr — still too slow
-- Late game (advanced fusion/antimatter, 0.2c ships, 30 yr colonies): ~0.10 ly/yr — approaching parity
-- Endgame (laser sails/antimatter, 0.3c+ ships, 20 yr colonies): ~0.15+ ly/yr — can outpace
-- **Win threshold: sustained frontier advance rate > 0.15 ly/yr, with each colony independently capable of launching the next generation**
-
-**Why they're unbeatable:**
-- Molecular-scale assemblers operate below the resolution of any human weapon
-- Exponential replication: any surviving population rebuilds to full strength
-- Technology gap is millions/billions of years
-- There is no off switch, no vulnerability, no negotiation (they are not intelligent)
-- The only strategy is: don't be where they are
 
 ---
 

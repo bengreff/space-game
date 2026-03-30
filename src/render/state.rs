@@ -9,6 +9,20 @@ use super::types::{
     BodyData, ManeuverNode, ShipOrbitData, Vertex,
 };
 
+/// Render FPS counter in the top-right corner of the screen.
+/// Call inside an egui run closure.
+pub fn fps_overlay(ctx: &egui::Context, fps: f32) {
+    egui::Area::new(egui::Id::new("fps_overlay"))
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-8.0, 4.0))
+        .interactable(false)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            ui.label(egui::RichText::new(format!("{:.0} fps", fps))
+                .size(12.0)
+                .color(egui::Color32::from_rgba_premultiplied(120, 120, 120, 180)));
+        });
+}
+
 /// Main render state holding all wgpu resources
 pub struct RenderState {
     pub surface: wgpu::Surface<'static>,
@@ -167,6 +181,14 @@ pub struct RenderState {
     pub open_colony_request: Option<usize>,  // body_index to open colony screen for
     // Trade route creation wizard state
     pub route_creation: super::trade_ui::RouteCreationState,
+    // Procedural star interaction state
+    pub procedural_star_screen_positions: Vec<(usize, [f32; 2])>, // (index, screen pos in pixels)
+    pub hovered_star: Option<usize>,       // index into current_procedural_stars
+    pub focused_star: Option<usize>,       // index into current_procedural_stars (camera tracking)
+    pub focused_star_world_pos: Option<[f64; 2]>, // world pos in meters for camera tracking
+    pub focused_star_id: Option<(u16, u16, u32)>, // (sector_x, sector_y, sector_index) of focused star
+    pub current_procedural_stars: Vec<super::scene::StarRenderData>, // cached for info panel
+    pub focused_star_info: Option<super::types::BodyInfoData>, // unified info panel data for focused procedural star
     // Toast notifications
     pub active_toasts: Vec<(String, std::time::Instant)>,
     // Egui state
@@ -385,9 +407,7 @@ impl RenderState {
         });
         let msaa_view = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Create large buffers for dynamic geometry (multiple bodies)
-        // When zoomed in, one body can have up to 4096 segments
-        // 20 bodies * ~4100 vertices each = ~82000, plus safety margin
+        // Create buffers for dynamic geometry (bodies + visible star hexagons).
         let max_vertices = 2_000_000;
         let max_indices = 6_000_000;
 
@@ -552,6 +572,13 @@ impl RenderState {
             landed_body_has_colony: false,
             open_colony_request: None,
             route_creation: Default::default(),
+            procedural_star_screen_positions: Vec::new(),
+            hovered_star: None,
+            focused_star: None,
+            focused_star_world_pos: None,
+            focused_star_id: None,
+            current_procedural_stars: Vec::new(),
+            focused_star_info: None,
             active_toasts: Vec::new(),
             body_texture_bind_group,
             body_texture_map,
