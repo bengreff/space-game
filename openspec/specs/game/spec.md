@@ -4,9 +4,9 @@ Game-wide requirements shared across all modes (editor and flight).
 
 ## Game Modes
 
-### Requirement: Five game modes
+### Requirement: Nine game modes
 
-The system SHALL support five game modes represented by the `GameMode` enum: `TitleScreen`, `MainMenu`, `Editor`, `Flight`, `TrackingStation`.
+The system SHALL support nine game modes represented by the `GameMode` enum: `TitleScreen`, `MainMenu`, `Editor`, `Flight`, `TrackingStation`, `Colony`, `ColonyOverview`, `Management`, `TechTree`.
 
 #### Scenario: Game starts on title screen
 - **WHEN** the application launches
@@ -94,9 +94,9 @@ The system SHALL support five part sizes with the following grid widths:
 
 ## Part Categories
 
-### Requirement: Six part categories
+### Requirement: Nine part categories
 
-The system SHALL support six part categories in this order: Pods ("Command"), Propulsion ("Engines"), FuelTanks ("Fuel Tanks"), Structural ("Structural"), Aerodynamic ("Aerodynamic"), Utility ("Utility").
+The system SHALL support nine part categories in this order: Pods ("Command"), Propulsion ("Engines"), FuelTanks ("Fuel Tanks"), Structural ("Structural"), Aerodynamic ("Aerodynamic"), Utility ("Utility"), Electricity ("Electricity"), Interstellar ("Interstellar"), Cargo ("Cargo").
 
 ### Requirement: Root part eligibility
 
@@ -104,15 +104,20 @@ Only parts with category `Pods` SHALL be eligible as root parts, as determined b
 
 ## Propellant System
 
-### Requirement: Three propellant types
+### Requirement: Eight propellant types
 
-The system SHALL support three propellant types, each pairing an oxidizer (LOX) with a fuel:
+The system SHALL support eight propellant types. The first three pair an oxidizer (LOX) with a fuel; the remaining five are standalone:
 
-| Propellant | Display    | Fuel Type | O2 (kg/sq) | Fuel (kg/sq) |
-|-----------|-----------|-----------|------------|-------------|
-| Kerolox   | LOX/RP-1  | Rp1       | 470.0      | 185.0       |
-| Methalox  | LOX/CH4   | Methane   | 270.0      | 75.0        |
-| Hydrolox  | LOX/LH2   | Hydrogen  | 155.0      | 25.0        |
+| Propellant    | Display       | Fuel Type      | O2 (kg/sq) | Fuel (kg/sq) |
+|--------------|--------------|---------------|------------|-------------|
+| Kerolox      | LOX/RP-1     | Rp1           | 470.0      | 185.0       |
+| Methalox     | LOX/CH4      | Methane       | 270.0      | 75.0        |
+| Hydrolox     | LOX/LH2      | Hydrogen      | 155.0      | 25.0        |
+| Hydrogen     | Hydrogen     | Pure H2 (NTR) | —          | —           |
+| Xenon        | Xenon        | Electric prop  | —          | —           |
+| FusionFuel   | D+He3        | Fusion         | —          | —           |
+| Antimatter   | Antimatter   | AM engines     | —          | —           |
+| NuclearPulse | Nuclear Pulse| Orion-style    | —          | —           |
 
 ### Requirement: Propellant capacity scaling
 

@@ -155,6 +155,7 @@ pub fn generate_sector(
             sector_index: i,
             flags: 0,
             star_type,
+            catalog_index: 0,
         });
     }
 

@@ -30,6 +30,12 @@
 
 **Rule**: For egui panels that need mutable access to RenderState fields, use free functions that take individual `&mut` parameters (e.g., `&mut bool`, `&mut Option<usize>`) instead of `&mut self` methods. Copy data out before the egui closure, pass borrowed fields to free functions inside the closure, then write results back after.
 
+## Dual Kepler Solver Mismatch (2026-04-02)
+
+**Mistake**: When fixing catalog star positioning, identified that `kepler_position()` uses a first-order approximation for e < 0.1 and wrote a matching inverse. But missed that `bodies.rs Orbit::position_at()` uses a DIFFERENT Kepler solver (exact Newton-Raphson for ALL eccentricities). The Sun's on-screen dot is rendered by bodies.rs, while catalog stars use galaxy::kepler_position. The ~106 ly offset between the two solvers at the Sun's orbital parameters (e=0.07, a=21,000 ly) completely dominated the catalog star distances (4-100 ly).
+
+**Rule**: When two systems must agree on a position, verify they use the SAME math pipeline. Search for ALL callers of the relevant position computation, not just the one being fixed. In this codebase: bodies.rs has its own Kepler solver separate from galaxy/mod.rs.
+
 ## Check for Existing Layer 0 Code (2026-03-21)
 
 **Mistake**: When implementing Layer 1, assumed all code needed to be written from scratch. Layer 0 had already implemented many stubs (establish_colony, update_colonies, simulation.rs, notification.rs, colony part, gas giant flag). This caused duplicate fields, methods, and imports.

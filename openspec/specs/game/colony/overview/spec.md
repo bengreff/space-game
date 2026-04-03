@@ -59,9 +59,9 @@ Card layout (horizontal row):
 5. **Building count**: `"{N} buildings"` from `colony.buildings.len()`
 6. **"Open" button** (right-aligned): returns `OpenColony(colony.body_index)`
 
-### Trade Routes Placeholder
+### Trade Routes Section
 
-Below the colony list (after separator): "Trade Routes — coming soon" (italic, dark gray, centered).
+Below the colony list (after separator): trade route summary showing active routes and ships. See [Trade Routes spec](../trade_routes/spec.md) for the full trade route system.
 
 ## Toast Notifications
 

@@ -36,9 +36,61 @@ fn bleed_disc_edges(img: &mut image::RgbaImage) {
     }
 }
 
+/// Compute average disc color for a polar-projection texture image.
+/// Samples every 4th pixel within the disc (radius = size/2 - 4px),
+/// then boosts brightness so minimum max-channel >= 0.45 for visibility.
+fn compute_average_disc_color(img: &image::RgbaImage) -> [f32; 4] {
+    let (w, h) = img.dimensions();
+    let cx = w as f64 / 2.0;
+    let cy = h as f64 / 2.0;
+    let disc_r = (w as f64 / 2.0) - 4.0;
+
+    let mut r_sum = 0.0f64;
+    let mut g_sum = 0.0f64;
+    let mut b_sum = 0.0f64;
+    let mut count = 0u64;
+
+    for y in (0..h).step_by(4) {
+        for x in (0..w).step_by(4) {
+            let dx = x as f64 - cx;
+            let dy = y as f64 - cy;
+            if dx * dx + dy * dy <= disc_r * disc_r {
+                let p = img.get_pixel(x, y);
+                r_sum += p[0] as f64;
+                g_sum += p[1] as f64;
+                b_sum += p[2] as f64;
+                count += 1;
+            }
+        }
+    }
+
+    if count == 0 {
+        return [0.5, 0.5, 0.5, 1.0];
+    }
+
+    let mut r = (r_sum / count as f64 / 255.0) as f32;
+    let mut g = (g_sum / count as f64 / 255.0) as f32;
+    let mut b = (b_sum / count as f64 / 255.0) as f32;
+
+    // Boost brightness so the max channel is at least 0.45
+    let max_ch = r.max(g).max(b);
+    if max_ch > 0.0 && max_ch < 0.45 {
+        let scale = 0.45 / max_ch;
+        r *= scale;
+        g *= scale;
+        b *= scale;
+    }
+
+    [r, g, b, 1.0]
+}
+
 /// Maps body index to texture array layer index. None means no texture for that body.
 pub struct BodyTextureMap {
     layers: HashMap<usize, u32>,
+    /// Lowercase texture name → layer index (for all loaded textures)
+    name_layers: HashMap<String, u32>,
+    /// Lowercase texture name → average disc color
+    name_colors: HashMap<String, [f32; 4]>,
     pub galaxy_layer: Option<u32>,
 }
 
@@ -46,9 +98,31 @@ impl BodyTextureMap {
     pub fn layer_for_body(&self, body_index: usize) -> Option<u32> {
         self.layers.get(&body_index).copied()
     }
+
+    /// Look up average disc color by texture name (lowercase, underscored).
+    pub fn color_for_name(&self, name: &str) -> Option<[f32; 4]> {
+        self.name_colors.get(name).copied()
+    }
+
+    /// Register a synthetic body index to use an existing named texture.
+    /// Looks up `name` (lowercased, spaces → underscores) in the name_layers map
+    /// and inserts body_index → layer into the layers map.
+    pub fn register_body_index(&mut self, body_index: usize, name: &str) {
+        let key = name.to_lowercase().replace(' ', "_");
+        if let Some(&layer) = self.name_layers.get(&key) {
+            self.layers.insert(body_index, layer);
+        }
+    }
+
+    /// Remove all dynamic body_index → layer entries at or above `from_index`.
+    /// Call this before re-injecting catalog planets to avoid stale mappings.
+    pub fn clear_dynamic_entries(&mut self, from_index: usize) {
+        self.layers.retain(|&idx, _| idx < from_index);
+    }
 }
 
 /// Load body textures from `data/textures/bodies/<name>.{png,jpg}` and create a texture array.
+/// Loads ALL textures in the directory — real bodies matched by index, extras by name only.
 /// Textures should be pre-baked 1024x1024 north-pole polar projections.
 /// Returns the texture view, sampler, and body→layer mapping.
 /// If no textures are found, creates a 1-layer dummy texture so the bind group is always valid.
@@ -59,27 +133,67 @@ pub fn load_body_textures(
 ) -> (wgpu::TextureView, wgpu::Sampler, BodyTextureMap) {
     let texture_dir = Path::new("data/textures/bodies");
 
-    // Collect paths for body textures (sequential, fast)
-    let mut body_paths: Vec<(usize, std::path::PathBuf)> = Vec::new();
+    // Build a set of real body name stems so we can identify extras
+    let mut real_body_stems: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Collect paths for real body textures first (body_index → path)
+    let mut body_paths: Vec<(usize, std::path::PathBuf, String)> = Vec::new(); // (body_idx, path, stem)
     for (i, name) in body_names.iter().enumerate() {
-        let lower = name.to_lowercase();
+        let lower = name.to_lowercase().replace(' ', "_");
         let path = ["png", "jpg", "jpeg"].iter()
             .map(|ext| texture_dir.join(format!("{}.{}", lower, ext)))
             .find(|p| p.exists());
         if let Some(path) = path {
-            body_paths.push((i, path));
+            real_body_stems.insert(lower.clone());
+            body_paths.push((i, path, lower));
         }
+    }
+
+    // Scan directory for ALL extra textures not matched to real bodies
+    let mut extra_paths: Vec<(std::path::PathBuf, String)> = Vec::new(); // (path, stem)
+    if let Ok(entries) = std::fs::read_dir(texture_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() { continue; }
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if !matches!(ext, "png" | "jpg" | "jpeg") { continue; }
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+            if stem.is_empty() { continue; }
+            if real_body_stems.contains(&stem) { continue; }
+            extra_paths.push((path, stem));
+        }
+    }
+    // Sort extras alphabetically for deterministic layer ordering
+    extra_paths.sort_by(|a, b| a.1.cmp(&b.1));
+
+    // Assign sentinel body indices to extras (usize::MAX - 1 downward won't collide)
+    // We use usize::MAX - 1 - i so they sort after real bodies but before galaxy (usize::MAX)
+    let extra_start = body_paths.len();
+    for (path, stem) in extra_paths {
+        body_paths.push((usize::MAX / 2 + body_paths.len(), path, stem));
     }
 
     // Add galaxy texture path
     let galaxy_path = Path::new("data/textures/milky_way.png");
     if galaxy_path.exists() {
-        body_paths.push((usize::MAX, galaxy_path.to_path_buf()));
+        body_paths.push((usize::MAX, galaxy_path.to_path_buf(), String::new()));
     }
 
-    // Decode, resize, and bleed all textures in parallel
-    let decoded: Vec<(usize, image::RgbaImage)> = body_paths.into_par_iter()
-        .filter_map(|(body_idx, path)| {
+    // Cap total textures to the device's max texture array layer count
+    let max_layers = device.limits().max_texture_array_layers as usize;
+    if body_paths.len() > max_layers {
+        log::warn!("Texture count {} exceeds device max_texture_array_layers {}, dropping extras",
+            body_paths.len(), max_layers);
+        body_paths.truncate(max_layers);
+    }
+
+    log::info!("Loading {} body textures ({} real, {} extra)",
+        body_paths.len() - if galaxy_path.exists() { 1 } else { 0 },
+        extra_start.min(body_paths.len()),
+        body_paths.len().saturating_sub(extra_start).saturating_sub(if galaxy_path.exists() { 1 } else { 0 }));
+
+    // Decode, resize, bleed, and compute average color — all in parallel
+    let decoded: Vec<(usize, image::RgbaImage, String, [f32; 4])> = body_paths.into_par_iter()
+        .filter_map(|(body_idx, path, stem)| {
             match image::open(&path) {
                 Ok(img) => {
                     let rgba = img.to_rgba8();
@@ -89,11 +203,14 @@ pub fn load_body_textures(
                     } else {
                         rgba
                     };
-                    if body_idx != usize::MAX {
+                    let avg_color = if body_idx != usize::MAX {
                         bleed_disc_edges(&mut final_img);
-                    }
+                        compute_average_disc_color(&final_img)
+                    } else {
+                        [0.0; 4]
+                    };
                     log::info!("Loaded texture: {}", path.display());
-                    Some((body_idx, final_img))
+                    Some((body_idx, final_img, stem, avg_color))
                 }
                 Err(e) => {
                     log::warn!("Failed to load texture {}: {}", path.display(), e);
@@ -103,13 +220,13 @@ pub fn load_body_textures(
         })
         .collect();
 
-    // Sort to get deterministic layer ordering (bodies first by index, galaxy last)
-    let mut images: Vec<(usize, image::RgbaImage)> = decoded;
-    images.sort_by_key(|(idx, _)| *idx);
+    // Sort to get deterministic layer ordering (real bodies first by index, extras, galaxy last)
+    let mut images = decoded;
+    images.sort_by_key(|(idx, _, _, _)| *idx);
 
     // Find galaxy layer index
     let mut galaxy_layer_idx: Option<u32> = None;
-    for (layer_idx, (body_idx, _)) in images.iter().enumerate() {
+    for (layer_idx, (body_idx, _, _, _)) in images.iter().enumerate() {
         if *body_idx == usize::MAX {
             galaxy_layer_idx = Some(layer_idx as u32);
         }
@@ -136,7 +253,10 @@ pub fn load_body_textures(
     });
 
     let mut layers = HashMap::new();
-    for (layer_idx, (body_idx, img)) in images.iter().enumerate() {
+    let mut name_layers = HashMap::new();
+    let mut name_colors = HashMap::new();
+
+    for (layer_idx, (body_idx, img, stem, avg_color)) in images.iter().enumerate() {
         queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture: &texture,
@@ -160,8 +280,18 @@ pub fn load_body_textures(
                 depth_or_array_layers: 1,
             },
         );
-        layers.insert(*body_idx, layer_idx as u32);
+        // Map real body indices to layers (extras get name-only mapping)
+        if *body_idx < usize::MAX / 2 {
+            layers.insert(*body_idx, layer_idx as u32);
+        }
+        // Map all non-galaxy textures by name
+        if !stem.is_empty() {
+            name_layers.insert(stem.clone(), layer_idx as u32);
+            name_colors.insert(stem.clone(), *avg_color);
+        }
     }
+
+    log::info!("Texture array: {} layers, {} name mappings", layer_count, name_layers.len());
 
     let view = texture.create_view(&wgpu::TextureViewDescriptor {
         dimension: Some(wgpu::TextureViewDimension::D2Array),
@@ -177,5 +307,5 @@ pub fn load_body_textures(
         ..Default::default()
     });
 
-    (view, sampler, BodyTextureMap { layers, galaxy_layer: galaxy_layer_idx })
+    (view, sampler, BodyTextureMap { layers, name_layers, name_colors, galaxy_layer: galaxy_layer_idx })
 }

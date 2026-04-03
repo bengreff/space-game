@@ -27,13 +27,21 @@ pub struct StarRenderData {
     // Galactic orbital characteristics
     pub semi_major_axis_m: f64,  // galactic orbit semi-major axis (meters)
     pub eccentricity: f32,       // galactic orbit eccentricity
+    pub arg_periapsis: f32,      // galactic orbit argument of periapsis (radians)
     pub orbital_period_s: f64,   // galactic orbital period (seconds)
+    // Catalog star fields (None/0 for procedural stars)
+    pub catalog_name: Option<&'static str>,
+    pub catalog_index: u16,
 }
 
 impl StarRenderData {
-    /// Format the full catalog name on demand (only needed for UI display).
+    /// Format the display name: real name for catalog stars, procedural ID otherwise.
     pub fn format_name(&self) -> String {
-        format!("{}-{:04}-{:04}-{:04}", self.catalog_prefix, self.sector_x, self.sector_y, self.sector_index)
+        if let Some(name) = self.catalog_name {
+            name.to_string()
+        } else {
+            format!("{}-{:04}-{:04}-{:04}", self.catalog_prefix, self.sector_x, self.sector_y, self.sector_index)
+        }
     }
 
     /// Check if this star matches the given sector identity.
@@ -76,8 +84,7 @@ impl RenderState {
                 let center_x = orbit.parent_x - c * arg_peri.cos();
                 let center_y = orbit.parent_y - c * arg_peri.sin();
 
-                // Number of segments for the orbit line
-                let segments = 256u32;
+                let segments = orbit.segments;
                 let line_width = 0.002 / self.camera.zoom as f64; // Thin line in world units
 
                 // Generate orbit ellipse vertices (inner and outer for line thickness)
@@ -139,7 +146,7 @@ impl RenderState {
         }
 
         // Now draw bodies on top of orbit lines
-        self.add_body_vertices(&mut all_vertices, &mut all_indices, bodies, scale, &[]);
+        self.add_body_vertices(&mut all_vertices, &mut all_indices, bodies, scale);
 
         self.num_indices = all_indices.len() as u32;
 
@@ -157,7 +164,7 @@ impl RenderState {
         scale: f64,
         part_defs: Option<&crate::parts::PartDefinitions>,
     ) {
-        self.update_bodies_orbits_ship_and_vessels(bodies, orbits, ship, scale, part_defs, &[], &[], false, &[], &[]);
+        self.update_bodies_orbits_ship_and_vessels(bodies, orbits, ship, scale, part_defs, &[], &[], false, &[]);
     }
 
     /// Update geometry with bodies, orbits, optionally a ship, and background vessels
@@ -171,7 +178,6 @@ impl RenderState {
         background_vessels: &[TrackingVesselData],
         accretion_discs: &[Option<crate::bodies::AccretionDisc>],
         in_galaxy_view: bool,
-        body_is_star: &[bool],
         procedural_stars: &[StarRenderData],
     ) {
         // Store ship info for UI display
@@ -272,7 +278,14 @@ impl RenderState {
             &mut all_vertices, &mut all_indices, &self.current_procedural_stars, scale,
         );
 
-        // Sector grid lines removed — procedural stars provide visual density cues
+        // Draw galactic orbit line for the focused star
+        if let Some(idx) = self.focused_star {
+            let star = &self.current_procedural_stars[idx];
+            Self::add_galactic_orbit_line(
+                &self.camera, &mut all_vertices, &mut all_indices,
+                star, scale,
+            );
+        }
 
         // Draw all orbit lines (on top of atmosphere, behind bodies)
         for orbit_opt in orbits {
@@ -292,7 +305,7 @@ impl RenderState {
                 let center_x = pcam_x - c * arg_peri.cos();
                 let center_y = pcam_y - c * arg_peri.sin();
 
-                let segments = 256u32;
+                let segments = orbit.segments;
                 let line_width = 0.002 / self.camera.zoom as f64;
 
                 for i in 0..segments {
@@ -1074,7 +1087,7 @@ impl RenderState {
         }
 
         // Draw bodies on top of orbit lines
-        self.add_body_vertices(&mut all_vertices, &mut all_indices, bodies, scale, body_is_star);
+        self.add_body_vertices(&mut all_vertices, &mut all_indices, bodies, scale);
 
         // Draw launchpad on body surface (ship view only, not galaxy view)
         if let Some(ship_data) = ship.filter(|_| !in_galaxy_view) {
@@ -1761,7 +1774,7 @@ impl RenderState {
                         let center_x = pcam_x - c * arg_peri.cos();
                         let center_y = pcam_y - c * arg_peri.sin();
 
-                        let segments = 256u32;
+                        let segments = orbit.segments;
                         let line_width = 0.002 / self.camera.zoom as f64;
 
                         for i in 0..segments {
@@ -2208,11 +2221,117 @@ impl RenderState {
                     base, base + 6, base + 1,
                 ]);
             }
+
+            // Ring indicator for catalog stars — distinguishes them from procedural stars.
+            // Same style as body indicators: 64-segment ring, 16px outer, 70% inner.
+            if star.catalog_index > 0 {
+                let ring_outer = (16.0 * pixel_ndc) as f32;
+                let ring_inner = (16.0 * 0.7 * pixel_ndc) as f32;
+                let ring_segments = 64u32;
+                let ring_color = [star.color[0], star.color[1], star.color[2], 1.0];
+                let ring_inner_color = [star.color[0] * 0.3, star.color[1] * 0.3, star.color[2] * 0.3, 0.5];
+
+                let base = all_vertices.len() as u32;
+                for seg in 0..ring_segments {
+                    let angle = (seg as f32 / ring_segments as f32) * std::f32::consts::TAU;
+                    let cos_a = angle.cos();
+                    let sin_a = angle.sin();
+                    all_vertices.push(Vertex::new([sx + ring_outer * cos_a, sy + ring_outer * sin_a], ring_color));
+                    all_vertices.push(Vertex::new([sx + ring_inner * cos_a, sy + ring_inner * sin_a], ring_inner_color));
+                }
+
+                for seg in 0..ring_segments {
+                    let i0 = base + seg * 2;
+                    let i1 = base + seg * 2 + 1;
+                    let i2 = base + ((seg + 1) % ring_segments) * 2;
+                    let i3 = base + ((seg + 1) % ring_segments) * 2 + 1;
+                    all_indices.push(i0);
+                    all_indices.push(i2);
+                    all_indices.push(i1);
+                    all_indices.push(i1);
+                    all_indices.push(i2);
+                    all_indices.push(i3);
+                }
+            }
         }
     }
 
-    /// Render sector grid lines in galaxy view.
-    /// Only draws lines visible on screen, culled to the camera viewport.
+    /// Draw the galactic orbit ellipse for the focused star.
+    /// The orbit is around the galactic center (0,0) using the star's orbital elements.
+    fn add_galactic_orbit_line(
+        camera: &super::camera::Camera,
+        all_vertices: &mut Vec<Vertex>,
+        all_indices: &mut Vec<u32>,
+        star: &StarRenderData,
+        scale: f64,
+    ) {
+        let a = star.semi_major_axis_m * scale;
+        let e = star.eccentricity as f64;
+        let arg_peri = star.arg_periapsis as f64;
+
+        if a <= 0.0 || e >= 1.0 {
+            return;
+        }
+
+        let b = a * (1.0 - e * e).sqrt();
+        let c = a * e;
+        // Orbit center (focus is at galactic center = 0,0)
+        let center_x = -c * arg_peri.cos();
+        let center_y = -c * arg_peri.sin();
+
+        let cam_x = camera.body_center[0] as f64;
+        let cam_y = camera.body_center[1] as f64;
+        let off_x = camera.ship_offset[0] as f64;
+        let off_y = camera.ship_offset[1] as f64;
+
+        let line_width = 0.002 / camera.zoom as f64;
+        let orbit_color = [star.color[0] * 0.4, star.color[1] * 0.4, star.color[2] * 0.4, 0.5];
+
+        let segments = if star.catalog_index > 0 { 5120u32 } else { 512u32 };
+        let base = all_vertices.len() as u32;
+
+        for i in 0..segments {
+            let angle = (i as f64 / segments as f64) * std::f64::consts::TAU;
+            let ex = a * angle.cos();
+            let ey = b * angle.sin();
+            // Rotate by argument of periapsis
+            let wx = center_x + ex * arg_peri.cos() - ey * arg_peri.sin();
+            let wy = center_y + ex * arg_peri.sin() + ey * arg_peri.cos();
+
+            let rel_x = (wx - cam_x - off_x) as f32;
+            let rel_y = (wy - cam_y - off_y) as f32;
+
+            // Perpendicular direction for line thickness
+            let next_angle = ((i + 1) as f64 / segments as f64) * std::f64::consts::TAU;
+            let nex = a * next_angle.cos();
+            let ney = b * next_angle.sin();
+            let nwx = center_x + nex * arg_peri.cos() - ney * arg_peri.sin();
+            let nwy = center_y + nex * arg_peri.sin() + ney * arg_peri.cos();
+
+            let dx = (nwx - wx) as f32;
+            let dy = (nwy - wy) as f32;
+            let len = (dx * dx + dy * dy).sqrt().max(1e-20);
+            let nx = -dy / len * line_width as f32;
+            let ny = dx / len * line_width as f32;
+
+            all_vertices.push(Vertex::new([rel_x + nx, rel_y + ny], orbit_color));
+            all_vertices.push(Vertex::new([rel_x - nx, rel_y - ny], orbit_color));
+        }
+
+        for i in 0..segments {
+            let i0 = base + i * 2;
+            let i1 = base + i * 2 + 1;
+            let i2 = base + ((i + 1) % segments) * 2;
+            let i3 = base + ((i + 1) % segments) * 2 + 1;
+            all_indices.push(i0);
+            all_indices.push(i2);
+            all_indices.push(i1);
+            all_indices.push(i1);
+            all_indices.push(i2);
+            all_indices.push(i3);
+        }
+    }
+
     /// Helper to add body vertices (extracted for reuse)
     fn add_body_vertices(
         &mut self,
@@ -2220,7 +2339,6 @@ impl RenderState {
         all_indices: &mut Vec<u32>,
         bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)],
         scale: f64,
-        body_is_star: &[bool],
     ) {
         // Store body data for hit testing
         self.bodies.clear();
@@ -2236,7 +2354,11 @@ impl RenderState {
         let off_x = self.camera.ship_offset[0];
         let off_y = self.camera.ship_offset[1];
 
-        for (x, y, radius, color, _atmo_height, _atmo_color, body_idx) in bodies {
+        // Two-pass indicator rendering: defer the root body's (first body) indicator
+        // to render AFTER all other bodies, so it appears on top (e.g. Sun over planets).
+        let mut deferred_root_indicator: Option<(f32, f32, [f32; 4])> = None;
+
+        for (body_array_idx, (x, y, radius, color, _atmo_height, _atmo_color, body_idx)) in bodies.iter().enumerate() {
             let rel_x = ((*x * scale) - cam_x - off_x) as f32;
             let rel_y = ((*y * scale) - cam_y - off_y) as f32;
             let r = (*radius * scale) as f32;
@@ -2375,69 +2497,63 @@ impl RenderState {
             }
 
             if needs_indicator {
-                let is_star = body_is_star.get(*body_idx).copied().unwrap_or(false);
-
-                if is_star {
-                    // Stars get a small colored hexagon (like procedural stars)
-                    const STAR_OFFSETS: [(f32, f32); 6] = [
-                        (1.0, 0.0), (0.5, 0.866025), (-0.5, 0.866025),
-                        (-1.0, 0.0), (-0.5, -0.866025), (0.5, -0.866025),
-                    ];
-                    let pixel_ndc = 1.0 / (self.camera.zoom as f64 * self.size.height as f64 * 0.5);
-                    let half = (pixel_ndc * 2.0) as f32;
-                    let dot_color = *color;
-
-                    let base_index = all_vertices.len() as u32;
-                    all_vertices.push(Vertex::new([rel_x, rel_y], dot_color));
-                    for &(ox, oy) in &STAR_OFFSETS {
-                        all_vertices.push(Vertex::new([rel_x + half * ox, rel_y + half * oy], dot_color));
-                    }
-                    all_indices.extend_from_slice(&[
-                        base_index, base_index + 1, base_index + 2,
-                        base_index, base_index + 2, base_index + 3,
-                        base_index, base_index + 3, base_index + 4,
-                        base_index, base_index + 4, base_index + 5,
-                        base_index, base_index + 5, base_index + 6,
-                        base_index, base_index + 6, base_index + 1,
-                    ]);
+                let ring_color = if color[0] + color[1] + color[2] < 0.1 {
+                    [0.7, 0.5, 0.3, 1.0] // Warm amber fallback for black holes
                 } else {
-                    // Non-stars (planets, black holes) get the ring indicator
-                    let base_index = all_vertices.len() as u32;
-                    let ring_outer = indicator_world_radius as f32;
-                    let ring_inner = (indicator_world_radius * 0.7) as f32;
-                    let ring_segments = 64u32;
+                    *color
+                };
 
-                    let ring_color = if color[0] + color[1] + color[2] < 0.1 {
-                        [0.7, 0.5, 0.3, 1.0] // Warm amber fallback for black holes
-                    } else {
-                        *color
-                    };
-
-                    for i in 0..ring_segments {
-                        let angle = (i as f32 / ring_segments as f32) * std::f32::consts::TAU;
-                        let cos_a = angle.cos();
-                        let sin_a = angle.sin();
-
-                        all_vertices.push(Vertex::new([rel_x + ring_outer * cos_a, rel_y + ring_outer * sin_a], ring_color));
-                        all_vertices.push(Vertex::new([rel_x + ring_inner * cos_a, rel_y + ring_inner * sin_a], [ring_color[0] * 0.3, ring_color[1] * 0.3, ring_color[2] * 0.3, ring_color[3] * 0.5]));
-                    }
-
-                    for i in 0..ring_segments {
-                        let i0 = base_index + i * 2;
-                        let i1 = base_index + i * 2 + 1;
-                        let i2 = base_index + ((i + 1) % ring_segments) * 2;
-                        let i3 = base_index + ((i + 1) % ring_segments) * 2 + 1;
-
-                        all_indices.push(i0);
-                        all_indices.push(i2);
-                        all_indices.push(i1);
-
-                        all_indices.push(i1);
-                        all_indices.push(i2);
-                        all_indices.push(i3);
-                    }
+                // Defer the first body's indicator to render last (on top of all others)
+                if body_array_idx == 0 {
+                    deferred_root_indicator = Some((rel_x, rel_y, ring_color));
+                } else {
+                    Self::draw_ring_indicator(all_vertices, all_indices, rel_x, rel_y, indicator_world_radius, ring_color);
                 }
             }
+        }
+
+        // Second pass: draw deferred root body indicator on top of everything
+        if let Some((rel_x, rel_y, ring_color)) = deferred_root_indicator {
+            Self::draw_ring_indicator(all_vertices, all_indices, rel_x, rel_y, indicator_world_radius, ring_color);
+        }
+    }
+
+    /// Draw a ring indicator at the given position (shared by body indicator rendering).
+    fn draw_ring_indicator(
+        all_vertices: &mut Vec<Vertex>,
+        all_indices: &mut Vec<u32>,
+        rel_x: f32,
+        rel_y: f32,
+        indicator_world_radius: f64,
+        ring_color: [f32; 4],
+    ) {
+        let base_index = all_vertices.len() as u32;
+        let ring_outer = indicator_world_radius as f32;
+        let ring_inner = (indicator_world_radius * 0.7) as f32;
+        let ring_segments = 64u32;
+
+        for i in 0..ring_segments {
+            let angle = (i as f32 / ring_segments as f32) * std::f32::consts::TAU;
+            let cos_a = angle.cos();
+            let sin_a = angle.sin();
+
+            all_vertices.push(Vertex::new([rel_x + ring_outer * cos_a, rel_y + ring_outer * sin_a], ring_color));
+            all_vertices.push(Vertex::new([rel_x + ring_inner * cos_a, rel_y + ring_inner * sin_a], [ring_color[0] * 0.3, ring_color[1] * 0.3, ring_color[2] * 0.3, ring_color[3] * 0.5]));
+        }
+
+        for i in 0..ring_segments {
+            let i0 = base_index + i * 2;
+            let i1 = base_index + i * 2 + 1;
+            let i2 = base_index + ((i + 1) % ring_segments) * 2;
+            let i3 = base_index + ((i + 1) % ring_segments) * 2 + 1;
+
+            all_indices.push(i0);
+            all_indices.push(i2);
+            all_indices.push(i1);
+
+            all_indices.push(i1);
+            all_indices.push(i2);
+            all_indices.push(i3);
         }
     }
 

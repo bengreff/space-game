@@ -832,3 +832,96 @@
 - [ ] Visual test: near Sun, zoomed in — nearby stars visible at intermediate zoom
 - [ ] Visual test: near Sun, zoomed out — same as before (all nearby stars shown)
 - [ ] Visual test: stars render closest-first (no distant stars before near ones)
+
+---
+
+# Star Catalog: 67 Named Star Systems
+
+## Implementation
+- [x] Task 1: Create `src/galaxy/catalog.rs` — CatalogSystem/CatalogStar/CatalogBody/CatalogAtmosphere structs, build_catalog_stars() builder, lookup_system() lookup, spectral_temperature/spectral_to_star_type helpers
+- [x] Task 2: Create `src/galaxy/catalog/catalog_data.rs` — Static CATALOG array with all 67 systems (318 bodies, ~4700 lines) transcribed from docs/nearby_stars.md
+- [x] Task 3: Integrate catalog into galaxy mod.rs — catalog_index field on ProceduralStar, catalog_by_sector on GalaxyState, injection in get_sector() with 2 ly dedup
+- [x] Task 4: Update rendering pipeline — catalog_name/catalog_index on StarRenderData, format_name() returns real name for catalog stars
+- [x] Task 5: Add planetary system info to info panel — CatalogPlanetInfo struct, catalog fields on BodyInfoData, system info + planetary system sections in menus.rs
+- [x] Task 6: Build, test, and update specs — cargo build clean, galaxy spec updated with catalog sections
+
+## Files Created
+- `src/galaxy/catalog.rs` — Data structures, builder, lookup (~204 lines)
+- `src/galaxy/catalog/catalog_data.rs` — All 67 systems with planets/moons (~4700 lines)
+
+## Files Modified
+- `src/galaxy/mod.rs` — pub mod catalog, catalog_index on ProceduralStar, catalog_by_sector on GalaxyState, get_sector() injection
+- `src/galaxy/generation.rs` — catalog_index: 0 on procedural stars
+- `src/render/scene.rs` — catalog_name/catalog_index on StarRenderData, format_name()
+- `src/render/types.rs` — CatalogPlanetInfo struct, catalog fields on BodyInfoData
+- `src/render/mod.rs` — CatalogPlanetInfo re-export
+- `src/render/menus.rs` — System info + planetary system sections in info panel
+- `src/main.rs` — catalog name lookup in build_procedural_star_data/lookup_focused_star, catalog data in focused star info builder
+- `openspec/specs/game/flight_rendering/galaxy/spec.md` — Catalog stars section
+
+## Verification
+- [x] `cargo build` — compiles clean
+- [ ] Visual test: galaxy view → zoom to Sol → named stars appear at correct positions
+- [ ] Visual test: hover catalog star → real name shown (e.g. "Alpha Centauri")
+- [ ] Visual test: focus catalog star → info panel shows system info + planetary system
+- [ ] Visual test: Zone 5 stars appear near Sgr A*
+- [ ] Visual test: procedural stars still work normally
+
+---
+
+# Fix: Catalog Star Positions, Planet Indicators, and Z-Ordering
+
+## Implementation
+- [x] Fix 1: Correct catalog star positions — compute Sun's t=0 galactic position from orbital elements, place each non-Zone-5 star at `sun_pos + distance_ly * direction`, recompute M₀ from corrected position
+- [x] Fix 2: Catalog planet indicator rings — add `game_time` param to `add_procedural_stars_impl`, draw planet indicator rings at orbital positions before star dots (z-order), color by habitability/life
+- [x] Fix 3: Solar system star-on-top z-ordering — two-pass indicator rendering in `add_body_vertices`, defer root body indicator to render last (on top), extract `draw_ring_indicator` helper
+- [x] Build verification — compiles clean
+
+## Files Changed
+- `src/galaxy/catalog.rs` — `build_catalog_stars()`: compute Sun's t=0 position via `kepler_position()`, place non-Zone-5 stars at correct distance, recompute M₀
+- `src/render/scene.rs` — `add_procedural_stars_impl()`: `game_time` param, planet indicator rings for catalog stars; `add_body_vertices()`: deferred root body indicator; `draw_ring_indicator()` helper; `update_bodies_orbits_ship_and_vessels()`: `game_time` param
+- `src/main.rs` — Pass `game.time()` to all 6 `update_bodies_orbits_ship_and_vessels()` call sites
+- `openspec/specs/game/flight_rendering/galaxy/spec.md` — Catalog positioning + planet indicators
+- `openspec/specs/game/flight_rendering/bodies/spec.md` — Root body indicator z-ordering
+
+## Verification
+- [x] `cargo build` — compiles clean
+- [ ] Visual test: Alpha Centauri appears ~4.37 ly from Sun, Sirius ~8.6 ly
+- [ ] Visual test: catalog stars show planet indicator rings at orbital positions
+- [ ] Visual test: planet indicators spread out when zooming into a catalog star system
+- [ ] Visual test: star indicator ring always renders on top of planet indicators
+- [ ] Visual test: clicking near catalog star focuses the star (not a planet)
+- [ ] Visual test: solar system Sun indicator on top when all bodies are indicator-sized
+
+---
+
+# Multi-Star Systems, Exoplanet Info, Orbit Segments
+
+## Implementation
+- [x] Step 1: Add `segments` field to `OrbitRenderData` — 256 for solar system, 5120 for catalog orbits
+- [x] Step 2: Add `StarOrbitData` struct and `binary_orbits` field to `CatalogSystem`, populate 19 multi-star systems
+- [x] Step 3: Add `host_star_index()` helper to determine which star a planet orbits from its designation
+- [x] Step 4: Rewrite `inject_catalog_planets` for multi-star positioning — companion stars placed via mass-ratio barycenter offsets, planets routed to correct host star
+- [x] Step 5: Build `BodyInfoData` for catalog planets during injection, store in `catalog_body_info` HashMap
+- [x] Step 6: Update tracking station panel to check `catalog_body_info` for exoplanet info display
+- [x] Step 7: Verify star hover labels (already working via `hovered_star_label` in flight.rs and menus.rs)
+- [x] Step 8: Update specs
+
+## Files Changed
+- `src/galaxy/catalog.rs` — `StarOrbitData` struct, `binary_orbits` field on `CatalogSystem`, `host_star_index()` helper
+- `src/galaxy/catalog/catalog_data.rs` — `binary_orbits` data for all 67 systems (19 populated, 48 empty)
+- `src/render/types.rs` — `segments: u32` field on `OrbitRenderData`
+- `src/render/scene.rs` — Use `orbit.segments` instead of hardcoded 256 in all 4 orbit rendering paths
+- `src/render/state.rs` — `catalog_body_info: HashMap<usize, BodyInfoData>` field
+- `src/render/menus.rs` — Check `catalog_body_info` when `body_info.get(idx)` returns None for tracked catalog planets
+- `src/main.rs` — Rewritten `inject_catalog_planets` with multi-star positioning, companion star bodies, planet host routing, BodyInfoData construction; `spectral_temperature` helper; `segments: 256/5120` on all OrbitRenderData constructions
+- `openspec/specs/game/flight_rendering/bodies/spec.md` — Updated orbit segment spec
+- `openspec/specs/game/flight_rendering/galaxy/spec.md` — Multi-star rendering, exoplanet info panel, catalog data structures
+
+## Verification
+- [x] `cargo build` — compiles clean, no warnings
+- [ ] Visual test: Alpha Centauri shows 3 stars orbiting a barycenter
+- [ ] Visual test: A's planets orbit A, B's planets orbit B, Proxima's planets orbit Proxima
+- [ ] Visual test: orbit lines are smooth at high zoom (5120 segments)
+- [ ] Visual test: clicking an exoplanet shows info panel with name, description, radius, gravity, atmosphere
+- [ ] Visual test: single-star systems still work correctly

@@ -38,7 +38,6 @@ Flexible part system that rewards creative engineering.
 - **3D graphics**: Staying 2D for scope management
 - **N-body physics**: Using patched conics for predictable trajectories
 - **Individual named crew**: Tracking crew count only, not individuals
-- **Procedural planet generation**: Fixed/configured celestial bodies
 - **Multiplayer**: Single-player only
 
 ## Design Decisions

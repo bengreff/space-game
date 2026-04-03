@@ -2,6 +2,7 @@ pub mod prng;
 pub mod density;
 pub mod generation;
 pub mod star_color;
+pub mod catalog;
 
 use std::collections::HashMap;
 use crate::bodies::SectorCoord;
@@ -83,6 +84,7 @@ pub struct ProceduralStar {
     pub sector_index: u32,      // unique ID within sector
     pub flags: u32,             // bit 0: is_predefined, bit 1: has_system
     pub star_type: StarType,    // evolutionary classification
+    pub catalog_index: u16,     // 0 = procedural, 1-67 = catalog system index
 }
 
 /// Solve Kepler's equation M = E - e·sin(E) via Newton-Raphson.
@@ -141,6 +143,8 @@ pub struct GalaxyState {
     pub galaxy_seed: u64,
     cache: HashMap<SectorCoord, CachedSector>,
     frame_counter: u64,
+    /// Pre-computed catalog stars grouped by sector (never evicted).
+    pub catalog_by_sector: HashMap<SectorCoord, Vec<ProceduralStar>>,
 }
 
 /// Maximum number of sectors to keep cached before eviction.
@@ -151,28 +155,67 @@ const EVICTION_AGE_FRAMES: u64 = 300; // ~5 seconds at 60fps
 
 impl GalaxyState {
     pub fn new() -> Self {
+        let catalog_by_sector = catalog::build_catalog_stars();
         Self {
             galaxy_seed: 0xDEAD_BEEF_CAFE_1234,
             cache: HashMap::new(),
             frame_counter: 0,
+            catalog_by_sector,
         }
     }
 
     /// Get stars for a sector, generating and caching if needed.
-    /// Returns a slice of ProceduralStars.
+    /// Includes both procedural and catalog stars. Catalog stars are appended
+    /// after procedural generation, and the nearest procedural star within 2 ly
+    /// of each catalog star is removed to avoid visual overlap.
     pub fn get_sector(&mut self, coord: SectorCoord) -> &[ProceduralStar] {
         let frame = self.frame_counter;
         let seed = self.galaxy_seed;
 
-        self.cache
+        // Check if this sector has catalog stars to inject
+        let catalog_stars = self.catalog_by_sector.get(&coord).cloned();
+
+        let entry = self.cache
             .entry(coord)
             .and_modify(|cs| cs.last_used_frame = frame)
-            .or_insert_with(|| CachedSector {
-                stars: generation::generate_sector(coord.x, coord.y, seed),
-                last_used_frame: frame,
-            })
-            .stars
-            .as_slice()
+            .or_insert_with(|| {
+                let mut stars = generation::generate_sector(coord.x, coord.y, seed);
+
+                // Inject catalog stars: remove nearest procedural star within 2 ly
+                if let Some(ref cat_stars) = catalog_stars {
+                    const DEDUP_RADIUS: f64 = 2.0 * 9.461e15; // 2 light-years in meters
+                    let dedup_r2 = DEDUP_RADIUS * DEDUP_RADIUS;
+
+                    for cat in cat_stars {
+                        // Find and remove the nearest procedural star within dedup radius
+                        let mut best_idx = None;
+                        let mut best_dist2 = dedup_r2;
+                        for (j, proc_star) in stars.iter().enumerate() {
+                            if proc_star.catalog_index > 0 {
+                                continue; // skip already-injected catalog stars
+                            }
+                            let dx = proc_star.pos[0] - cat.pos[0];
+                            let dy = proc_star.pos[1] - cat.pos[1];
+                            let d2 = dx * dx + dy * dy;
+                            if d2 < best_dist2 {
+                                best_dist2 = d2;
+                                best_idx = Some(j);
+                            }
+                        }
+                        if let Some(idx) = best_idx {
+                            stars.swap_remove(idx);
+                        }
+                        stars.push(cat.clone());
+                    }
+                }
+
+                CachedSector {
+                    stars,
+                    last_used_frame: frame,
+                }
+            });
+
+        entry.stars.as_slice()
     }
 
     /// Advance frame counter and evict stale sectors.

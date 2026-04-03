@@ -189,6 +189,11 @@ pub struct RenderState {
     pub focused_star_id: Option<(u16, u16, u32)>, // (sector_x, sector_y, sector_index) of focused star
     pub current_procedural_stars: Vec<super::scene::StarRenderData>, // cached for info panel
     pub focused_star_info: Option<super::types::BodyInfoData>, // unified info panel data for focused procedural star
+    // Body names for all bodies (real + catalog), set each frame after inject_catalog_planets
+    pub body_names: Vec<String>,
+    pub num_real_bodies: usize,
+    // Info data for catalog planets (keyed by synthetic body index)
+    pub catalog_body_info: std::collections::HashMap<usize, super::types::BodyInfoData>,
     // Toast notifications
     pub active_toasts: Vec<(String, std::time::Instant)>,
     // Egui state
@@ -221,12 +226,14 @@ impl RenderState {
             .await
             .unwrap();
 
-        // Request device and queue
+        // Request device with adapter's actual limits (unlocks full GPU capabilities,
+        // e.g. texture array layers beyond the WebGPU default of 256)
+        let adapter_limits = adapter.limits();
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
+                    required_limits: adapter_limits.clone(),
                     label: None,
                 },
                 None,
@@ -579,6 +586,9 @@ impl RenderState {
             focused_star_id: None,
             current_procedural_stars: Vec::new(),
             focused_star_info: None,
+            body_names: Vec::new(),
+            num_real_bodies: 0,
+            catalog_body_info: std::collections::HashMap::new(),
             active_toasts: Vec::new(),
             body_texture_bind_group,
             body_texture_map,

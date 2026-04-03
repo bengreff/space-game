@@ -383,6 +383,7 @@ impl RenderState {
             // Unified info panel (body or focused procedural star)
             let panel_info: Option<&BodyInfoData> = if let Some(idx) = self.tracked_body {
                 body_info.get(idx)
+                    .or_else(|| self.catalog_body_info.get(&idx))
             } else {
                 self.focused_star_info.as_ref()
             };
@@ -458,6 +459,76 @@ impl RenderState {
                                 }
                                 if let Some(soi) = info.soi_radius_m {
                                     ui.label(format!("SOI: {}", format_distance(soi)));
+                                }
+                            }
+
+                            // Catalog star system info
+                            if is_star && (info.catalog_zone.is_some() || !info.catalog_planets.is_empty()) {
+                                ui.add_space(4.0);
+                                ui.separator();
+                                ui.label(egui::RichText::new("System Info").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                                ui.add_space(2.0);
+                                if let Some(zone) = info.catalog_zone {
+                                    ui.label(format!("Zone: {}", zone));
+                                }
+                                if let Some(dist) = info.catalog_distance_ly {
+                                    ui.label(format!("Distance from Sol: {:.2} ly", dist));
+                                }
+                                if let Some(ref spec) = info.catalog_spectral {
+                                    ui.label(format!("Spectral: {}", spec));
+                                }
+
+                                // Planetary system listing
+                                if !info.catalog_planets.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.separator();
+                                    let planet_count = info.catalog_planets.iter().filter(|p| !p.is_moon).count();
+                                    let moon_count = info.catalog_planets.iter().filter(|p| p.is_moon).count();
+                                    let label = if moon_count > 0 {
+                                        format!("Planetary System ({} planets, {} moons)", planet_count, moon_count)
+                                    } else {
+                                        format!("Planetary System ({} planets)", planet_count)
+                                    };
+                                    ui.label(egui::RichText::new(label).size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                                    ui.add_space(2.0);
+
+                                    for body in &info.catalog_planets {
+                                        let indent = if body.is_moon { "    " } else { "" };
+                                        // Color coding: green for habitable, gold for life
+                                        let name_color = if body.has_life {
+                                            egui::Color32::from_rgb(255, 215, 80) // gold
+                                        } else if body.habitability > 30 {
+                                            egui::Color32::from_rgb(140, 220, 140) // green
+                                        } else {
+                                            egui::Color32::from_rgb(180, 180, 180) // gray
+                                        };
+
+                                        let name_str = if body.name.is_empty() {
+                                            body.designation.clone()
+                                        } else {
+                                            format!("{} \"{}\"", body.designation, body.name)
+                                        };
+
+                                        ui.label(egui::RichText::new(format!("{}{}", indent, name_str))
+                                            .size(12.0)
+                                            .color(name_color));
+
+                                        if body.is_gas_giant {
+                                            ui.label(egui::RichText::new(format!("{}  Gas giant | {} K", indent, body.temperature_k as i64))
+                                                .size(11.0)
+                                                .color(egui::Color32::from_rgb(140, 140, 140)));
+                                        } else {
+                                            let atm_str = if body.has_atmosphere { "atm" } else { "no atm" };
+                                            let life_str = if body.has_life { " | LIFE" } else { "" };
+                                            ui.label(egui::RichText::new(format!(
+                                                "{}  {:.2}g | {} K | {} | hab {}/100{}",
+                                                indent, body.gravity_g, body.temperature_k as i64,
+                                                atm_str, body.habitability, life_str
+                                            ))
+                                                .size(11.0)
+                                                .color(egui::Color32::from_rgb(140, 140, 140)));
+                                        }
+                                    }
                                 }
                             }
 

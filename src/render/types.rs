@@ -70,6 +70,7 @@ pub struct OrbitRenderData {
     pub eccentricity: f64,
     pub argument_of_periapsis: f64,
     pub color: [f32; 4],
+    pub segments: u32,  // number of line segments (256 for solar system, 5120 for catalog)
 }
 
 /// Per-nozzle activation state for RCS thrusters
@@ -498,6 +499,19 @@ pub enum SelectedTarget {
     Vessel(u64),
 }
 
+/// Compact planet/moon info for the catalog star info panel
+pub struct CatalogPlanetInfo {
+    pub name: String,
+    pub designation: String,
+    pub temperature_k: f64,
+    pub gravity_g: f64,
+    pub habitability: u32,
+    pub has_atmosphere: bool,
+    pub has_life: bool,
+    pub is_moon: bool,
+    pub is_gas_giant: bool,
+}
+
 /// Static body info for the tracking station info panel
 pub struct BodyInfoData {
     pub name: String,
@@ -518,6 +532,11 @@ pub struct BodyInfoData {
     pub temperature_k: Option<f64>,     // surface temperature in Kelvin (stars only)
     pub soi_radius_m: Option<f64>,      // SOI radius in meters
     pub is_galactic_orbit: bool,        // true → orbit section uses pc/kpc formatting
+    // Catalog star extended info
+    pub catalog_planets: Vec<CatalogPlanetInfo>,
+    pub catalog_zone: Option<u8>,
+    pub catalog_distance_ly: Option<f32>,
+    pub catalog_spectral: Option<String>,  // multi-star: "G2V / K1V / M5.5Ve"
 }
 
 /// A single point in the porkchop plot grid

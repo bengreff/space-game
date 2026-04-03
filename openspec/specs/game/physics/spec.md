@@ -8,6 +8,6 @@ Physical interactions between the ship and its environment: atmospheric effects 
 - [Aerodynamic Drag](aerodynamic_drag/spec.md) - Orientation-dependent drag force opposing surface-relative velocity
 - [Aerodynamic Heating](aerodynamic_heating/spec.md) - Convective heating, radiative cooling, thermal destruction, and heat HUD
 - [Terrain Collision](terrain_collision/spec.md) - Collision detection with celestial body surfaces and launchpad structures
-- [Craft Collision](craft_collision/spec.md) - Collision detection between vessels (future)
+- [Craft Collision](craft_collision/spec.md) - OBB collision detection and response between vessels
 - [Fuel System](fuel/spec.md) - Fuel zones, consumption, and drain priority (asparagus/onion staging)
 - [Relativity](relativity/spec.md) - Threshold-based special and gravitational relativity (thrust limiting, time dilation, HUD)

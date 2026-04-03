@@ -21,7 +21,26 @@ Each celestial body is rendered as a filled circle using a triangle fan. The num
 
 ### Requirement: Body texture support
 
-Bodies MAY have PNG textures loaded from `data/textures/bodies/<name>.png` (lowercase body name). Textures are loaded at startup, resized to 1024x1024, and stored in a `texture_2d_array` bound at `@group(1)`.
+Bodies MAY have PNG textures loaded from `data/textures/bodies/<name>.png` (lowercase body name, spaces replaced with underscores). ALL textures in the directory are loaded at startup — both solar system bodies (matched by body index) and exoplanet/catalog textures (matched by name only). Textures are resized to 1024x1024 and stored in a `texture_2d_array` bound at `@group(1)`.
+
+#### Scenario: Texture loading and mapping
+- **WHEN** the game starts
+- **THEN** `load_body_textures()` loads ALL PNG/JPG files from `data/textures/bodies/`
+- **AND** real solar system bodies are matched by body index (existing behavior)
+- **AND** all textures are indexed by lowercase filename stem in `name_layers` and `name_colors` maps
+- **AND** `name_colors` stores the average disc color computed from each texture (sampled every 4th pixel within the disc, brightness-boosted so max channel >= 0.45)
+
+#### Scenario: Catalog planet texture binding
+- **WHEN** `inject_catalog_planets()` creates synthetic bodies for a focused catalog star
+- **THEN** `register_body_index(synthetic_idx, body_name)` is called to link the synthetic body index to its named texture layer
+- **AND** `layer_for_body(synthetic_idx)` returns the correct texture layer for rendering
+- **AND** the body's `color` field is set from `color_for_name()` (texture-derived average color) when available
+- **AND** orbit line color = `body_color * 0.4, alpha 0.5` and indicator ring color = `body_color` (both derived from the texture)
+- **AND** `clear_dynamic_entries(num_real_bodies)` is called at the start to remove stale synthetic mappings
+
+#### Scenario: Catalog planet texture fallback
+- **WHEN** no texture exists for a catalog planet name
+- **THEN** the body uses habitability-based coloring: gold `[0.9, 0.75, 0.2]` for life, green `[0.3, 0.85, 0.4]` for habitable (>30), gray `[0.6, 0.6, 0.6]` otherwise
 
 #### Scenario: Textured body rendering
 - **WHEN** a body has a loaded texture
@@ -52,12 +71,18 @@ Bodies smaller than 1 pixel on screen SHALL NOT be drawn as filled circles. Bodi
 
 ### Requirement: Body indicator ring for small bodies
 
-When a body is smaller than 5 pixels on screen (`body_pixels < 5.0`), a ring indicator SHALL be drawn at a fixed screen size of 16 pixels radius.
+When a body is smaller than 5 pixels on screen (`body_pixels < 5.0`), a ring indicator SHALL be drawn at a fixed screen size of 16 pixels radius. This applies uniformly to ALL solar system bodies — the Sun, planets, and moons all use ring indicators. Hexagon indicators are reserved for procedural galaxy stars (rendered via their own separate path in `add_procedural_stars_impl`).
 
 #### Scenario: Indicator ring rendering
 - **GIVEN** a body with `body_pixels < 5.0`
-- **THEN** outer radius = `16.0 / pixels_per_world_unit`, inner radius = `outer_radius * 0.7`, 4 segments
+- **THEN** outer radius = `16.0 / pixels_per_world_unit`, inner radius = `outer_radius * 0.7`, 64 segments
 - **AND** outer vertex color = body color (or warm amber `[0.7, 0.5, 0.3, 1.0]` if body color RGB sum < 0.1), inner vertex color = dimmed to 30% brightness at 50% alpha
+
+#### Scenario: Root body indicator z-ordering
+- **GIVEN** the first body in the bodies array (root body, e.g. Sun or Sgr A*)
+- **WHEN** it needs an indicator ring
+- **THEN** its indicator is deferred and drawn AFTER all other bodies' indicators
+- **AND** this ensures the root body's indicator renders on top of all planet indicators when zoomed out
 
 #### Scenario: Hidden bodies skip indicator
 - **GIVEN** a body with radius = 0.0 (hidden in galaxy view)
@@ -93,7 +118,7 @@ Bodies with atmosphere data SHALL have an atmosphere ring drawn behind all other
 
 ### Requirement: Body orbit lines
 
-Orbit lines for celestial bodies SHALL be drawn as thick lines (dual-vertex strips) with `line_width = 0.002 / camera.zoom` and 256 segments.
+Orbit lines for celestial bodies SHALL be drawn as thick lines (dual-vertex strips) with `line_width = 0.002 / camera.zoom`. Segment count is per-orbit via `OrbitRenderData.segments`: 256 for solar system bodies, 5120 for catalog exoplanet orbits (which span stellar-distance scales and need smooth curves at high zoom).
 
 #### Scenario: Orbit line vertex colors
 - **GIVEN** orbit color C

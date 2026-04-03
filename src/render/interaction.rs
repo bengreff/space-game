@@ -129,28 +129,37 @@ impl RenderState {
         closest.map(|(idx, _)| idx)
     }
 
-    /// Focus camera on a body by index and start tracking it
+    /// Focus camera on a body by index and start tracking it.
+    /// For catalog planets (index >= num_real_bodies), preserves focused_star
+    /// since the catalog planet only exists while its parent star is focused.
     pub fn focus_on_body(&mut self, index: usize) {
         if let Some(body) = self.bodies.get(index) {
-            self.camera.focus_on([body.x, body.y]); // Both are now f64
+            self.camera.focus_on([body.x, body.y]);
             self.tracked_body = Some(index);
-            self.tracked_vessel = None; // Stop tracking any vessel
-            self.focused_star = None;   // Stop tracking any procedural star
-            self.focused_star_world_pos = None;
-            self.focused_star_id = None;
+            self.tracked_vessel = None;
+            if index < self.num_real_bodies {
+                // Real body — clear star focus
+                self.focused_star = None;
+                self.focused_star_world_pos = None;
+                self.focused_star_id = None;
+            }
+            // Catalog planet — keep focused_star so the system stays loaded
         }
     }
 
-    /// Update camera to follow tracked body or focused star using current positions
+    /// Update camera to follow tracked body or focused star using current positions.
+    /// Only handles real bodies (indices < num_real_bodies). Catalog planet tracking
+    /// is handled separately after inject_catalog_planets via `track_catalog_body`.
     pub fn update_tracking(&mut self, positions: &[[f64; 2]], scale: f64) {
         if let Some(index) = self.tracked_body {
-            if let Some(pos) = positions.get(index) {
-                // Set camera position directly to body position (in f64 for precision)
-                self.camera.position[0] = pos[0] * scale;
-                self.camera.position[1] = pos[1] * scale;
-                // When tracking a body (not ship), camera is at body center with no offset
-                self.camera.body_center = self.camera.position;
-                self.camera.ship_offset = [0.0, 0.0];
+            // Only track real bodies here; catalog planets handled after injection
+            if index < self.num_real_bodies {
+                if let Some(pos) = positions.get(index) {
+                    self.camera.position[0] = pos[0] * scale;
+                    self.camera.position[1] = pos[1] * scale;
+                    self.camera.body_center = self.camera.position;
+                    self.camera.ship_offset = [0.0, 0.0];
+                }
             }
         } else if let Some(world_pos) = self.focused_star_world_pos {
             // Track focused procedural star (position in meters, needs scale)
@@ -158,6 +167,24 @@ impl RenderState {
             self.camera.position[1] = world_pos[1] * scale;
             self.camera.body_center = self.camera.position;
             self.camera.ship_offset = [0.0, 0.0];
+        }
+    }
+
+    /// Track a catalog planet (synthetic body with index >= num_real_bodies).
+    /// Called after inject_catalog_planets to update camera position from the
+    /// just-built bodies array.
+    pub fn track_catalog_body(&mut self, bodies: &[(f64, f64, f64, [f32; 4], f64, [f32; 3], usize)], scale: f64) {
+        if let Some(idx) = self.tracked_body {
+            if idx >= self.num_real_bodies {
+                if let Some(&(x, y, ..)) = bodies.get(idx) {
+                    self.camera.position = [x * scale, y * scale];
+                    self.camera.body_center = self.camera.position;
+                    self.camera.ship_offset = [0.0, 0.0];
+                } else {
+                    // Catalog planet no longer exists (star changed) — stop tracking
+                    self.tracked_body = None;
+                }
+            }
         }
     }
 }
