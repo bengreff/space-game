@@ -291,7 +291,7 @@ fn spectral_temperature(spec: &str) -> f32 {
 }
 
 /// Map spectral type string to StarType enum.
-fn spectral_to_star_type(spec: &str) -> StarType {
+pub fn spectral_to_star_type(spec: &str) -> StarType {
     let bytes = spec.as_bytes();
     if bytes.is_empty() {
         return StarType::MainSequence('G');

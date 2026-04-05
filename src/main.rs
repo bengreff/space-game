@@ -3304,48 +3304,139 @@ fn inject_catalog_planets(
     // star_positions[i] = (x, y) in meters for each star in sys.stars
     let mut star_positions: Vec<[f64; 2]> = vec![[star_x, star_y]; num_stars];
 
+    // Per-star orbit info for rendering orbital ellipses around barycenters.
+    // Only single-star groups (the first time a star is paired) record orbit info here,
+    // so wider pairs in a hierarchy (e.g. Alpha Cen AB vs Proxima) don't overwrite the
+    // close binary's orbit data for A.
+    #[derive(Clone)]
+    struct StarOrbitInfo {
+        local_offset_x: f64,      // star position minus its close-pair barycenter at t=0
+        local_offset_y: f64,
+        star_sma_m: f64,
+        eccentricity: f64,
+        period_s: f64,
+        arg_peri: f64,            // 0 for star B side, PI for star A side
+    }
+    let mut star_orbit_info: Vec<Option<StarOrbitInfo>> = vec![None; num_stars];
+
     if num_stars > 1 && !sys.binary_orbits.is_empty() {
-        // Process binary orbits from tightest to widest.
-        // Each pair orbits their mutual barycenter; the first pair's barycenter
-        // is placed at the focused star position (star_x, star_y).
-        for pair in sys.binary_orbits {
+        // Group-based hierarchical binary processing. Each star starts in its own group;
+        // each binary pair merges two groups, shifting both group COMs by their mutual
+        // orbit displacement. Orbit info is only recorded for single-star groups, so
+        // wider hierarchical pairs (e.g. AB vs Proxima) don't overwrite a close pair's
+        // data for its members.
+        let mut group_id: Vec<usize> = (0..num_stars).collect();
+        let mut group_mass: Vec<f64> = sys.stars.iter().map(|s| s.mass_solar).collect();
+        let mut group_members: Vec<Vec<usize>> = (0..num_stars).map(|i| vec![i]).collect();
+
+        for (pair_idx, pair) in sys.binary_orbits.iter().enumerate() {
             let a_idx = pair.star_a;
             let b_idx = pair.star_b;
             if a_idx >= num_stars || b_idx >= num_stars { continue; }
 
-            let m_a = sys.stars[a_idx].mass_solar;
-            let m_b = sys.stars[b_idx].mass_solar;
-            let total_mass = m_a + m_b;
+            let ga = group_id[a_idx];
+            let gb = group_id[b_idx];
+            if ga == gb { continue; }
+
+            let m_ga = group_mass[ga];
+            let m_gb = group_mass[gb];
+            let total_mass = m_ga + m_gb;
             if total_mass <= 0.0 { continue; }
 
             let sma_m = pair.sma_au * 1.496e11; // AU → meters
             let period_s = pair.period_years * 365.25 * 86400.0;
             let mean_motion = std::f64::consts::TAU / period_s;
-            // Use a deterministic phase offset so the orbit doesn't start at periapsis
-            let mean_anomaly = mean_motion * game_time;
+
+            // Deterministic phase offset per (catalog_index, pair_idx) so stars aren't
+            // all at periapsis. Hash mixes catalog index with pair index.
+            let seed = (star.catalog_index as u64)
+                .wrapping_mul(2654435761)
+                .wrapping_add((pair_idx as u64).wrapping_mul(11400714819323198549u64));
+            let phase_frac = (seed as f64 / u64::MAX as f64).fract();
+            let m0_pair = phase_frac * std::f64::consts::TAU;
+            let mean_anomaly = m0_pair + mean_motion * game_time;
 
             let [rel_x, rel_y] = sunscatter::galaxy::kepler_position(
                 sma_m, pair.eccentricity, 0.0, mean_anomaly,
             );
 
-            // Barycenter is at star_a's current position (for first pair, that's star_x/star_y;
-            // for wider pairs, the inner system was already positioned)
-            let bary_x = star_positions[a_idx][0];
-            let bary_y = star_positions[a_idx][1];
+            // Each group's shift about their mutual barycenter (COM invariant):
+            // group_a shifts by -rel * m_gb / total, group_b shifts by +rel * m_ga / total
+            let frac_ga = m_gb / total_mass;
+            let frac_gb = m_ga / total_mass;
+            let delta_a_x = -rel_x * frac_ga;
+            let delta_a_y = -rel_y * frac_ga;
+            let delta_b_x =  rel_x * frac_gb;
+            let delta_b_y =  rel_y * frac_gb;
 
-            // Star A offset from barycenter: -r * m_b / (m_a + m_b)
-            // Star B offset from barycenter: +r * m_a / (m_a + m_b)
-            let frac_a = m_b / total_mass;
-            let frac_b = m_a / total_mass;
+            // Shift all members of each group
+            let ga_members = group_members[ga].clone();
+            for &s in &ga_members {
+                star_positions[s][0] += delta_a_x;
+                star_positions[s][1] += delta_a_y;
+            }
+            let gb_members = group_members[gb].clone();
+            for &s in &gb_members {
+                star_positions[s][0] += delta_b_x;
+                star_positions[s][1] += delta_b_y;
+            }
 
-            star_positions[a_idx] = [
-                bary_x - rel_x * frac_a,
-                bary_y - rel_y * frac_a,
-            ];
-            star_positions[b_idx] = [
-                bary_x + rel_x * frac_b,
-                bary_y + rel_y * frac_b,
-            ];
+            // Record orbit info only for single-star groups (their innermost pair).
+            // For multi-star groups the members already have their innermost pair set.
+            if ga_members.len() == 1 {
+                star_orbit_info[ga_members[0]] = Some(StarOrbitInfo {
+                    local_offset_x: delta_a_x,
+                    local_offset_y: delta_a_y,
+                    star_sma_m: sma_m * frac_ga,
+                    eccentricity: pair.eccentricity,
+                    period_s,
+                    arg_peri: std::f64::consts::PI, // A side: flipped 180°
+                });
+            }
+            if gb_members.len() == 1 {
+                star_orbit_info[gb_members[0]] = Some(StarOrbitInfo {
+                    local_offset_x: delta_b_x,
+                    local_offset_y: delta_b_y,
+                    star_sma_m: sma_m * frac_gb,
+                    eccentricity: pair.eccentricity,
+                    period_s,
+                    arg_peri: 0.0,                  // B side: unflipped
+                });
+            }
+
+            // Merge gb into ga
+            let absorbed = std::mem::take(&mut group_members[gb]);
+            for &s in &absorbed {
+                group_id[s] = ga;
+            }
+            group_members[ga].extend(absorbed);
+            group_mass[ga] += group_mass[gb];
+        }
+
+        // Re-center so the innermost pair's barycenter is at (star_x, star_y).
+        // For hierarchical systems like Alpha Centauri, the raw calculation puts the
+        // OVERALL system COM at star_x — which places the focused dot between AB and
+        // Proxima. Users expect the dot to sit with the main (innermost) pair, so we
+        // shift all stars to put the first pair's mass-weighted center at star_x.
+        // Local offsets are relative to each star's own pair barycenter, so this
+        // global shift leaves orbit geometry unchanged.
+        let first_pair = &sys.binary_orbits[0];
+        let fa = first_pair.star_a;
+        let fb = first_pair.star_b;
+        if fa < num_stars && fb < num_stars {
+            let m_a = sys.stars[fa].mass_solar;
+            let m_b = sys.stars[fb].mass_solar;
+            let tot = m_a + m_b;
+            if tot > 0.0 {
+                let com_x = (m_a * star_positions[fa][0] + m_b * star_positions[fb][0]) / tot;
+                let com_y = (m_a * star_positions[fa][1] + m_b * star_positions[fb][1]) / tot;
+                let shift_x = star_x - com_x;
+                let shift_y = star_y - com_y;
+                for pos in star_positions.iter_mut() {
+                    pos[0] += shift_x;
+                    pos[1] += shift_y;
+                }
+            }
         }
     }
 
@@ -3360,12 +3451,87 @@ fn inject_catalog_planets(
             // Star color from spectral type temperature
             let temp = spectral_temperature(cat_star.spectral_type);
             let rgb = sunscatter::galaxy::star_color::stellar_color(temp);
-            let star_color = [rgb[0], rgb[1], rgb[2], 1.0];
+            let star_color_arr = [rgb[0], rgb[1], rgb[2], 1.0];
             let star_radius = cat_star.radius_solar * 6.957e8; // meters
 
-            bodies.push((sx, sy, star_radius, star_color, 0.0, [0.0, 0.0, 0.0], synthetic_idx));
-            orbits.push(None); // Stars don't get orbit lines (they orbit each other)
+            bodies.push((sx, sy, star_radius, star_color_arr, 0.0, [0.0, 0.0, 0.0], synthetic_idx));
+
+            // Star orbit rendering. The barycenter at t=0 is this star's current position
+            // minus its innermost pair's local offset — this correctly accounts for wider
+            // hierarchical pairs that have shifted the whole group.
+            if let Some(ref orbit_info) = star_orbit_info[si] {
+                let bary_x = sx - orbit_info.local_offset_x;
+                let bary_y = sy - orbit_info.local_offset_y;
+                let orbit_color = [rgb[0] * 0.4, rgb[1] * 0.4, rgb[2] * 0.4, 0.5];
+                orbits.push(Some(OrbitRenderData {
+                    parent_x: bary_x * SCALE,
+                    parent_y: bary_y * SCALE,
+                    semi_major_axis: orbit_info.star_sma_m * SCALE,
+                    eccentricity: orbit_info.eccentricity,
+                    argument_of_periapsis: orbit_info.arg_peri,
+                    color: orbit_color,
+                    segments: 5120,
+                }));
+            } else {
+                orbits.push(None);
+            }
+
             body_names.push(cat_star.name.to_string());
+
+            // Build BodyInfoData for this companion star
+            let star_type_enum = sunscatter::galaxy::catalog::spectral_to_star_type(cat_star.spectral_type);
+            let star_mass_kg = cat_star.mass_solar * 1.989e30;
+            let star_surface_gravity = G * star_mass_kg / (star_radius * star_radius);
+            let star_temp = spectral_temperature(cat_star.spectral_type) as f64;
+
+            // Filter planets belonging to this star
+            let star_planets: Vec<sunscatter::render::CatalogPlanetInfo> = sys.bodies.iter().filter(|b| {
+                host_star_index(b.designation, num_stars) == si
+            }).map(|b| sunscatter::render::CatalogPlanetInfo {
+                name: b.name.to_string(),
+                designation: b.designation.to_string(),
+                temperature_k: b.temperature_k,
+                gravity_g: b.gravity_g,
+                habitability: b.habitability,
+                has_atmosphere: b.atmosphere.is_some(),
+                has_life: b.has_life,
+                is_moon: b.is_moon,
+                is_gas_giant: b.is_gas_giant,
+            }).collect();
+
+            // Binary orbit parameters for the orbit section
+            let (orbit_sma, orbit_ecc, orbit_period) = if let Some(ref oi) = star_orbit_info[si] {
+                (Some(oi.star_sma_m), Some(oi.eccentricity), Some(oi.period_s))
+            } else {
+                (None, None, None)
+            };
+
+            catalog_body_info.insert(synthetic_idx, BodyInfoData {
+                name: cat_star.name.to_string(),
+                description: String::new(),
+                radius_m: star_radius,
+                surface_gravity_ms2: star_surface_gravity,
+                mass_kg: star_mass_kg,
+                atmosphere_pressure_pa: None,
+                atmosphere_height_m: None,
+                orbit_semi_major_axis_m: orbit_sma,
+                orbit_eccentricity: orbit_ecc,
+                orbit_period_s: orbit_period,
+                mineable_resources: vec![],
+                atmospheric_resources: vec![],
+                habitability_score: 0,
+                luminosity_solar: Some(cat_star.luminosity_solar),
+                star_type: Some(star_type_enum.display_name().to_string()),
+                temperature_k: Some(star_temp),
+                soi_radius_m: None,
+                is_galactic_orbit: false,
+                catalog_stars: vec![],
+                catalog_planets: star_planets,
+                catalog_zone: Some(sys.zone),
+                catalog_distance_ly: Some(sys.distance_ly),
+                catalog_spectral: Some(cat_star.spectral_type.to_string()),
+            });
+
             j += 1;
         }
     }
@@ -3454,6 +3620,7 @@ fn inject_catalog_planets(
             temperature_k: Some(body.temperature_k),
             soi_radius_m: None,
             is_galactic_orbit: false,
+            catalog_stars: vec![],
             catalog_planets: vec![],
             catalog_zone: None,
             catalog_distance_ly: None,
@@ -3492,7 +3659,7 @@ fn spectral_temperature(spec: &str) -> f32 {
 /// Build the list of procedural stars visible near the camera.
 fn build_procedural_star_data(
     game: &mut Game,
-    render_state: &RenderState,
+    render_state: &mut RenderState,
 ) -> Vec<sunscatter::render::StarRenderData> {
     use sunscatter::bodies::{G, LIGHT_YEAR, SECTOR_SIDE_METERS, SECTOR_GRID_HALF_METERS, SECTOR_GRID_SIZE, galactic_enclosed_mass};
 
@@ -3511,11 +3678,36 @@ fn build_procedural_star_data(
     // but still show catalog stars so named systems remain visible and clickable.
     let galaxy_view = is_galaxy_view(render_state.camera.zoom, render_state.camera.body_center);
 
+    // Helper: if `star_data` is the focused star, sync camera position to its CURRENT-frame
+    // position. Without this, update_tracking reads focused_star_world_pos from the PREVIOUS
+    // frame (written during rendering), creating a 1-frame lag between the camera and the
+    // companion bodies/planets that inject_catalog_planets positions at the current frame.
+    // At high time warp (e.g. 1e12x), galactic orbital motion per frame is ~3.7e15 m for
+    // nearby stars, causing severe on-screen drift of all orbiting bodies.
+    //
+    // The Sun doesn't have this problem because it's a real body tracked via `tracked_body`
+    // against scaled_positions, which are computed fresh each frame.
+    fn sync_focused(render_state: &mut RenderState, star: &sunscatter::render::StarRenderData) {
+        if let Some((sx, sy, si)) = render_state.focused_star_id {
+            if star.sector_x == sx && star.sector_y == sy && star.sector_index == si {
+                render_state.focused_star_world_pos = Some([star.x, star.y]);
+                if render_state.tracked_body.is_none() && render_state.tracked_vessel.is_none() {
+                    render_state.camera.position[0] = star.x * SCALE;
+                    render_state.camera.position[1] = star.y * SCALE;
+                    render_state.camera.body_center = render_state.camera.position;
+                    render_state.camera.ship_offset = [0.0, 0.0];
+                }
+            }
+        }
+    }
+
     if radius < 0.1 * LIGHT_YEAR {
         // Zoomed in too close for any stars — except a focused one
         if let Some((sx, sy, si)) = render_state.focused_star_id {
             if let Some(star_data) = lookup_focused_star(game, sx, sy, si) {
-                return vec![star_data];
+                let out = vec![star_data];
+                sync_focused(render_state, &out[0]);
+                return out;
             }
         }
         game.galaxy.tick();
@@ -3539,6 +3731,7 @@ fn build_procedural_star_data(
         if let Some((sx, sy, si)) = render_state.focused_star_id {
             if let Some(star_data) = lookup_focused_star(game, sx, sy, si) {
                 out.push(star_data);
+                sync_focused(render_state, out.last().unwrap());
             }
         }
 
@@ -3574,6 +3767,10 @@ fn build_procedural_star_data(
                     None
                 };
 
+                let num_catalog_stars = if star.catalog_index > 0 {
+                    sunscatter::galaxy::catalog::lookup_system(star.catalog_index)
+                        .map(|s| s.stars.len()).unwrap_or(0) as u8
+                } else { 0 };
                 out.push(sunscatter::render::StarRenderData {
                     x: current_x,
                     y: current_y,
@@ -3595,6 +3792,7 @@ fn build_procedural_star_data(
                     orbital_period_s,
                     catalog_name,
                     catalog_index: star.catalog_index,
+                    num_catalog_stars,
                 });
             }
         }
@@ -3704,6 +3902,10 @@ fn build_procedural_star_data(
             } else {
                 None
             };
+            let num_catalog_stars = if star.catalog_index > 0 {
+                sunscatter::galaxy::catalog::lookup_system(star.catalog_index)
+                    .map(|s| s.stars.len()).unwrap_or(0) as u8
+            } else { 0 };
             out.push(sunscatter::render::StarRenderData {
                 x: current_x,
                 y: current_y,
@@ -3725,6 +3927,7 @@ fn build_procedural_star_data(
                 orbital_period_s,
                 catalog_name,
                 catalog_index: star.catalog_index,
+                num_catalog_stars,
             });
             if out.len() >= COLLECT_CAP {
                 break 'sectors;
@@ -3746,6 +3949,26 @@ fn build_procedural_star_data(
 
     // Tick galaxy cache (LRU eviction)
     game.galaxy.tick();
+
+    // Sync camera to focused star's current-frame position (fix 1-frame-lag drift).
+    // In the sectored path, the focused star isn't pre-inserted — search the output.
+    // If the focused star fell outside the visible set, fall back to lookup_focused_star.
+    if let Some((sx, sy, si)) = render_state.focused_star_id {
+        let found = out.iter()
+            .find(|s| s.sector_x == sx && s.sector_y == sy && s.sector_index == si)
+            .map(|s| (s.x, s.y));
+        if let Some((fx, fy)) = found {
+            render_state.focused_star_world_pos = Some([fx, fy]);
+            if render_state.tracked_body.is_none() && render_state.tracked_vessel.is_none() {
+                render_state.camera.position[0] = fx * SCALE;
+                render_state.camera.position[1] = fy * SCALE;
+                render_state.camera.body_center = render_state.camera.position;
+                render_state.camera.ship_offset = [0.0, 0.0];
+            }
+        } else if let Some(star_data) = lookup_focused_star(game, sx, sy, si) {
+            sync_focused(render_state, &star_data);
+        }
+    }
 
     out
 }
@@ -3785,6 +4008,10 @@ fn lookup_focused_star(
     } else {
         None
     };
+    let num_catalog_stars = if star.catalog_index > 0 {
+        sunscatter::galaxy::catalog::lookup_system(star.catalog_index)
+            .map(|s| s.stars.len()).unwrap_or(0) as u8
+    } else { 0 };
     Some(sunscatter::render::StarRenderData {
         x: current_x,
         y: current_y,
@@ -3806,6 +4033,7 @@ fn lookup_focused_star(
         orbital_period_s,
         catalog_name,
         catalog_index: star.catalog_index,
+        num_catalog_stars,
     })
 }
 
@@ -4554,6 +4782,7 @@ fn render_tracking_station_frame(
             temperature_k,
             soi_radius_m: Some(body.soi_radius).filter(|r| r.is_finite()),
             is_galactic_orbit,
+            catalog_stars: vec![],
             catalog_planets: vec![],
             catalog_zone: None,
             catalog_distance_ly: None,
@@ -4565,55 +4794,108 @@ fn render_tracking_station_frame(
     render_state.focused_star_info = render_state.focused_star.and_then(|idx| {
         render_state.current_procedural_stars.get(idx).map(|s| {
             use sunscatter::bodies::{galactic_enclosed_mass, calculate_soi};
-            use sunscatter::render::CatalogPlanetInfo;
+            use sunscatter::render::{CatalogPlanetInfo, CatalogStarInfo};
             let mass_kg = s.mass_solar * 1.989e30;
             let soi = calculate_soi(s.semi_major_axis_m, mass_kg, galactic_enclosed_mass(s.semi_major_axis_m)) / 20.0;
             let surface_gravity = G * mass_kg / (s.radius_m * s.radius_m);
 
             // Look up catalog data if this is a named star
             let cat = sunscatter::galaxy::catalog::lookup_system(s.catalog_index);
-            let catalog_planets: Vec<CatalogPlanetInfo> = cat.map(|sys| {
-                sys.bodies.iter().map(|b| CatalogPlanetInfo {
-                    name: b.name.to_string(),
-                    designation: b.designation.to_string(),
-                    temperature_k: b.temperature_k,
-                    gravity_g: b.gravity_g,
-                    habitability: b.habitability,
-                    has_atmosphere: b.atmosphere.is_some(),
-                    has_life: b.has_life,
-                    is_moon: b.is_moon,
-                    is_gas_giant: b.is_gas_giant,
-                }).collect()
-            }).unwrap_or_default();
-            let catalog_zone = cat.map(|sys| sys.zone);
-            let catalog_distance_ly = cat.map(|sys| sys.distance_ly);
-            let catalog_spectral = cat.map(|sys| {
-                sys.stars.iter().map(|st| st.spectral_type).collect::<Vec<_>>().join(" / ")
-            });
+            let is_multi_star = cat.map(|sys| sys.stars.len() > 1).unwrap_or(false);
 
-            BodyInfoData {
-                name: s.format_name(),
-                description: String::new(),
-                radius_m: s.radius_m,
-                surface_gravity_ms2: surface_gravity,
-                mass_kg,
-                atmosphere_pressure_pa: None,
-                atmosphere_height_m: None,
-                orbit_semi_major_axis_m: Some(s.semi_major_axis_m),
-                orbit_eccentricity: Some(s.eccentricity as f64),
-                orbit_period_s: Some(s.orbital_period_s),
-                mineable_resources: vec![],
-                atmospheric_resources: vec![],
-                habitability_score: 0,
-                luminosity_solar: Some(s.luminosity as f64),
-                star_type: Some(s.star_type.to_string()),
-                temperature_k: Some(s.temperature as f64),
-                soi_radius_m: Some(soi),
-                is_galactic_orbit: true,
-                catalog_planets,
-                catalog_zone,
-                catalog_distance_ly,
-                catalog_spectral,
+            if is_multi_star {
+                // Multi-star system: barycenter view
+                let sys = cat.unwrap();
+                let desc = match sys.stars.len() {
+                    2 => "Binary star system",
+                    3 => "Triple star system",
+                    4 => "Quadruple star system",
+                    _ => "Multiple star system",
+                };
+                let catalog_stars: Vec<CatalogStarInfo> = sys.stars.iter().map(|st| CatalogStarInfo {
+                    name: st.name.to_string(),
+                    spectral_type: st.spectral_type.to_string(),
+                    mass_solar: st.mass_solar,
+                    radius_solar: st.radius_solar,
+                    luminosity_solar: st.luminosity_solar,
+                }).collect();
+                let catalog_zone = Some(sys.zone);
+                let catalog_distance_ly = Some(sys.distance_ly);
+                let catalog_spectral = Some(
+                    sys.stars.iter().map(|st| st.spectral_type).collect::<Vec<_>>().join(" / ")
+                );
+
+                BodyInfoData {
+                    name: s.format_name(),
+                    description: desc.to_string(),
+                    radius_m: 0.0,
+                    surface_gravity_ms2: 0.0,
+                    mass_kg: 0.0,
+                    atmosphere_pressure_pa: None,
+                    atmosphere_height_m: None,
+                    orbit_semi_major_axis_m: Some(s.semi_major_axis_m),
+                    orbit_eccentricity: Some(s.eccentricity as f64),
+                    orbit_period_s: Some(s.orbital_period_s),
+                    mineable_resources: vec![],
+                    atmospheric_resources: vec![],
+                    habitability_score: 0,
+                    luminosity_solar: None,
+                    star_type: None,
+                    temperature_k: None,
+                    soi_radius_m: Some(soi),
+                    is_galactic_orbit: true,
+                    catalog_stars,
+                    catalog_planets: vec![],
+                    catalog_zone,
+                    catalog_distance_ly,
+                    catalog_spectral,
+                }
+            } else {
+                // Single star or procedural star
+                let catalog_planets: Vec<CatalogPlanetInfo> = cat.map(|sys| {
+                    sys.bodies.iter().map(|b| CatalogPlanetInfo {
+                        name: b.name.to_string(),
+                        designation: b.designation.to_string(),
+                        temperature_k: b.temperature_k,
+                        gravity_g: b.gravity_g,
+                        habitability: b.habitability,
+                        has_atmosphere: b.atmosphere.is_some(),
+                        has_life: b.has_life,
+                        is_moon: b.is_moon,
+                        is_gas_giant: b.is_gas_giant,
+                    }).collect()
+                }).unwrap_or_default();
+                let catalog_zone = cat.map(|sys| sys.zone);
+                let catalog_distance_ly = cat.map(|sys| sys.distance_ly);
+                let catalog_spectral = cat.map(|sys| {
+                    sys.stars.iter().map(|st| st.spectral_type).collect::<Vec<_>>().join(" / ")
+                });
+
+                BodyInfoData {
+                    name: s.format_name(),
+                    description: String::new(),
+                    radius_m: s.radius_m,
+                    surface_gravity_ms2: surface_gravity,
+                    mass_kg,
+                    atmosphere_pressure_pa: None,
+                    atmosphere_height_m: None,
+                    orbit_semi_major_axis_m: Some(s.semi_major_axis_m),
+                    orbit_eccentricity: Some(s.eccentricity as f64),
+                    orbit_period_s: Some(s.orbital_period_s),
+                    mineable_resources: vec![],
+                    atmospheric_resources: vec![],
+                    habitability_score: 0,
+                    luminosity_solar: Some(s.luminosity as f64),
+                    star_type: Some(s.star_type.to_string()),
+                    temperature_k: Some(s.temperature as f64),
+                    soi_radius_m: Some(soi),
+                    is_galactic_orbit: true,
+                    catalog_stars: vec![],
+                    catalog_planets,
+                    catalog_zone,
+                    catalog_distance_ly,
+                    catalog_spectral,
+                }
             }
         })
     });
@@ -5416,7 +5698,7 @@ fn handle_flight_mouse_input(
                         render_state.focused_star = None;
                         render_state.focused_star_world_pos = None;
                         render_state.focused_star_id = None;
-                    } else if let Some(body_idx) = render_state.body_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
+                    } else if let Some(body_idx) = render_state.body_at_screen_pos_tight(mouse_pos[0], mouse_pos[1]) {
                         let name = render_state.body_names.get(body_idx).cloned().unwrap_or_default();
                         render_state.focus_on_body(body_idx); // Preserves focused_star for catalog planets
                         game.flight.tracking_ship = false;
@@ -5434,6 +5716,11 @@ fn handle_flight_mouse_input(
                             game.flight.tracking_ship = false;
                             println!("Focused on star: {}", star.format_name());
                         }
+                    } else if let Some(body_idx) = render_state.body_at_screen_pos_loose(mouse_pos[0], mouse_pos[1]) {
+                        let name = render_state.body_names.get(body_idx).cloned().unwrap_or_default();
+                        render_state.focus_on_body(body_idx); // Preserves focused_star for catalog planets
+                        game.flight.tracking_ship = false;
+                        println!("Focused on: {}", name);
                     }
                     *last_click_time = None;
                 } else {
@@ -5851,7 +6138,7 @@ fn handle_tracking_station_mouse_input(
             let mut was_double_click = false;
             if let Some(last_time) = *last_click_time {
                 if now.duration_since(last_time) < DOUBLE_CLICK_TIME && dist < DOUBLE_CLICK_DIST {
-                    if let Some(body_idx) = render_state.body_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
+                    if let Some(body_idx) = render_state.body_at_screen_pos_tight(mouse_pos[0], mouse_pos[1]) {
                         let name = render_state.body_names.get(body_idx).cloned().unwrap_or_default();
                         render_state.focus_on_body(body_idx); // Preserves focused_star for catalog planets
                         println!("Focused on: {}", name);
@@ -5869,6 +6156,11 @@ fn handle_tracking_station_mouse_input(
                             println!("Focused on star: {}", star.format_name());
                             was_double_click = true;
                         }
+                    } else if let Some(body_idx) = render_state.body_at_screen_pos_loose(mouse_pos[0], mouse_pos[1]) {
+                        let name = render_state.body_names.get(body_idx).cloned().unwrap_or_default();
+                        render_state.focus_on_body(body_idx); // Preserves focused_star for catalog planets
+                        println!("Focused on: {}", name);
+                        was_double_click = true;
                     }
                     *last_click_time = None;
                 } else {

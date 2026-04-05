@@ -95,11 +95,13 @@ Stars are cached at t=0 positions in sectors. To find stars currently near the c
 
 ### Requirement: solve_kepler_nr(M, e) -> E
 
-Newton-Raphson solver for Kepler's equation M = E − e·sin(E). Initial guess E = M, up to 10 iterations, tolerance 1e-10. All procedural stars have e < 0.6, so convergence is fast.
+Newton-Raphson solver for Kepler's equation M = E − e·sin(E). Reduces the input mean anomaly via `m.rem_euclid(TAU)` at entry so trig calls retain precision when callers pass accumulated angles (`M₀ + n·t`) at high warp. Initial guess E = m, up to 10 iterations, tolerance 1e-10. All procedural stars have e < 0.6, so convergence is fast.
 
 ### Requirement: kepler_position(a, e, arg_peri, mean_anomaly) -> [x, y]
 
-Full pipeline: solve Kepler → true anomaly → r = a(1 − e·cos(E)) → angle = ν + arg_peri → (x, y). Used by both generation (element derivation) and propagation.
+Full pipeline: reduce `mean_anomaly` via `rem_euclid(TAU)` → solve Kepler → true anomaly → r = a(1 − e·cos(E)) → angle = ν + arg_peri → (x, y). Used by both generation (element derivation) and propagation.
+
+The modulo reduction is mandatory: at high time warp (1e12×) and short orbital periods (binary stars, close-in planets), callers pass `M = M₀ + n·game_time` which grows to 1e10+ radians. `sin`/`cos` lose ~log₂(M/2π) bits of precision on large arguments, causing bodies to drift off their statically-rendered orbit lines. Must match `bodies.rs::Orbit::solve_kepler` semantics.
 
 ## Star Classification
 
@@ -151,7 +153,12 @@ During star rendering, each on-screen star's screen pixel coordinates are stored
 
 ### Requirement: Star hover detection
 
-`update_star_hover()` in `interaction.rs` checks stored screen positions to find the closest star within a 20px screen radius. Body hover takes priority — star hover only activates when no body is hovered.
+`update_star_hover()` in `interaction.rs` checks stored screen positions to find the closest star within a 20px screen radius. `update_hover()` uses a three-tier priority so barycenters of multi-star catalog systems display their label correctly:
+1. **Tight body hit** (`dist ≤ body.radius`) — wins over everything
+2. **Procedural star hit** (20px screen radius) — beats body indicator rings
+3. **Body indicator_radius hit** (the soft expanded hit area around small bodies) — fallback
+
+Without this priority, the indicator rings of companion stars in a multi-star system would steal hover from the barycenter dot, hiding the "{name} System" label. Click handlers use the matching tight/star/loose ordering via `body_at_screen_pos_tight()` and `body_at_screen_pos_loose()`.
 
 ### Requirement: Star hover labels
 
@@ -200,7 +207,7 @@ Procedural stars have SOIs computed as `calculate_soi(sma, mass_kg, galactic_enc
 
 ### Requirement: Catalog naming scheme
 
-Procedural stars are named `{PREFIX}-{sector_x:04}-{sector_y:04}-{sector_index:04}`, where PREFIX is the star type catalog prefix (e.g. "G" for G-type main sequence, "WD" for white dwarf, "RG" for red giant, "SG" for supergiant, "NS" for neutron star). Catalog stars (catalog_index > 0) display their real name instead (e.g. "Alpha Centauri", "Sirius"). Names are stable across frames for the same star and are used for cross-frame identity tracking of focused stars.
+Procedural stars are named `{PREFIX}-{sector_x:04}-{sector_y:04}-{sector_index:04}`, where PREFIX is the star type catalog prefix (e.g. "G" for G-type main sequence, "WD" for white dwarf, "RG" for red giant, "SG" for supergiant, "NS" for neutron star). Catalog stars (catalog_index > 0) display their real name instead (e.g. "Alpha Centauri", "Sirius"). Multi-star catalog systems append " System" to the name (e.g. "Alpha Centauri System", "Sirius System"); single-star catalog systems use the plain name. `num_catalog_stars` field on `StarRenderData` drives this suffix (> 1 = multi-star). Names are stable across frames for the same star and are used for cross-frame identity tracking of focused stars.
 
 ## Catalog Stars
 
@@ -232,21 +239,31 @@ At `GalaxyState::new()`, `build_catalog_stars()` converts all 67 catalog systems
 
 Zone 5 systems use `is_sgr_a_orbit = true` flag — their `orbit_sma_ly` field stores AU (not ly), and mean motion uses Sgr A* point mass (8.26e36 kg) instead of enclosed galactic mass.
 
-Multi-star systems (Alpha Centauri, Sirius, etc.) appear as a single dot in the galaxy star field using the primary star's properties. When a multi-star system is focused, companion stars are positioned using `binary_orbits` data and injected as synthetic bodies alongside planets.
+Multi-star systems (Alpha Centauri, Sirius, etc.) appear as a single dot in the galaxy star field using the primary star's properties; the dot represents the system barycenter. When a multi-star system is focused, companion stars are positioned using `binary_orbits` data and injected as synthetic bodies alongside planets. The dot label shows "{name} System" for multi-star systems (e.g. "Alpha Centauri System").
 
 ### Requirement: Multi-star system rendering
 
 19 of the 67 catalog systems are multi-star. Each has a `binary_orbits` array of `StarOrbitData` entries encoding hierarchical stellar pairs (tightest binary first, wider orbits subsequent).
 
 When a multi-star system is focused, `inject_catalog_planets()`:
-1. **Positions companion stars**: For each `StarOrbitData` pair, computes positions around their mutual barycenter using mass-ratio weighting (`r_a = sma * m_b / (m_a + m_b)`, `r_b = sma * m_a / (m_a + m_b)`). The first pair's barycenter is placed at the focused star's position.
-2. **Injects companion stars as synthetic bodies**: Each star gets a colored dot based on spectral type temperature, with stellar radius.
-3. **Routes planets to correct host star**: Uses `host_star_index(designation, num_stars)` to determine which star each planet orbits based on its designation string ("Ab" → star 0, "Bb" → star 1, "Proxima b" → last star, lowercase "b" → star 0).
+1. **Positions companion stars using group-based hierarchical merging**: Each star starts in its own group. For each `StarOrbitData` pair (tightest first), the code finds the groups containing `star_a` and `star_b`, computes the mutual orbit displacement with mass-ratio weighting using each group's total mass (`Δ_a = -r * m_gb / (m_ga + m_gb)`, `Δ_b = +r * m_ga / (m_ga + m_gb)`), and shifts **every** member of each group by its group's delta. The two groups are then merged. A deterministic per-pair phase offset from `(catalog_index, pair_idx)` sets the mean anomaly at t=0 so stars aren't all at periapsis.
+2. **Records orbit info only for single-star groups**: A star's innermost-pair orbit data (local offset at t=0, SMA, eccentricity, period, arg_peri) is captured the first time it is paired — i.e., only when its group has a single member. This prevents wider hierarchical pairs (e.g. Alpha Centauri AB vs Proxima) from overwriting a close pair's data for its already-paired members. After the binary loop, all stars are globally re-centered so the **innermost pair's mass-weighted barycenter** lands at `(star_x, star_y)` — this places the colloquial "main" pair (e.g. Alpha Centauri AB) at the focused dot position rather than the overall system COM (which would sit between AB and Proxima). Local offsets are relative so this shift leaves orbit geometry unchanged.
+3. **Injects companion stars as synthetic bodies**: Each star gets a colored dot based on spectral type temperature, with stellar radius. Each companion star also gets an orbital ellipse rendered around its barycenter (color: star color × 0.4, alpha 0.5, 5120 segments). The barycenter at render time is computed dynamically as `star_position − local_offset`, so wider hierarchical shifts automatically propagate to the close orbit's ellipse center. Star A's orbit uses `arg_peri = π` (flipped) and star B's uses `arg_peri = 0`, ensuring each star is drawn on its ellipse at the correct angular position.
+4. **Builds BodyInfoData for each companion star**: Star type derived from spectral type via `spectral_to_star_type()`, physical properties from `CatalogStar`, planets filtered to only those orbiting this specific star, binary orbit parameters for the orbit section, `is_galactic_orbit = false`.
+5. **Routes planets to correct host star**: Uses `host_star_index(designation, num_stars)` to determine which star each planet orbits based on its designation string ("Ab" → star 0, "Bb" → star 1, "Proxima b" → last star, lowercase "b" → star 0).
 
 #### Scenario: Binary star orbit computation
 - **GIVEN** a `StarOrbitData` with `star_a=0, star_b=1, sma_au=23.7, ecc=0.52, period_years=79.9`
-- **THEN** compute mean anomaly from game time, solve Kepler equation for position vector
+- **THEN** compute mean anomaly from game time plus a deterministic per-pair phase offset, solve Kepler equation for position vector
 - **AND** place star A at `barycenter - r * m_b/(m_a+m_b)`, star B at `barycenter + r * m_a/(m_a+m_b)`
+- **AND** render A's orbit with `arg_peri = π` and B's with `arg_peri = 0` so each star sits on its ellipse
+
+#### Scenario: Hierarchical triple system (Alpha Centauri)
+- **GIVEN** `binary_orbits = [(A, B, 23.7 AU), (A, Proxima, 8700 AU)]`
+- **WHEN** the second pair is processed, group_a = {A, B} with mass m_a + m_b, group_b = {Proxima}
+- **THEN** both A and B shift together by `-rel2 * m_proxima / total`, Proxima shifts by `+rel2 * (m_a + m_b) / total`
+- **AND** A's close orbit (10.7 AU around the AB barycenter) is preserved — its orbit info from the first pair is not overwritten
+- **AND** A's rendered orbit ellipse has center = A's current position minus A's pair-1 local offset, so the AB barycenter tracks its wide-orbit motion
 
 #### Scenario: Planet host star routing
 - **GIVEN** a planet with designation "Bb" in a 3-star system
@@ -307,21 +324,42 @@ When a catalog planet is tracked in the tracking station (`tracked_body >= num_r
 
 When a catalog star is focused (catalog_index > 0), the info panel shows additional sections after the standard stellar properties:
 
-- **System Info** — zone number, distance from Sol (ly), spectral type(s) for multi-star systems, star count
-- **Planetary System** — compact listing of all planets and moons with:
+**Single-star systems**: standard star info panel with all planets listed.
+
+**Multi-star systems (barycenter view)**:
+- Name: "{system name} System" (e.g. "Alpha Centauri System")
+- Description: "Binary/Triple/Quadruple star system" (italic, gray)
+- Physical properties and stellar properties sections are **hidden** (radius_m == 0.0 guard)
+- **Component Stars** section: each star listed with name (light blue, 180/200/255), spectral type / mass / luminosity on second line (gray)
+- No planets listed at barycenter level (planets are on individual star info panels)
+- System Info section: zone, distance, spectral types
+- Galactic orbit section preserved
+
+**Individual companion stars** (double-click on a companion star):
+- Standard star info panel with physical/stellar properties
+- Planetary System section shows **only planets orbiting this specific star** (filtered by `host_star_index()`)
+- Orbit section shows the stellar orbit around the barycenter (not galactic orbit)
+- `is_galactic_orbit = false` for stellar orbits
+
+Common sections across all catalog star views:
+- **System Info** — zone number, distance from Sol (ly), spectral type(s), star count
+- **Planetary System** — compact listing of planets and moons with:
   - Designation and name
   - Temperature (K), surface gravity (g), habitability score
   - Atmosphere indicator
   - Life indicator (gold text for worlds with life)
   - Color coding: gold for life worlds, green for habitability > 30, gray otherwise
 
-### Requirement: CatalogPlanetInfo in BodyInfoData
+### Requirement: CatalogPlanetInfo and CatalogStarInfo in BodyInfoData
 
 `BodyInfoData` includes catalog-specific fields:
+- `catalog_stars: Vec<CatalogStarInfo>` — component star data for multi-star system barycenter info panel
 - `catalog_planets: Vec<CatalogPlanetInfo>` — planet/moon summary data for the info panel
 - `catalog_zone: Option<u8>` — zone number (1–5)
 - `catalog_distance_ly: Option<f32>` — distance from Sol in light-years
 - `catalog_spectral: Option<String>` — spectral type string(s) for all stellar components (e.g. "G2V / K1V / M5.5Ve")
+
+`CatalogStarInfo` contains: name, spectral_type, mass_solar, radius_solar, luminosity_solar.
 
 `CatalogPlanetInfo` contains: name, designation, temperature_k, gravity_g, habitability, has_atmosphere, has_life, is_moon, is_gas_giant.
 
@@ -333,10 +371,10 @@ When a catalog star is focused (catalog_index > 0), the info panel shows additio
 - `src/galaxy/catalog.rs` — CatalogSystem/CatalogStar/CatalogBody/CatalogAtmosphere/StarOrbitData data structures, host_star_index() helper, build_catalog_stars() builder, lookup_system() lookup function
 - `src/galaxy/catalog/catalog_data.rs` — Static CATALOG array with all 67 named star systems (318 bodies), binary_orbits data for 19 multi-star systems
 - `src/main.rs` — `build_procedural_star_data()`: backward rotation, distance-ordered sectors, Kepler propagation, MAX_STARS cap, star metadata population, catalog name lookup; `lookup_focused_star()`: resolves focused star by name from galaxy cache when below visibility threshold, catalog name lookup; focused star info builder: catalog data lookup for planets/zone/spectral info; star double-click handling in flight and tracking station
-- `src/render/scene.rs` — StarRenderData struct (with catalog_name, catalog_index), format_name() returns real name for catalog stars, adaptive dot/circle rendering, screen position storage
+- `src/render/scene.rs` — StarRenderData struct (with catalog_name, catalog_index, num_catalog_stars), format_name() returns real name for catalog stars (with " System" suffix for multi-star), adaptive dot/circle rendering, screen position storage
 - `src/render/state.rs` — Star hover/focus state fields on RenderState, catalog_body_info HashMap for exoplanet info panels
 - `src/render/interaction.rs` — `update_star_hover()`, `star_at_screen_pos()`, star focus tracking in `update_tracking()`
 - `src/render/menus.rs` — Star hover labels and info panel in tracking station, catalog system info and planetary system sections
 - `src/render/flight.rs` — Star hover labels in flight mode
-- `src/render/types.rs` — BodyInfoData with luminosity_solar, star_type, temperature_k, soi_radius_m, is_galactic_orbit, catalog_planets, catalog_zone, catalog_distance_ly, catalog_spectral fields; CatalogPlanetInfo struct; OrbitRenderData with per-orbit segments field
+- `src/render/types.rs` — BodyInfoData with luminosity_solar, star_type, temperature_k, soi_radius_m, is_galactic_orbit, catalog_stars, catalog_planets, catalog_zone, catalog_distance_ly, catalog_spectral fields; CatalogStarInfo struct; CatalogPlanetInfo struct; OrbitRenderData with per-orbit segments field
 - `src/bodies.rs` — `calculate_soi()` (public), `galactic_enclosed_mass()` used for star SOI computation

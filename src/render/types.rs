@@ -499,6 +499,15 @@ pub enum SelectedTarget {
     Vessel(u64),
 }
 
+/// Compact star info for multi-star system barycenter info panel
+pub struct CatalogStarInfo {
+    pub name: String,
+    pub spectral_type: String,
+    pub mass_solar: f64,
+    pub radius_solar: f64,
+    pub luminosity_solar: f64,
+}
+
 /// Compact planet/moon info for the catalog star info panel
 pub struct CatalogPlanetInfo {
     pub name: String,
@@ -533,6 +542,7 @@ pub struct BodyInfoData {
     pub soi_radius_m: Option<f64>,      // SOI radius in meters
     pub is_galactic_orbit: bool,        // true → orbit section uses pc/kpc formatting
     // Catalog star extended info
+    pub catalog_stars: Vec<CatalogStarInfo>,
     pub catalog_planets: Vec<CatalogPlanetInfo>,
     pub catalog_zone: Option<u8>,
     pub catalog_distance_ly: Option<f32>,

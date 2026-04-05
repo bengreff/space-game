@@ -416,49 +416,70 @@ impl RenderState {
                             }
                             ui.separator();
 
-                            // Physical properties
-                            ui.label(egui::RichText::new("Physical Properties").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
-                            ui.add_space(2.0);
-                            const R_SUN: f64 = 6.957e8;
-                            const M_SUN: f64 = 1.989e30;
-                            if is_star {
-                                // Stars: radius in solar radii + metric
-                                let radius_solar = info.radius_m / R_SUN;
-                                if radius_solar >= 1.0 {
-                                    ui.label(format!("Radius: {:.2} R\u{2609}", radius_solar));
-                                } else {
-                                    ui.label(format!("Radius: {:.4} R\u{2609}", radius_solar));
-                                }
-                                ui.label(format!("  ({})", format_distance(info.radius_m)));
-                            } else {
-                                ui.label(format!("Radius: {}", format_distance(info.radius_m)));
-                            }
-                            ui.label(format!("Surface gravity: {:.2} m/s\u{b2}", info.surface_gravity_ms2));
-                            if is_star {
-                                let mass_solar = info.mass_kg / M_SUN;
-                                ui.label(format!("Mass: {:.2} M\u{2609}", mass_solar));
-                            } else {
-                                ui.label(format!("Mass: {}", format_mass(info.mass_kg)));
-                            }
-
-                            // Stellar properties (for stars)
-                            if is_star {
-                                ui.add_space(4.0);
-                                ui.separator();
-                                ui.label(egui::RichText::new("Stellar Properties").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                            // Physical properties (skip for barycenters where radius_m == 0)
+                            if info.radius_m > 0.0 {
+                                ui.label(egui::RichText::new("Physical Properties").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
                                 ui.add_space(2.0);
-                                if let Some(lum) = info.luminosity_solar {
-                                    if lum >= 1.0 {
-                                        ui.label(format!("Luminosity: {:.1} L\u{2609}", lum));
+                                const R_SUN: f64 = 6.957e8;
+                                const M_SUN: f64 = 1.989e30;
+                                if is_star {
+                                    // Stars: radius in solar radii + metric
+                                    let radius_solar = info.radius_m / R_SUN;
+                                    if radius_solar >= 1.0 {
+                                        ui.label(format!("Radius: {:.2} R\u{2609}", radius_solar));
                                     } else {
-                                        ui.label(format!("Luminosity: {:.4} L\u{2609}", lum));
+                                        ui.label(format!("Radius: {:.4} R\u{2609}", radius_solar));
+                                    }
+                                    ui.label(format!("  ({})", format_distance(info.radius_m)));
+                                } else {
+                                    ui.label(format!("Radius: {}", format_distance(info.radius_m)));
+                                }
+                                ui.label(format!("Surface gravity: {:.2} m/s\u{b2}", info.surface_gravity_ms2));
+                                if is_star {
+                                    let mass_solar = info.mass_kg / M_SUN;
+                                    ui.label(format!("Mass: {:.2} M\u{2609}", mass_solar));
+                                } else {
+                                    ui.label(format!("Mass: {}", format_mass(info.mass_kg)));
+                                }
+
+                                // Stellar properties (for stars)
+                                if is_star {
+                                    ui.add_space(4.0);
+                                    ui.separator();
+                                    ui.label(egui::RichText::new("Stellar Properties").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                                    ui.add_space(2.0);
+                                    if let Some(lum) = info.luminosity_solar {
+                                        if lum >= 1.0 {
+                                            ui.label(format!("Luminosity: {:.1} L\u{2609}", lum));
+                                        } else {
+                                            ui.label(format!("Luminosity: {:.4} L\u{2609}", lum));
+                                        }
+                                    }
+                                    if let Some(temp) = info.temperature_k {
+                                        ui.label(format!("Temperature: {:.0} K", temp));
+                                    }
+                                    if let Some(soi) = info.soi_radius_m {
+                                        ui.label(format!("SOI: {}", format_distance(soi)));
                                     }
                                 }
-                                if let Some(temp) = info.temperature_k {
-                                    ui.label(format!("Temperature: {:.0} K", temp));
-                                }
-                                if let Some(soi) = info.soi_radius_m {
-                                    ui.label(format!("SOI: {}", format_distance(soi)));
+                            }
+
+                            // Component Stars section (for multi-star system barycenters)
+                            if !info.catalog_stars.is_empty() {
+                                ui.add_space(4.0);
+                                ui.separator();
+                                ui.label(egui::RichText::new("Component Stars").size(13.0).color(egui::Color32::from_rgb(200, 200, 200)));
+                                ui.add_space(2.0);
+                                for cs in &info.catalog_stars {
+                                    ui.label(egui::RichText::new(&cs.name)
+                                        .size(12.0)
+                                        .color(egui::Color32::from_rgb(180, 200, 255)));
+                                    ui.label(egui::RichText::new(format!(
+                                        "  {} | {:.2} M\u{2609} | {:.4} L\u{2609}",
+                                        cs.spectral_type, cs.mass_solar, cs.luminosity_solar
+                                    ))
+                                        .size(11.0)
+                                        .color(egui::Color32::from_rgb(140, 140, 140)));
                                 }
                             }
 

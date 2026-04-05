@@ -42,7 +42,7 @@ The tracking station provides a solar system observatory view. It renders all ce
   - Body name as heading (18pt, white)
   - Description in italic gray (12pt) if non-empty
   - Separator
-  - "Physical Properties" subheading: radius (auto-scaled units), surface gravity (m/s^2), mass (scientific notation)
+  - "Physical Properties" subheading (hidden when `radius_m == 0.0`, i.e. for barycenters): radius (auto-scaled units), surface gravity (m/s^2), mass (scientific notation)
   - Atmosphere section: surface pressure (Pa/kPa/atm) and visible height, or "No atmosphere" in gray
   - "Orbit" section (hidden for root body): semi-major axis, eccentricity, orbital period
   - "Colony Prospects" section (hidden if body has no resources and habitability 0):
@@ -65,6 +65,7 @@ The tracking station provides a solar system observatory view. It renders all ce
 - Solar system simulation runs with time warp
 - All vessels are in `inactive_vessels` (no active vessel) and propagate on rails; deleted if orbit periapsis below surface AND vessel is in atmosphere/below landing altitude
 - Camera tracking follows focused body (via `render_state.update_tracking()`) or focused vessel (via `render_state.tracked_vessel`)
+- Focused-catalog-star tracking is synced INSIDE `build_procedural_star_data` (not via `update_tracking`): when the focused star's current-frame position is computed, `focused_star_world_pos` and `camera.body_center` are updated immediately, before `inject_catalog_planets` runs. This prevents a 1-frame lag at high time warp (at 1e12× warp, galactic motion per frame is ~3.7e15 m, which would otherwise make companion stars and planets drift off their orbit lines).
 
 ### Navigation
 - Escape key pauses (shows pause overlay with "Main Menu" button)

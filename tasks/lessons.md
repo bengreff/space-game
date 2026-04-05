@@ -36,6 +36,20 @@
 
 **Rule**: When two systems must agree on a position, verify they use the SAME math pipeline. Search for ALL callers of the relevant position computation, not just the one being fixed. In this codebase: bodies.rs has its own Kepler solver separate from galaxy/mod.rs.
 
+## Reduce Mean Anomaly Mod TAU Before sin/cos (2026-04-05)
+
+**Mistake**: `galaxy::kepler_position()` and `galaxy::solve_kepler_nr()` called `sin()`/`cos()` directly on raw `mean_anomaly = M₀ + n·game_time`. At high time warp (1e12×), game_time grows to 1e15+ seconds in real gameplay, and for short-period orbits (binary stars, close-in planets) the mean anomaly reaches 1e10+ radians. `sin()`/`cos()` internally reduce large arguments mod 2π, losing ~log₂(M/2π) bits of precision. Orbiting bodies then drift off their orbit lines (which are rendered as static parametric ellipses, unaffected by this precision loss). This was a RECURRING bug — every feature that propagated orbits through galaxy's Kepler solver (catalog stars, catalog planets, binary stars) inherited it until `bodies.rs::Orbit::solve_kepler`'s pattern was ported over.
+
+**Rule**: Any Kepler solver / position function that takes `mean_anomaly` as input MUST reduce it via `mean_anomaly.rem_euclid(TAU)` at entry, BEFORE calling sin/cos or doing Newton-Raphson. This is the only way to preserve precision when callers pass accumulated angles like `M₀ + n·t`. Match the exact pattern in `bodies.rs::Orbit::solve_kepler` (line 190). When adding a new function that works with mean anomaly, start with the reduction as line 1.
+
+## Camera-Body Frame Sync at High Warp (2026-04-05)
+
+**Mistake**: When focused on a catalog star orbiting Sgr A* (not the Sun), orbiting bodies drifted off their orbit lines at high time warp (1e12×). The bug: `update_tracking` read `focused_star_world_pos` which was only updated during `scene.rs` rendering (end of frame). So frame N's camera tracked the star's position from frame N-1, while `inject_catalog_planets` positioned companion stars/planets around the star's CURRENT frame-N position. At max warp, galactic orbital motion per frame is ~3.7e15 m, creating massive on-screen drift.
+
+The Sun doesn't exhibit this because it's a real body tracked via `tracked_body` against `scaled_positions`, which are computed fresh each frame BEFORE `update_tracking` runs. Catalog stars go through the `focused_star_world_pos` path instead, which had no same-frame update.
+
+**Rule**: When the camera tracks a body whose position is computed mid-frame (not from a pre-built positions array), the camera must be updated INLINE at the point the position is computed — not in a later render pass. For `build_procedural_star_data`, this means: when the focused star's `current_x, current_y` are computed, immediately write them to `focused_star_world_pos` AND `camera.body_center` (if no body/vessel is tracked). The `update_tracking` call before `build_procedural_star_data` is stale by 1 frame; the inline sync inside `build_procedural_star_data` fixes it.
+
 ## Check for Existing Layer 0 Code (2026-03-21)
 
 **Mistake**: When implementing Layer 1, assumed all code needed to be written from scratch. Layer 0 had already implemented many stubs (establish_colony, update_colonies, simulation.rs, notification.rs, colony part, gas giant flag). This caused duplicate fields, methods, and imports.

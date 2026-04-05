@@ -89,7 +89,12 @@ pub struct ProceduralStar {
 
 /// Solve Kepler's equation M = E - e·sin(E) via Newton-Raphson.
 /// Returns eccentric anomaly E in radians.
+///
+/// Reduces `m` modulo TAU before iterating so sin/cos retain precision when
+/// callers pass large accumulated mean anomalies (e.g. `M₀ + n·game_time` at
+/// high time warp). Must match `bodies.rs::Orbit::solve_kepler` semantics.
 pub fn solve_kepler_nr(m: f64, e: f64) -> f64 {
+    let m = m.rem_euclid(std::f64::consts::TAU);
     let mut big_e = m; // initial guess
     for _ in 0..10 {
         let sin_e = big_e.sin();
@@ -112,7 +117,15 @@ pub fn solve_kepler_nr(m: f64, e: f64) -> f64 {
 ///
 /// Uses a first-order expansion for e < 0.1 (covers ~80%+ of stars),
 /// avoiding Newton-Raphson entirely. Full NR for higher eccentricities.
+///
+/// The mean anomaly is reduced modulo TAU at entry. This is CRITICAL for
+/// precision at high time warp: callers compute `M = M₀ + mean_motion · game_time`,
+/// which can reach 1e10+ radians after extended play at max warp. Passing such a
+/// large value directly to sin/cos loses ~log₂(M/2π) bits of precision, causing
+/// orbiting bodies to drift off their (static, parametrically rendered) orbit
+/// lines. Matches the pattern in `bodies.rs::Orbit::solve_kepler`.
 pub fn kepler_position(a: f64, e: f64, arg_peri: f64, mean_anomaly: f64) -> [f64; 2] {
+    let mean_anomaly = mean_anomaly.rem_euclid(std::f64::consts::TAU);
     if e < 0.1 {
         // First-order expansion: ν ≈ M + 2e·sin(M), r ≈ a·(1 − e·cos(M))
         // Error O(e²) ≈ 0.01 rad at e=0.1, negligible for rendering

@@ -32,13 +32,19 @@ pub struct StarRenderData {
     // Catalog star fields (None/0 for procedural stars)
     pub catalog_name: Option<&'static str>,
     pub catalog_index: u16,
+    pub num_catalog_stars: u8,  // number of stars in catalog system (0 for procedural)
 }
 
 impl StarRenderData {
     /// Format the display name: real name for catalog stars, procedural ID otherwise.
+    /// Multi-star catalog systems get " System" suffix.
     pub fn format_name(&self) -> String {
         if let Some(name) = self.catalog_name {
-            name.to_string()
+            if self.num_catalog_stars > 1 {
+                format!("{} System", name)
+            } else {
+                name.to_string()
+            }
         } else {
             format!("{}-{:04}-{:04}-{:04}", self.catalog_prefix, self.sector_x, self.sector_y, self.sector_index)
         }

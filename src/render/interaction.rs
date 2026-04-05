@@ -1,7 +1,10 @@
 use super::state::RenderState;
 
 impl RenderState {
-    /// Update hover state based on mouse position
+    /// Update hover state based on mouse position.
+    /// Priority order: tight body radius > procedural star > body indicator_radius.
+    /// This lets a barycenter's focused-star dot beat the extended hit rings of
+    /// nearby companion stars in a multi-star catalog system.
     pub fn update_hover(&mut self, screen_x: f32, screen_y: f32) {
         let world_pos = self.camera.screen_to_world(
             screen_x,
@@ -11,69 +14,62 @@ impl RenderState {
         );
 
         self.hovered_body = None;
-        let mut closest_dist = f64::MAX;
+        self.hovered_star = None;
 
+        // Pass 1: tight body hit (dist <= body.radius). Wins over everything.
+        let mut closest_tight_dist = f64::MAX;
         for (i, body) in self.bodies.iter().enumerate() {
-            // Skip hidden bodies (radius=0, indicator_radius=0)
-            if body.radius <= 0.0 && body.indicator_radius <= 0.0 {
-                continue;
-            }
-
+            if body.radius <= 0.0 { continue; }
             let dx = world_pos[0] - body.x;
             let dy = world_pos[1] - body.y;
             let dist = (dx * dx + dy * dy).sqrt();
-
-            // Use indicator radius if present, otherwise body radius
-            let hover_radius = if body.indicator_radius > 0.0 {
-                body.indicator_radius
-            } else {
-                body.radius
-            };
-
-            if dist <= hover_radius && dist < closest_dist {
-                closest_dist = dist;
+            if dist <= body.radius && dist < closest_tight_dist {
+                closest_tight_dist = dist;
                 self.hovered_body = Some(i);
             }
         }
+        if self.hovered_body.is_some() { return; }
 
-        // Also check procedural stars (body hover takes priority)
-        if self.hovered_body.is_none() {
-            self.update_star_hover(screen_x, screen_y);
-        } else {
-            self.hovered_star = None;
-        }
-    }
+        // Pass 2: procedural star hover (20px screen radius). Beats indicator_radius
+        // so barycenters of multi-star systems win over nearby companion bodies.
+        self.update_star_hover(screen_x, screen_y);
+        if self.hovered_star.is_some() { return; }
 
-    /// Find body at screen position, returns index of closest body within click range
-    pub fn body_at_screen_pos(&self, screen_x: f32, screen_y: f32) -> Option<usize> {
-        let world_pos = self.camera.screen_to_world(
-            screen_x,
-            screen_y,
-            self.size.width as f32,
-            self.size.height as f32,
-        );
-
-        let mut closest: Option<(usize, f64)> = None;
-
+        // Pass 3: body indicator_radius hit (soft expanded hit area).
+        let mut closest_loose_dist = f64::MAX;
         for (i, body) in self.bodies.iter().enumerate() {
-            // Skip hidden bodies (radius=0, indicator_radius=0)
-            if body.radius <= 0.0 && body.indicator_radius <= 0.0 {
-                continue;
-            }
-
+            if body.indicator_radius <= 0.0 { continue; }
             let dx = world_pos[0] - body.x;
             let dy = world_pos[1] - body.y;
             let dist = (dx * dx + dy * dy).sqrt();
+            if dist <= body.indicator_radius && dist < closest_loose_dist {
+                closest_loose_dist = dist;
+                self.hovered_body = Some(i);
+            }
+        }
+    }
 
-            // Use indicator radius if present, otherwise use body radius with minimum
-            let click_radius = if body.indicator_radius > 0.0 {
-                body.indicator_radius
-            } else {
-                body.radius
-            };
+    /// Find body at screen position using tight hits first (dist <= body.radius), falling
+    /// back to indicator_radius hits. Callers that want star priority should use
+    /// `body_at_screen_pos_tight` + `star_at_screen_pos` + `body_at_screen_pos_loose`.
+    pub fn body_at_screen_pos(&self, screen_x: f32, screen_y: f32) -> Option<usize> {
+        self.body_at_screen_pos_tight(screen_x, screen_y)
+            .or_else(|| self.body_at_screen_pos_loose(screen_x, screen_y))
+    }
 
-            if dist <= click_radius {
-                // Select closest body center to click point
+    /// Find body at screen position using tight radius only (no indicator ring).
+    pub fn body_at_screen_pos_tight(&self, screen_x: f32, screen_y: f32) -> Option<usize> {
+        let world_pos = self.camera.screen_to_world(
+            screen_x, screen_y,
+            self.size.width as f32, self.size.height as f32,
+        );
+        let mut closest: Option<(usize, f64)> = None;
+        for (i, body) in self.bodies.iter().enumerate() {
+            if body.radius <= 0.0 { continue; }
+            let dx = world_pos[0] - body.x;
+            let dy = world_pos[1] - body.y;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist <= body.radius {
                 match closest {
                     None => closest = Some((i, dist)),
                     Some((_, prev_dist)) if dist < prev_dist => closest = Some((i, dist)),
@@ -81,7 +77,29 @@ impl RenderState {
                 }
             }
         }
+        closest.map(|(i, _)| i)
+    }
 
+    /// Find body at screen position using indicator_radius only (soft hit ring).
+    pub fn body_at_screen_pos_loose(&self, screen_x: f32, screen_y: f32) -> Option<usize> {
+        let world_pos = self.camera.screen_to_world(
+            screen_x, screen_y,
+            self.size.width as f32, self.size.height as f32,
+        );
+        let mut closest: Option<(usize, f64)> = None;
+        for (i, body) in self.bodies.iter().enumerate() {
+            if body.indicator_radius <= 0.0 { continue; }
+            let dx = world_pos[0] - body.x;
+            let dy = world_pos[1] - body.y;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist <= body.indicator_radius {
+                match closest {
+                    None => closest = Some((i, dist)),
+                    Some((_, prev_dist)) if dist < prev_dist => closest = Some((i, dist)),
+                    _ => {}
+                }
+            }
+        }
         closest.map(|(i, _)| i)
     }
 

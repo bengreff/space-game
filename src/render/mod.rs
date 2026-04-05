@@ -22,7 +22,7 @@ pub use geometry::{create_circle, create_ring, create_ship_triangle};
 pub use state::RenderState;
 pub use colony_ui::ColonyScreenAction;
 pub use types::{
-    BodyData, BodyInfoData, CatalogPlanetInfo, ColonyOverviewAction, MainMenuAction,
+    BodyData, BodyInfoData, CatalogPlanetInfo, CatalogStarInfo, ColonyOverviewAction, MainMenuAction,
     ManagementAction, ManeuverDeltaV, ManeuverNode, OrbitRenderData,
     OrbitSegmentData, PauseAction, PorkchopGrid, PorkchopPoint, RcsNozzleState, SelectedTarget,
     ShipOrbitData, ShipPartRenderData, ShipRenderData, StagedPartInfo, TargetPopup,
