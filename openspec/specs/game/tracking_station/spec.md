@@ -49,8 +49,9 @@ The tracking station provides a solar system observatory view. It renders all ce
     - Habitability score (X/100)
     - "Mineable Resources" list (if any) — resource display names, indented
     - "Atmospheric Resources" list (if any) — resource display names, indented
+  - "Moons (N)" section for non-star bodies that have child bodies in the solar system. Lists each child with name, gravity (g), habitability, atmosphere indicator, and (for catalog bodies) temperature. Uses the same `CatalogPlanetInfo` rendering as catalog planet moon lists, without indentation. For Sol bodies the `temperature_k` field is 0 and the temperature row is omitted.
 - Orbital period computed as `T = 2pi * sqrt(a^3 / mu)` where `mu = G * parent_mass`
-- `BodyInfoData` struct passed from `main.rs`, built from `SolarSystem.bodies` and `CelestialBody` colony fields
+- `BodyInfoData` struct passed from `main.rs`, built from `SolarSystem.bodies` and `CelestialBody` colony fields. The `catalog_planets` field is populated with each body's children (moons for planets, planets for stars — tagged `is_moon: false` when the parent is a star, `is_moon: true` when the parent is a planet) so the info panel can list them.
 
 ### Camera Controls
 - Left-click drag: pan camera (clears body and vessel tracking)

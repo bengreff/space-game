@@ -239,7 +239,7 @@ At `GalaxyState::new()`, `build_catalog_stars()` converts all 67 catalog systems
 
 Zone 5 systems use `is_sgr_a_orbit = true` flag — their `orbit_sma_ly` field stores AU (not ly), and mean motion uses Sgr A* point mass (8.26e36 kg) instead of enclosed galactic mass.
 
-Multi-star systems (Alpha Centauri, Sirius, etc.) appear as a single dot in the galaxy star field using the primary star's properties; the dot represents the system barycenter. When a multi-star system is focused, companion stars are positioned using `binary_orbits` data and injected as synthetic bodies alongside planets. The dot label shows "{name} System" for multi-star systems (e.g. "Alpha Centauri System").
+Multi-star systems (Alpha Centauri, Sirius, etc.) appear as a single dot in the galaxy star field using the primary star's properties; the dot represents the primary star's position. When a multi-star system is focused, the procedural star dot is hidden (companion star bodies replace it visually), and companion stars are positioned using `binary_orbits` data and injected as synthetic bodies alongside planets. The dot label shows "{name} System" for multi-star systems (e.g. "Alpha Centauri System").
 
 ### Requirement: Multi-star system rendering
 
@@ -247,10 +247,11 @@ Multi-star systems (Alpha Centauri, Sirius, etc.) appear as a single dot in the 
 
 When a multi-star system is focused, `inject_catalog_planets()`:
 1. **Positions companion stars using group-based hierarchical merging**: Each star starts in its own group. For each `StarOrbitData` pair (tightest first), the code finds the groups containing `star_a` and `star_b`, computes the mutual orbit displacement with mass-ratio weighting using each group's total mass (`Δ_a = -r * m_gb / (m_ga + m_gb)`, `Δ_b = +r * m_ga / (m_ga + m_gb)`), and shifts **every** member of each group by its group's delta. The two groups are then merged. A deterministic per-pair phase offset from `(catalog_index, pair_idx)` sets the mean anomaly at t=0 so stars aren't all at periapsis.
-2. **Records orbit info only for single-star groups**: A star's innermost-pair orbit data (local offset at t=0, SMA, eccentricity, period, arg_peri) is captured the first time it is paired — i.e., only when its group has a single member. This prevents wider hierarchical pairs (e.g. Alpha Centauri AB vs Proxima) from overwriting a close pair's data for its already-paired members. After the binary loop, all stars are globally re-centered so the **innermost pair's mass-weighted barycenter** lands at `(star_x, star_y)` — this places the colloquial "main" pair (e.g. Alpha Centauri AB) at the focused dot position rather than the overall system COM (which would sit between AB and Proxima). Local offsets are relative so this shift leaves orbit geometry unchanged.
+2. **Records orbit info only for single-star groups**: A star's innermost-pair orbit data (local offset at t=0, SMA, eccentricity, period, arg_peri) is captured the first time it is paired — i.e., only when its group has a single member. This prevents wider hierarchical pairs (e.g. Alpha Centauri AB vs Proxima) from overwriting a close pair's data for its already-paired members. After the binary loop, all stars are globally re-centered so the **primary star (star[0])** lands at `(star_x, star_y)` — this places the primary (e.g. Alpha Centauri A, Regulus A, 40 Eridani A) at the focused dot position. Local offsets are relative so this shift leaves orbit geometry unchanged.
 3. **Injects companion stars as synthetic bodies**: Each star gets a colored dot based on spectral type temperature, with stellar radius. Each companion star also gets an orbital ellipse rendered around its barycenter (color: star color × 0.4, alpha 0.5, 5120 segments). The barycenter at render time is computed dynamically as `star_position − local_offset`, so wider hierarchical shifts automatically propagate to the close orbit's ellipse center. Star A's orbit uses `arg_peri = π` (flipped) and star B's uses `arg_peri = 0`, ensuring each star is drawn on its ellipse at the correct angular position.
+3b. **Adds group-level orbit lines for hierarchical pairs**: When a pair merges two groups where at least one has multiple members, the group's barycenter orbit around the combined barycenter is recorded. After all companion stars are pushed, these group orbits are emitted as additional orbit-only entries (gray color `[0.5, 0.5, 0.5, 0.3]`, 5120 segments). This shows the wide orbit connecting two sub-groups — e.g., how {A, WD} and {B, C} orbit each other at 4200 AU in Regulus, or how the AB group and C pair relate at 1100 AU in Castor.
 4. **Builds BodyInfoData for each companion star**: Star type derived from spectral type via `spectral_to_star_type()`, physical properties from `CatalogStar`, planets filtered to only those orbiting this specific star, binary orbit parameters for the orbit section, `is_galactic_orbit = false`.
-5. **Routes planets to correct host star**: Uses `host_star_index(designation, num_stars)` to determine which star each planet orbits based on its designation string ("Ab" → star 0, "Bb" → star 1, "Proxima b" → last star, lowercase "b" → star 0).
+5. **Routes planets to correct host star**: Uses `host_star_index(designation, stars)` to determine which star each planet orbits. The function searches the stars array by name — for designation "Bb", it finds the first star whose name has a word starting with 'B' (e.g. "Regulus B" at index 2, skipping "Regulus A companion" at index 1). Parenthetical words like "(YY Gem)" are skipped. Fallback rules: "Proxima ..." → last star, "AB..." → primary, bare lowercase "b" → star 0.
 
 #### Scenario: Binary star orbit computation
 - **GIVEN** a `StarOrbitData` with `star_a=0, star_b=1, sma_au=23.7, ecc=0.52, period_years=79.9`
@@ -273,6 +274,20 @@ When a multi-star system is focused, `inject_catalog_planets()`:
 #### Scenario: Single star system (unchanged)
 - **GIVEN** a system with `binary_orbits: &[]`
 - **THEN** all planets orbit the focused star's position (no companion star positioning)
+
+#### Scenario: Focused multi-star system dot suppression
+- **GIVEN** a focused star with `num_catalog_stars > 1`
+- **WHEN** `add_procedural_stars_impl` renders the star field
+- **THEN** the focused star's procedural dot (hexagon/circle) is suppressed (no vertices generated)
+- **AND** the star's screen position is still recorded for hover/click hit testing
+- **AND** companion star bodies from `inject_catalog_planets()` replace the dot visually
+
+#### Scenario: Hierarchical quadruple system with group orbits (Regulus)
+- **GIVEN** `binary_orbits = [(A, WD, 0.35 AU), (B, C, 100 AU), (A, B, 4200 AU)]`
+- **WHEN** the third pair merges group {A, WD} (2 members) and group {B, C} (2 members)
+- **THEN** individual orbit lines show A and WD orbiting their tight barycenter, B and C orbiting their barycenter
+- **AND** two group-level orbit lines show {A,WD} barycenter and {B,C} barycenter orbiting the combined barycenter at 4200 AU
+- **AND** group orbit lines use dimmed gray color `[0.5, 0.5, 0.5, 0.3]`
 
 ### Requirement: Catalog star positioning from Sun's actual t=0 position
 
@@ -298,27 +313,32 @@ At runtime, stars are propagated purely via their corrected Kepler elements (no 
 
 When a star is focused, its galactic orbit ellipse is drawn around the galactic center (0,0) using the star's orbital elements (SMA, eccentricity, argument of periapsis). The orbit is rendered as a thick line strip (dual-vertex with perpendicular offset for width). Segment count: 5120 for catalog stars (smooth at high zoom), 512 for procedural stars.
 
-### Requirement: Catalog planet indicator rings
+### Requirement: Catalog planet and moon indicator rings
 
-For each visible catalog star (catalog_index > 0), planet indicator rings are drawn at orbital positions around the star:
-- Each non-moon planet gets a 10px outer / 70% inner ring indicator at its orbit position
-- Planet angular position uses a deterministic initial angle from body index (`body_idx * 2.399`) propagated by game time
-- Orbit radius: `orbit_sma_au * 1.496e11 * scale` (AU → meters → world units)
+For each visible catalog star (catalog_index > 0), planet and moon indicator rings are drawn at orbital positions around the relevant parent:
+- Each planet gets a 10px outer / 70% inner ring indicator at its orbit position around its host star
+- Each moon is rendered the same way, orbiting its parent planet's **current-frame position** (not the host star)
+- Planet/moon angular position uses a deterministic initial angle from body index (`body_idx * 2.399`) propagated by game time
+- Planet orbit radius: `orbit_sma_au * 1.496e11 * scale` (AU → meters → world units)
+- Moon orbit radius: `orbit_sma_km * 1000.0 * scale` (km → meters → world units)
 - Planet rings are drawn BEFORE the star dot and star indicator ring (z-order: planets behind star)
 - Color coding: gold `[0.9, 0.75, 0.2]` for life worlds, green `[0.3, 0.85, 0.4]` for habitability > 30, gray `[0.6, 0.6, 0.6]` otherwise
 
+`inject_catalog_planets()` iterates `sys.bodies` in order. Moons come after their parent in every catalog entry, so a per-body `body_positions: Vec<Option<[f64; 2]>>` can be populated as planets are processed, and later referenced by index when moons are reached. A moon whose parent position is unavailable is skipped.
+
 ### Requirement: Exoplanet info panel
 
-When a catalog planet is tracked in the tracking station (`tracked_body >= num_real_bodies`), the info panel shows planet-specific data built from `CatalogBody`:
+When a catalog planet or moon is tracked in the tracking station (`tracked_body >= num_real_bodies`), the info panel shows body-specific data built from `CatalogBody`:
 
-- **Name** — planet name in white
-- **Description** — planet description (italic, gray)
+- **Name** — planet/moon name in white
+- **Description** — body description (italic, gray)
 - **Physical Properties** — radius, surface gravity, mass
 - **Atmosphere** — pressure (converted from atm to Pa) and scale height, or "No atmosphere"
 - **Orbit** — semi-major axis, eccentricity, orbital period
 - **Colony Prospects** — habitability score, mineable resources
+- **Moons (N)** — for planets that host moons, a compact listing of each moon (name, gravity, temperature, habitability, atmosphere, life indicator). Moons themselves don't host sub-moons, so their panels don't include this section.
 
-`BodyInfoData` for catalog planets is built during `inject_catalog_planets()` and stored in `RenderState.catalog_body_info: HashMap<usize, BodyInfoData>` keyed by synthetic body index. The tracking station panel checks `catalog_body_info` when `body_info.get(idx)` returns `None` for synthetic indices.
+`BodyInfoData` for catalog bodies is built during `inject_catalog_planets()` and stored in `RenderState.catalog_body_info: HashMap<usize, BodyInfoData>` keyed by synthetic body index. For non-moon bodies, `catalog_planets` is populated with all children whose `parent_body_idx == Some(body_idx)` (each tagged `is_moon: true`). For moons, `catalog_planets` is empty. The tracking station panel checks `catalog_body_info` when `body_info.get(idx)` returns `None` for synthetic indices.
 
 ### Requirement: Catalog star info panel
 

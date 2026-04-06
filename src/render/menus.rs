@@ -483,6 +483,60 @@ impl RenderState {
                                 }
                             }
 
+                            // Moons section for non-star bodies with children
+                            if !is_star && !info.catalog_planets.is_empty() {
+                                ui.add_space(4.0);
+                                ui.separator();
+                                let moon_count = info.catalog_planets.len();
+                                ui.label(egui::RichText::new(format!("Moons ({})", moon_count))
+                                    .size(13.0)
+                                    .color(egui::Color32::from_rgb(200, 200, 200)));
+                                ui.add_space(2.0);
+
+                                for body in &info.catalog_planets {
+                                    let name_color = if body.has_life {
+                                        egui::Color32::from_rgb(255, 215, 80) // gold
+                                    } else if body.habitability > 30 {
+                                        egui::Color32::from_rgb(140, 220, 140) // green
+                                    } else {
+                                        egui::Color32::from_rgb(180, 180, 180) // gray
+                                    };
+
+                                    let name_str = if body.designation.is_empty() {
+                                        body.name.clone()
+                                    } else if body.name.is_empty() {
+                                        body.designation.clone()
+                                    } else {
+                                        format!("{} \"{}\"", body.designation, body.name)
+                                    };
+
+                                    ui.label(egui::RichText::new(name_str)
+                                        .size(12.0)
+                                        .color(name_color));
+
+                                    let temp_str = if body.temperature_k > 0.0 {
+                                        format!(" | {} K", body.temperature_k as i64)
+                                    } else {
+                                        String::new()
+                                    };
+                                    if body.is_gas_giant {
+                                        ui.label(egui::RichText::new(format!("  Gas giant{}", temp_str))
+                                            .size(11.0)
+                                            .color(egui::Color32::from_rgb(140, 140, 140)));
+                                    } else {
+                                        let atm_str = if body.has_atmosphere { "atm" } else { "no atm" };
+                                        let life_str = if body.has_life { " | LIFE" } else { "" };
+                                        ui.label(egui::RichText::new(format!(
+                                            "  {:.2}g{} | {} | hab {}/100{}",
+                                            body.gravity_g, temp_str,
+                                            atm_str, body.habitability, life_str
+                                        ))
+                                            .size(11.0)
+                                            .color(egui::Color32::from_rgb(140, 140, 140)));
+                                    }
+                                }
+                            }
+
                             // Catalog star system info
                             if is_star && (info.catalog_zone.is_some() || !info.catalog_planets.is_empty()) {
                                 ui.add_space(4.0);
@@ -524,7 +578,9 @@ impl RenderState {
                                             egui::Color32::from_rgb(180, 180, 180) // gray
                                         };
 
-                                        let name_str = if body.name.is_empty() {
+                                        let name_str = if body.designation.is_empty() {
+                                            body.name.clone()
+                                        } else if body.name.is_empty() {
                                             body.designation.clone()
                                         } else {
                                             format!("{} \"{}\"", body.designation, body.name)
@@ -534,16 +590,21 @@ impl RenderState {
                                             .size(12.0)
                                             .color(name_color));
 
+                                        let temp_str = if body.temperature_k > 0.0 {
+                                            format!(" | {} K", body.temperature_k as i64)
+                                        } else {
+                                            String::new()
+                                        };
                                         if body.is_gas_giant {
-                                            ui.label(egui::RichText::new(format!("{}  Gas giant | {} K", indent, body.temperature_k as i64))
+                                            ui.label(egui::RichText::new(format!("{}  Gas giant{}", indent, temp_str))
                                                 .size(11.0)
                                                 .color(egui::Color32::from_rgb(140, 140, 140)));
                                         } else {
                                             let atm_str = if body.has_atmosphere { "atm" } else { "no atm" };
                                             let life_str = if body.has_life { " | LIFE" } else { "" };
                                             ui.label(egui::RichText::new(format!(
-                                                "{}  {:.2}g | {} K | {} | hab {}/100{}",
-                                                indent, body.gravity_g, body.temperature_k as i64,
+                                                "{}  {:.2}g{} | {} | hab {}/100{}",
+                                                indent, body.gravity_g, temp_str,
                                                 atm_str, body.habitability, life_str
                                             ))
                                                 .size(11.0)

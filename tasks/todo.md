@@ -925,3 +925,31 @@
 - [ ] Visual test: orbit lines are smooth at high zoom (5120 segments)
 - [ ] Visual test: clicking an exoplanet shows info panel with name, description, radius, gravity, atmosphere
 - [ ] Visual test: single-star systems still work correctly
+
+---
+
+# Fix Multi-Star System Visual and Gameplay Bugs
+
+## Implementation
+- [x] Task 1: Fix procedural star dot overlap — skip rendering dot for focused multi-star systems in `add_procedural_stars_impl()`, still record screen position for hit testing
+- [x] Task 2: Fix re-centering to use primary star (star[0]) — simplified re-centering logic in `inject_catalog_planets()`
+- [x] Task 3: Add group-level orbit lines — collect `GroupOrbit` data during hierarchy loop, emit orbit-only entries for multi-member group barycenters
+- [x] Task 4: Fix Castor data — added Ca-Cb pair (0.018 AU), fixed A-B separation (100 AU, not 1100), added AB-C pair (1100 AU)
+- [x] Task 5: Fix Epsilon Indi data — added Ba-Bb pair (2.5 AU), fixed brown dwarf masses (0.070/0.047 M☉) and radii (0.08/0.07 R☉)
+- [x] Task 6: Audit other multi-star systems — Alpha Centauri, EZ Aquarii, Gliese 667C, Fomalhaut, 40 Eridani, Regulus all verified correct
+- [x] Task 7: Update spec — procedural dot suppression, star[0] re-centering, group orbit lines, new scenarios
+
+## Files Changed
+- `src/render/scene.rs` — `focused_star` param on `add_procedural_stars_impl()`, skip rendering for focused multi-star systems
+- `src/main.rs` — `GroupOrbit` struct, group orbit collection in hierarchy loop, simplified re-centering on star[0], group orbit line emission
+- `src/galaxy/catalog/catalog_data.rs` — Castor binary_orbits (3→5 entries), Epsilon Indi binary_orbits (1→2 entries), brown dwarf mass/radius fixes
+- `openspec/specs/game/flight_rendering/galaxy/spec.md` — Updated multi-star rendering: dot suppression, star[0] re-centering, group orbit scenarios
+
+## Verification
+- [x] `cargo build` — compiles clean
+- [ ] Visual test: Regulus — no duplicate dot, WD visible, B/C visible with orbits, wide group orbit lines
+- [ ] Visual test: Castor — all 6 stars visible with correct hierarchy
+- [ ] Visual test: 40 Eridani — star A at system dot position
+- [ ] Visual test: Epsilon Indi — Ba and Bb visible with inner orbit
+- [ ] Visual test: Alpha Centauri — A near system dot, B nearby, Proxima distant
+- [ ] Visual test: simple binaries (Sirius, Procyon) still work correctly

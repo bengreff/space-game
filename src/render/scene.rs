@@ -282,6 +282,7 @@ impl RenderState {
         Self::add_procedural_stars_impl(
             &self.camera, self.size, &mut self.procedural_star_screen_positions,
             &mut all_vertices, &mut all_indices, &self.current_procedural_stars, scale,
+            self.focused_star,
         );
 
         // Draw galactic orbit line for the focused star
@@ -2109,6 +2110,7 @@ impl RenderState {
         all_indices: &mut Vec<u32>,
         stars: &[StarRenderData],
         scale: f64,
+        focused_star: Option<usize>,
     ) {
         screen_positions.clear();
 
@@ -2176,6 +2178,13 @@ impl RenderState {
 
             // Store screen position for hit testing (hover/click)
             screen_positions.push((i, [screen_px, screen_py]));
+
+            // Skip rendering the procedural dot for focused multi-star catalog systems.
+            // The companion star bodies (injected by inject_catalog_planets) replace this
+            // dot visually — rendering both creates a duplicate at the barycenter.
+            if focused_star == Some(i) && star.num_catalog_stars > 1 {
+                continue;
+            }
 
             // Check if physical radius is large enough on screen for a real circle
             // radius_world is in camera-relative world units (shader applies zoom)

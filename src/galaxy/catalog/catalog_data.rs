@@ -434,7 +434,7 @@ CatalogSystem {
             is_moon: false, parent_body_idx: None,
             orbit_sma_au: 2.0, orbit_sma_km: 0.0,
             orbit_ecc: 0.15, orbit_period_days: 520.0,
-            mass_earth: 572.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 520.0,
+            mass_earth: 572.0, radius_earth: 11.8, gravity_g: 4.11, temperature_k: 520.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, silicate clouds, Na/K absorption", scale_height_km: 45.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -686,7 +686,7 @@ CatalogSystem {
             is_moon: false, parent_body_idx: None,
             orbit_sma_au: 3.53, orbit_sma_km: 0.0,
             orbit_ecc: 0.06, orbit_period_days: 2688.0,
-            mass_earth: 311.4, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 110.0,
+            mass_earth: 311.4, radius_earth: 11.0, gravity_g: 2.57, temperature_k: 110.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, ammonia/water clouds", scale_height_km: 27.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -955,7 +955,7 @@ CatalogSystem {
             is_moon: false, parent_body_idx: None,
             orbit_sma_au: 2.0, orbit_sma_km: 0.0,
             orbit_ecc: 0.12, orbit_period_days: 730.0,
-            mass_earth: 270.1, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 290.0,
+            mass_earth: 270.1, radius_earth: 11.0, gravity_g: 2.23, temperature_k: 290.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water clouds, ammonia", scale_height_km: 32.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -981,7 +981,7 @@ CatalogSystem {
             is_moon: false, parent_body_idx: None,
             orbit_sma_au: 5.0, orbit_sma_km: 0.0,
             orbit_ecc: 0.10, orbit_period_days: 2900.0,
-            mass_earth: 794.5, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 175.0,
+            mass_earth: 794.5, radius_earth: 12.2, gravity_g: 5.34, temperature_k: 175.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, ammonia clouds, methane absorption", scale_height_km: 30.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -1265,8 +1265,8 @@ CatalogSystem {
     is_sgr_a_orbit: false,
     stars: &[
         CatalogStar { name: "Epsilon Indi A", spectral_type: "K5V", mass_solar: 0.76, radius_solar: 0.73, luminosity_solar: 0.22 },
-        CatalogStar { name: "Epsilon Indi Ba", spectral_type: "T1V", mass_solar: 0.0, radius_solar: 0.0, luminosity_solar: 0.0 },
-        CatalogStar { name: "Epsilon Indi Bb", spectral_type: "T6V", mass_solar: 0.0, radius_solar: 0.0, luminosity_solar: 0.0 },
+        CatalogStar { name: "Epsilon Indi Ba", spectral_type: "T1V", mass_solar: 0.070, radius_solar: 0.08, luminosity_solar: 0.000022 },
+        CatalogStar { name: "Epsilon Indi Bb", spectral_type: "T6V", mass_solar: 0.047, radius_solar: 0.07, luminosity_solar: 0.0000038 },
     ],
     bodies: &[
         CatalogBody {
@@ -1299,7 +1299,7 @@ CatalogSystem {
             is_moon: false, parent_body_idx: None,
             orbit_sma_au: 28.0, orbit_sma_km: 0.0,
             orbit_ecc: 0.40, orbit_period_days: 65700.0,
-            mass_earth: 2002.1, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 275.0,
+            mass_earth: 2002.1, radius_earth: 12.2, gravity_g: 13.45, temperature_k: 275.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, methane, CO₂, CO; high metallicity", scale_height_km: 22.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -1360,7 +1360,8 @@ CatalogSystem {
         },
     ],
     binary_orbits: &[
-        StarOrbitData { star_a: 0, star_b: 1, sma_au: 1459.0, eccentricity: 0.26, period_years: 45000.0 },
+        StarOrbitData { star_a: 1, star_b: 2, sma_au: 2.5, eccentricity: 0.24, period_years: 15.0 },      // Ba-Bb brown dwarf pair
+        StarOrbitData { star_a: 0, star_b: 1, sma_au: 1459.0, eccentricity: 0.26, period_years: 45000.0 }, // A vs Ba+Bb group
     ],
 },
 // 18. Tau Ceti
@@ -1991,7 +1992,7 @@ CatalogSystem {
         CatalogBody {
             name: "Halcyon's Mirror", designation: "c", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 0.13, orbit_sma_km: 0.0, orbit_ecc: 0.25, orbit_period_days: 30.1,
-            mass_earth: 228.7, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 310.0,
+            mass_earth: 228.7, radius_earth: 10.7, gravity_g: 2.00, temperature_k: 310.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water clouds, ammonia haze", scale_height_km: 28.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -2002,7 +2003,7 @@ CatalogSystem {
         CatalogBody {
             name: "Grendel", designation: "b", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 0.21, orbit_sma_km: 0.0, orbit_ecc: 0.03, orbit_period_days: 61.1,
-            mass_earth: 724.6, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 235.0,
+            mass_earth: 724.6, radius_earth: 12.1, gravity_g: 4.95, temperature_k: 235.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water/ammonia clouds, methane traces", scale_height_km: 26.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -2076,7 +2077,7 @@ CatalogSystem {
         CatalogBody {
             name: "Azurhaven", designation: "c", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 3.2, orbit_sma_km: 0.0, orbit_ecc: 0.08, orbit_period_days: 1515.0,
-            mass_earth: 444.9, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 260.0,
+            mass_earth: 444.9, radius_earth: 11.5, gravity_g: 3.36, temperature_k: 260.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water clouds, ammonia cirrus", scale_height_km: 35.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -2378,7 +2379,7 @@ CatalogSystem {
         CatalogBody {
             name: "Farsight", designation: "Ae", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 5.0, orbit_sma_km: 0.0, orbit_ecc: 0.10, orbit_period_days: 3950.0,
-            mass_earth: 254.2, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 125.0,
+            mass_earth: 254.2, radius_earth: 10.8, gravity_g: 2.18, temperature_k: 125.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, ammonia clouds, water clouds", scale_height_km: 27.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -2534,7 +2535,7 @@ CatalogSystem {
         CatalogBody {
             name: "Deepcast", designation: "f", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 3.5, orbit_sma_km: 0.0, orbit_ecc: 0.08, orbit_period_days: 2675.0,
-            mass_earth: 381.4, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 108.0,
+            mass_earth: 381.4, radius_earth: 11.2, gravity_g: 3.04, temperature_k: 108.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, ammonia and water clouds", scale_height_km: 26.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -2726,7 +2727,7 @@ CatalogSystem {
         CatalogBody {
             name: "Sentinel's Keep", designation: "g", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 3.11, orbit_sma_km: 0.0, orbit_ecc: 0.06, orbit_period_days: 2247.0,
-            mass_earth: 108.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 95.0,
+            mass_earth: 108.0, radius_earth: 9.5, gravity_g: 1.20, temperature_k: 95.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, methane, ammonia ice clouds", scale_height_km: 20.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -2860,7 +2861,7 @@ CatalogSystem {
         CatalogBody {
             name: "Empyrean", designation: "c", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 1.8, orbit_sma_km: 0.0, orbit_ecc: 0.10, orbit_period_days: 504.0,
-            mass_earth: 445.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 490.0,
+            mass_earth: 445.0, radius_earth: 11.7, gravity_g: 3.25, temperature_k: 490.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, silicate clouds, TiO/VO absorption", scale_height_km: 48.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -2921,7 +2922,7 @@ CatalogSystem {
         CatalogBody {
             name: "Galathorn", designation: "c", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 12.0, orbit_sma_km: 0.0, orbit_ecc: 0.12, orbit_period_days: 18400.0,
-            mass_earth: 1017.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 140.0,
+            mass_earth: 1017.0, radius_earth: 12.1, gravity_g: 6.95, temperature_k: 140.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, ammonia and water ice clouds", scale_height_km: 28.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -2961,7 +2962,7 @@ CatalogSystem {
         CatalogBody {
             name: "Warden", designation: "d", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 120.0, orbit_sma_km: 0.0, orbit_ecc: 0.10, orbit_period_days: 581000.0,
-            mass_earth: 95.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 32.0,
+            mass_earth: 95.0, radius_earth: 9.3, gravity_g: 1.10, temperature_k: 32.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, methane ice, nitrogen frost hazes", scale_height_km: 18.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3170,7 +3171,7 @@ CatalogSystem {
         CatalogBody {
             name: "Thestias", designation: "b", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 1.64, orbit_sma_km: 0.0, orbit_ecc: 0.02, orbit_period_days: 589.0,
-            mass_earth: 731.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 410.0,
+            mass_earth: 731.0, radius_earth: 12.1, gravity_g: 4.99, temperature_k: 410.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water vapor, silicate haze at depth", scale_height_km: 35.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3200,7 +3201,7 @@ CatalogSystem {
         CatalogBody {
             name: "Frosthollow", designation: "d", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 6.5, orbit_sma_km: 0.0, orbit_ecc: 0.15, orbit_period_days: 4350.0,
-            mass_earth: 254.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 150.0,
+            mass_earth: 254.0, radius_earth: 10.8, gravity_g: 2.18, temperature_k: 150.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, ammonia and methane ice clouds", scale_height_km: 26.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3338,7 +3339,7 @@ CatalogSystem {
         CatalogBody {
             name: "Paladin", designation: "c", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 3.5, orbit_sma_km: 0.0, orbit_ecc: 0.08, orbit_period_days: 2810.0,
-            mass_earth: 636.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 260.0,
+            mass_earth: 636.0, radius_earth: 12.0, gravity_g: 4.42, temperature_k: 260.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water clouds, ammonia", scale_height_km: 35.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3407,7 +3408,7 @@ CatalogSystem {
         CatalogBody {
             name: "Remnant", designation: "b", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 8.5, orbit_sma_km: 0.0, orbit_ecc: 0.18, orbit_period_days: 9200.0,
-            mass_earth: 1430.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 310.0,
+            mass_earth: 1430.0, radius_earth: 12.2, gravity_g: 9.61, temperature_k: 310.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water vapor, iron-poor cloud chemistry", scale_height_km: 38.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3566,7 +3567,7 @@ CatalogSystem {
         CatalogBody {
             name: "Galileo", designation: "Ac", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 0.115, orbit_sma_km: 0.0, orbit_ecc: 0.01, orbit_period_days: 14.65,
-            mass_earth: 261.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 690.0,
+            mass_earth: 261.0, radius_earth: 10.9, gravity_g: 2.20, temperature_k: 690.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, silicate clouds, alkali metals", scale_height_km: 40.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3576,7 +3577,7 @@ CatalogSystem {
         CatalogBody {
             name: "Brahe", designation: "Ad", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 0.240, orbit_sma_km: 0.0, orbit_ecc: 0.05, orbit_period_days: 44.4,
-            mass_earth: 54.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 500.0,
+            mass_earth: 54.0, radius_earth: 9.0, gravity_g: 0.67, temperature_k: 500.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water vapor, alkali haze", scale_height_km: 32.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3586,7 +3587,7 @@ CatalogSystem {
         CatalogBody {
             name: "Harriot", designation: "Ae", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 0.781, orbit_sma_km: 0.0, orbit_ecc: 0.07, orbit_period_days: 260.0,
-            mass_earth: 54.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 270.0,
+            mass_earth: 54.0, radius_earth: 9.0, gravity_g: 0.67, temperature_k: 270.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water clouds, ammonia", scale_height_km: 24.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3616,7 +3617,7 @@ CatalogSystem {
         CatalogBody {
             name: "Lipperhey", designation: "Af", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 5.45, orbit_sma_km: 0.0, orbit_ecc: 0.09, orbit_period_days: 5218.0,
-            mass_earth: 1214.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 100.0,
+            mass_earth: 1214.0, radius_earth: 12.2, gravity_g: 8.16, temperature_k: 100.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, ammonia and methane ice clouds", scale_height_km: 22.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3678,7 +3679,7 @@ CatalogSystem {
         CatalogBody {
             name: "Saffar", designation: "Ab", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 0.059, orbit_sma_km: 0.0, orbit_ecc: 0.01, orbit_period_days: 4.62,
-            mass_earth: 219.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 1250.0,
+            mass_earth: 219.0, radius_earth: 11.5, gravity_g: 1.66, temperature_k: 1250.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, TiO/VO, sodium, potassium", scale_height_km: 55.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3688,7 +3689,7 @@ CatalogSystem {
         CatalogBody {
             name: "Samh", designation: "Ac", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 0.83, orbit_sma_km: 0.0, orbit_ecc: 0.24, orbit_period_days: 241.0,
-            mass_earth: 626.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 360.0,
+            mass_earth: 626.0, radius_earth: 11.9, gravity_g: 4.42, temperature_k: 360.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water vapor, ammonia, complex cloud layering", scale_height_km: 32.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3698,7 +3699,7 @@ CatalogSystem {
         CatalogBody {
             name: "Majriti", designation: "Ad", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 2.51, orbit_sma_km: 0.0, orbit_ecc: 0.26, orbit_period_days: 1276.0,
-            mass_earth: 1192.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 185.0,
+            mass_earth: 1192.0, radius_earth: 12.2, gravity_g: 8.01, temperature_k: 185.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, ammonia, methane, water ice clouds", scale_height_km: 26.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3789,7 +3790,7 @@ CatalogSystem {
         CatalogBody {
             name: "Taphao Thong", designation: "e", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 2.10, orbit_sma_km: 0.0, orbit_ecc: 0.03, orbit_period_days: 1083.0,
-            mass_earth: 804.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 175.0,
+            mass_earth: 804.0, radius_earth: 12.2, gravity_g: 5.40, temperature_k: 175.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, ammonia ice, water clouds", scale_height_km: 28.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3829,7 +3830,7 @@ CatalogSystem {
         CatalogBody {
             name: "Taphao Kaew", designation: "f", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 3.60, orbit_sma_km: 0.0, orbit_ecc: 0.10, orbit_period_days: 2428.0,
-            mass_earth: 172.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 130.0,
+            mass_earth: 172.0, radius_earth: 10.0, gravity_g: 1.72, temperature_k: 130.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, ammonia, methane", scale_height_km: 25.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3849,7 +3850,7 @@ CatalogSystem {
         CatalogBody {
             name: "Lazuli", designation: "g", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 11.6, orbit_sma_km: 0.0, orbit_ecc: 0.13, orbit_period_days: 14000.0,
-            mass_earth: 521.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 80.0,
+            mass_earth: 521.0, radius_earth: 11.7, gravity_g: 3.81, temperature_k: 80.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, methane ice, ammonia", scale_height_km: 20.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3957,7 +3958,7 @@ CatalogSystem {
         CatalogBody {
             name: "Rocinante", designation: "d", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 0.92, orbit_sma_km: 0.0, orbit_ecc: 0.07, orbit_period_days: 310.0,
-            mass_earth: 165.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 335.0,
+            mass_earth: 165.0, radius_earth: 10.0, gravity_g: 1.65, temperature_k: 335.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water vapor clouds, ammonia", scale_height_km: 32.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3977,7 +3978,7 @@ CatalogSystem {
         CatalogBody {
             name: "Quijote", designation: "b", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 1.50, orbit_sma_km: 0.0, orbit_ecc: 0.13, orbit_period_days: 643.0,
-            mass_earth: 540.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 255.0,
+            mass_earth: 540.0, radius_earth: 11.8, gravity_g: 3.88, temperature_k: 255.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, ammonia cirrus, water cloud deck", scale_height_km: 28.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -3997,7 +3998,7 @@ CatalogSystem {
         CatalogBody {
             name: "Sancho", designation: "e", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 5.24, orbit_sma_km: 0.0, orbit_ecc: 0.10, orbit_period_days: 4206.0,
-            mass_earth: 572.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 140.0,
+            mass_earth: 572.0, radius_earth: 11.8, gravity_g: 4.11, temperature_k: 140.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, ammonia ice, methane absorption", scale_height_km: 24.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -4120,9 +4121,11 @@ CatalogSystem {
         },
     ],
     binary_orbits: &[
-        StarOrbitData { star_a: 0, star_b: 1, sma_au: 0.12, eccentricity: 0.50, period_years: 0.025 },
-        StarOrbitData { star_a: 2, star_b: 3, sma_au: 0.06, eccentricity: 0.0, period_years: 0.008 },
-        StarOrbitData { star_a: 0, star_b: 2, sma_au: 1100.0, eccentricity: 0.36, period_years: 14000.0 },
+        StarOrbitData { star_a: 0, star_b: 1, sma_au: 0.12, eccentricity: 0.50, period_years: 0.025 },   // Aa-Ab spectroscopic binary
+        StarOrbitData { star_a: 2, star_b: 3, sma_au: 0.06, eccentricity: 0.0, period_years: 0.008 },    // Ba-Bb spectroscopic binary
+        StarOrbitData { star_a: 4, star_b: 5, sma_au: 0.018, eccentricity: 0.0, period_years: 0.002 },   // Ca-Cb (YY Gem eclipsing binary)
+        StarOrbitData { star_a: 0, star_b: 2, sma_au: 100.0, eccentricity: 0.34, period_years: 467.0 },  // A pair - B pair visual binary
+        StarOrbitData { star_a: 0, star_b: 4, sma_au: 1100.0, eccentricity: 0.36, period_years: 14000.0 }, // AB group - C pair
     ],
 },
 // 54. Pi Mensae
@@ -4174,7 +4177,7 @@ CatalogSystem {
         CatalogBody {
             name: "Leviathan", designation: "b", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 3.31, orbit_sma_km: 0.0, orbit_ecc: 0.64, orbit_period_days: 2093.0,
-            mass_earth: 4006.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 330.0,
+            mass_earth: 4006.0, radius_earth: 11.5, gravity_g: 30.29, temperature_k: 330.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water/ammonia clouds, deep-atmosphere methane", scale_height_km: 20.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -4263,7 +4266,7 @@ CatalogSystem {
         CatalogBody {
             name: "Tempest", designation: "c", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 2.7, orbit_sma_km: 0.0, orbit_ecc: 0.24, orbit_period_days: 1237.0,
-            mass_earth: 2862.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 1250.0,
+            mass_earth: 2862.0, radius_earth: 13.0, gravity_g: 16.94, temperature_k: 1250.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, iron/silicate clouds, CO, H2O", scale_height_km: 55.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -4293,7 +4296,7 @@ CatalogSystem {
         CatalogBody {
             name: "Colossus", designation: "b", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 9.2, orbit_sma_km: 0.0, orbit_ecc: 0.12, orbit_period_days: 7700.0,
-            mass_earth: 3497.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 1100.0,
+            mass_earth: 3497.0, radius_earth: 12.8, gravity_g: 21.35, temperature_k: 1100.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, silicate/iron clouds, CO, CH4 disequilibrium", scale_height_km: 48.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],
@@ -4365,7 +4368,7 @@ CatalogSystem {
         CatalogBody {
             name: "Templar", designation: "Ac", is_moon: false, parent_body_idx: None,
             orbit_sma_au: 14.0, orbit_sma_km: 0.0, orbit_ecc: 0.12, orbit_period_days: 9810.0,
-            mass_earth: 794.0, radius_earth: 0.0, gravity_g: 0.0, temperature_k: 310.0,
+            mass_earth: 794.0, radius_earth: 12.2, gravity_g: 5.33, temperature_k: 310.0,
             atmosphere: Some(CatalogAtmosphere { pressure_atm: 0.0, composition: "Hydrogen-helium, water clouds, ammonia", scale_height_km: 35.0 }),
             habitability: 0, science: 0,
             resources: &[ResourceType::GasGiantAtmosphere],

@@ -80,12 +80,16 @@ pub struct CatalogAtmosphere {
 }
 
 /// Determine which star a planet orbits based on its designation string.
-/// Rules: "Ab/Ac/..." → 0, "Bb/Bc/..." → 1, "Cb/Cc/..." → 2,
+/// Rules: "Ab/Ac/..." → star A, "Bb/Bc/..." → star B, "Cb/Cc/..." → star C,
 /// "Proxima ..." → last star, "AB..." → 0 (barycenter, treat as primary),
 /// bare lowercase "b/c/d" → 0 (single star system).
-pub fn host_star_index(designation: &str, num_stars: usize) -> usize {
+///
+/// Searches the stars array by name to find the correct index, handling systems
+/// where sub-components (e.g. "Regulus A companion") shift the letter→index mapping.
+pub fn host_star_index(designation: &str, stars: &[CatalogStar]) -> usize {
+    let num_stars = stars.len();
     let bytes = designation.as_bytes();
-    if bytes.is_empty() { return 0; }
+    if bytes.is_empty() || num_stars == 0 { return 0; }
 
     // "Proxima ..." → last star in the system
     if designation.starts_with("Proxima") {
@@ -99,7 +103,25 @@ pub fn host_star_index(designation: &str, num_stars: usize) -> usize {
         if bytes.len() > 1 && bytes[1].is_ascii_uppercase() {
             return 0;
         }
-        // "A..." → 0, "B..." → 1, "C..." → 2, etc.
+        // Search for the first star whose name has a word starting with this letter.
+        // Handles Regulus (A, A-companion, B, C) and Castor (Aa, Ab, Ba, Bb, Ca, Cb).
+        for (i, star) in stars.iter().enumerate() {
+            for word in star.name.rsplit(' ') {
+                let wb = word.as_bytes();
+                if wb.is_empty() { continue; }
+                // Skip parenthetical words like "(YY", "Gem)"
+                if wb[0] == b'(' || wb[wb.len()-1] == b')' { continue; }
+                if wb[0] == first {
+                    return i;
+                }
+                // Stop at the first non-parenthetical word starting with an uppercase letter
+                // (skip trailing words like "companion")
+                if wb[0].is_ascii_uppercase() {
+                    break;
+                }
+            }
+        }
+        // Fallback: letter-based index
         let idx = (first - b'A') as usize;
         return idx.min(num_stars.saturating_sub(1));
     }

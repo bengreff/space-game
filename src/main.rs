@@ -3319,6 +3319,18 @@ fn inject_catalog_planets(
     }
     let mut star_orbit_info: Vec<Option<StarOrbitInfo>> = vec![None; num_stars];
 
+    // Group-level orbits for hierarchical pairs where at least one side is multi-star.
+    // These draw the orbit of a sub-group's barycenter around the combined barycenter.
+    struct GroupOrbit {
+        members: Vec<usize>,       // star indices in this group
+        delta_x: f64,              // group shift from pair barycenter
+        delta_y: f64,
+        sma_m: f64,                // group's SMA around pair barycenter
+        eccentricity: f64,
+        arg_peri: f64,             // PI for A side, 0 for B side
+    }
+    let mut group_orbits: Vec<GroupOrbit> = Vec::new();
+
     if num_stars > 1 && !sys.binary_orbits.is_empty() {
         // Group-based hierarchical binary processing. Each star starts in its own group;
         // each binary pair merges two groups, shifting both group COMs by their mutual
@@ -3404,6 +3416,30 @@ fn inject_catalog_planets(
                 });
             }
 
+            // For pairs where at least one group has multiple members, record group-level
+            // orbit data. This draws the wide orbit connecting two sub-groups (e.g. how the
+            // {A,WD} group and {B,C} group in Regulus orbit each other at 4200 AU).
+            if ga_members.len() > 1 {
+                group_orbits.push(GroupOrbit {
+                    members: ga_members.clone(),
+                    delta_x: delta_a_x,
+                    delta_y: delta_a_y,
+                    sma_m: sma_m * frac_ga,
+                    eccentricity: pair.eccentricity,
+                    arg_peri: std::f64::consts::PI,
+                });
+            }
+            if gb_members.len() > 1 {
+                group_orbits.push(GroupOrbit {
+                    members: gb_members.clone(),
+                    delta_x: delta_b_x,
+                    delta_y: delta_b_y,
+                    sma_m: sma_m * frac_gb,
+                    eccentricity: pair.eccentricity,
+                    arg_peri: 0.0,
+                });
+            }
+
             // Merge gb into ga
             let absorbed = std::mem::take(&mut group_members[gb]);
             for &s in &absorbed {
@@ -3413,30 +3449,16 @@ fn inject_catalog_planets(
             group_mass[ga] += group_mass[gb];
         }
 
-        // Re-center so the innermost pair's barycenter is at (star_x, star_y).
-        // For hierarchical systems like Alpha Centauri, the raw calculation puts the
-        // OVERALL system COM at star_x — which places the focused dot between AB and
-        // Proxima. Users expect the dot to sit with the main (innermost) pair, so we
-        // shift all stars to put the first pair's mass-weighted center at star_x.
+        // Re-center so the primary star (star[0]) is at (star_x, star_y).
+        // The procedural dot represents the system position — users expect it to
+        // coincide with the primary star (e.g. Alpha Centauri A, Regulus A, 40 Eridani A).
         // Local offsets are relative to each star's own pair barycenter, so this
         // global shift leaves orbit geometry unchanged.
-        let first_pair = &sys.binary_orbits[0];
-        let fa = first_pair.star_a;
-        let fb = first_pair.star_b;
-        if fa < num_stars && fb < num_stars {
-            let m_a = sys.stars[fa].mass_solar;
-            let m_b = sys.stars[fb].mass_solar;
-            let tot = m_a + m_b;
-            if tot > 0.0 {
-                let com_x = (m_a * star_positions[fa][0] + m_b * star_positions[fb][0]) / tot;
-                let com_y = (m_a * star_positions[fa][1] + m_b * star_positions[fb][1]) / tot;
-                let shift_x = star_x - com_x;
-                let shift_y = star_y - com_y;
-                for pos in star_positions.iter_mut() {
-                    pos[0] += shift_x;
-                    pos[1] += shift_y;
-                }
-            }
+        let shift_x = star_x - star_positions[0][0];
+        let shift_y = star_y - star_positions[0][1];
+        for pos in star_positions.iter_mut() {
+            pos[0] += shift_x;
+            pos[1] += shift_y;
         }
     }
 
@@ -3486,7 +3508,7 @@ fn inject_catalog_planets(
 
             // Filter planets belonging to this star
             let star_planets: Vec<sunscatter::render::CatalogPlanetInfo> = sys.bodies.iter().filter(|b| {
-                host_star_index(b.designation, num_stars) == si
+                host_star_index(b.designation, sys.stars) == si
             }).map(|b| sunscatter::render::CatalogPlanetInfo {
                 name: b.name.to_string(),
                 designation: b.designation.to_string(),
@@ -3534,26 +3556,74 @@ fn inject_catalog_planets(
 
             j += 1;
         }
+
+        // ── Push group-level orbit lines for hierarchical pairs ───────────��─
+        // For each multi-member group that was merged, draw an orbit ellipse for
+        // the group's barycenter around the pair's combined barycenter.
+        // These are orbit-only entries (no corresponding body) — the orbit renderer
+        // iterates orbits independently so extra entries are fine.
+        for go in &group_orbits {
+            // Compute mass-weighted barycenter of this group (post re-centering)
+            let mut bary_x = 0.0f64;
+            let mut bary_y = 0.0f64;
+            let mut total_m = 0.0f64;
+            for &s in &go.members {
+                let m = sys.stars[s].mass_solar;
+                bary_x += m * star_positions[s][0];
+                bary_y += m * star_positions[s][1];
+                total_m += m;
+            }
+            if total_m <= 0.0 { continue; }
+            bary_x /= total_m;
+            bary_y /= total_m;
+
+            // The pair barycenter is the group bary minus the group's delta
+            let pair_bary_x = bary_x - go.delta_x;
+            let pair_bary_y = bary_y - go.delta_y;
+
+            let orbit_color = [0.5f32, 0.5, 0.5, 0.3];
+            orbits.push(Some(OrbitRenderData {
+                parent_x: pair_bary_x * SCALE,
+                parent_y: pair_bary_y * SCALE,
+                semi_major_axis: go.sma_m * SCALE,
+                eccentricity: go.eccentricity,
+                argument_of_periapsis: go.arg_peri,
+                color: orbit_color,
+                segments: 5120,
+            }));
+        }
     }
 
-    // ── Push planets as synthetic bodies ────────────────────────────────────
+    // ── Push planets and moons as synthetic bodies ───────────���──────────────
+    // Track world positions per catalog-body index so moons can orbit their parents.
+    let mut body_positions: Vec<Option<[f64; 2]>> = vec![None; sys.bodies.len()];
     for (body_idx, body) in sys.bodies.iter().enumerate() {
-        if body.is_moon { continue; }
+        // Determine orbit parent: host star for planets, parent planet for moons.
+        let (center_x, center_y, sma) = if body.is_moon {
+            let parent_idx = match body.parent_body_idx {
+                Some(p) => p,
+                None => continue,
+            };
+            let Some([px, py]) = body_positions.get(parent_idx).copied().flatten() else {
+                continue;
+            };
+            (px, py, body.orbit_sma_km * 1000.0)
+        } else {
+            let host_idx = host_star_index(body.designation, sys.stars);
+            let [hx, hy] = star_positions[host_idx.min(num_stars - 1)];
+            (hx, hy, body.orbit_sma_au * 1.496e11)
+        };
 
-        // Determine which star this planet orbits
-        let host_idx = host_star_index(body.designation, num_stars);
-        let [host_x, host_y] = star_positions[host_idx.min(num_stars - 1)];
-
-        let sma = body.orbit_sma_au * 1.496e11; // meters
         let ecc = body.orbit_ecc;
         let period_s = body.orbit_period_days * 86400.0;
         let mean_motion = std::f64::consts::TAU / period_s;
         let mean_anomaly = (body_idx as f64) * 2.399 + mean_motion * game_time;
 
-        // Compute planet position relative to host star
+        // Compute body position relative to its orbital center
         let [rel_x, rel_y] = sunscatter::galaxy::kepler_position(sma, ecc, 0.0, mean_anomaly);
-        let planet_x = host_x + rel_x;
-        let planet_y = host_y + rel_y;
+        let planet_x = center_x + rel_x;
+        let planet_y = center_y + rel_y;
+        body_positions[body_idx] = Some([planet_x, planet_y]);
 
         let synthetic_idx = num_real_bodies + j;
         let tex_name = body.name.to_lowercase().replace(' ', "_");
@@ -3574,7 +3644,7 @@ fn inject_catalog_planets(
         let radius = body.radius_earth * 6.371e6; // meters
         bodies.push((planet_x, planet_y, radius, color, 0.0, [0.0, 0.0, 0.0], synthetic_idx));
 
-        // Orbit line centered on the host star
+        // Orbit line centered on parent (host star for planets, parent planet for moons)
         let body_world_radius = (radius * SCALE) as f32;
         let body_pixels = body_world_radius * pixels_per_world_unit * 2.0;
         if body_pixels >= 5.0 {
@@ -3582,8 +3652,8 @@ fn inject_catalog_planets(
         } else {
             let orbit_color = [color[0] * 0.4, color[1] * 0.4, color[2] * 0.4, 0.5];
             orbits.push(Some(OrbitRenderData {
-                parent_x: host_x * SCALE,
-                parent_y: host_y * SCALE,
+                parent_x: center_x * SCALE,
+                parent_y: center_y * SCALE,
                 semi_major_axis: sma * SCALE,
                 eccentricity: ecc,
                 argument_of_periapsis: 0.0,
@@ -3594,8 +3664,27 @@ fn inject_catalog_planets(
 
         body_names.push(body.name.to_string());
 
-        // Build BodyInfoData for this catalog planet
-        let sma_m = body.orbit_sma_au * 1.496e11;
+        // For planets, collect child moons into catalog_planets so they show in the info panel.
+        // Moons have no sub-children (empty list).
+        let planet_children: Vec<sunscatter::render::CatalogPlanetInfo> = if body.is_moon {
+            vec![]
+        } else {
+            sys.bodies.iter().filter(|b| {
+                b.is_moon && b.parent_body_idx == Some(body_idx)
+            }).map(|b| sunscatter::render::CatalogPlanetInfo {
+                name: b.name.to_string(),
+                designation: b.designation.to_string(),
+                temperature_k: b.temperature_k,
+                gravity_g: b.gravity_g,
+                habitability: b.habitability,
+                has_atmosphere: b.atmosphere.is_some(),
+                has_life: b.has_life,
+                is_moon: true,
+                is_gas_giant: b.is_gas_giant,
+            }).collect()
+        };
+
+        // Build BodyInfoData for this catalog planet/moon
         catalog_body_info.insert(synthetic_idx, BodyInfoData {
             name: body.name.to_string(),
             description: body.description.to_string(),
@@ -3604,7 +3693,7 @@ fn inject_catalog_planets(
             mass_kg: body.mass_earth * 5.972e24,
             atmosphere_pressure_pa: body.atmosphere.as_ref().map(|a| a.pressure_atm * 101325.0),
             atmosphere_height_m: body.atmosphere.as_ref().map(|a| a.scale_height_km * 5000.0),
-            orbit_semi_major_axis_m: Some(sma_m),
+            orbit_semi_major_axis_m: Some(sma),
             orbit_eccentricity: Some(body.orbit_ecc),
             orbit_period_s: Some(body.orbit_period_days * 86400.0),
             mineable_resources: body.resources.to_vec(),
@@ -3621,7 +3710,7 @@ fn inject_catalog_planets(
             soi_radius_m: None,
             is_galactic_orbit: false,
             catalog_stars: vec![],
-            catalog_planets: vec![],
+            catalog_planets: planet_children,
             catalog_zone: None,
             catalog_distance_ly: None,
             catalog_spectral: None,
@@ -4743,6 +4832,21 @@ fn render_tracking_station_frame(
         });
         // Detect stars and black holes: root body or bodies orbiting root
         let is_star = body.parent.is_none() || body_is_star[i];
+        // Collect children (moons/planets whose parent is this body) for the info panel.
+        // For non-star bodies (planets), children are moons. For stars, children are planets.
+        let children: Vec<sunscatter::render::CatalogPlanetInfo> = game.solar_system.bodies.iter().filter(|b| {
+            b.parent == Some(i)
+        }).map(|b| sunscatter::render::CatalogPlanetInfo {
+            name: b.name.clone(),
+            designation: String::new(),
+            temperature_k: 0.0,
+            gravity_g: b.surface_gravity() / 9.81,
+            habitability: b.habitability_score,
+            has_atmosphere: b.atmosphere.is_some(),
+            has_life: false,
+            is_moon: !is_star,
+            is_gas_giant: b.is_gas_giant,
+        }).collect();
         let (luminosity_solar, star_type_str, temperature_k) = if is_star {
             if body.parent.is_none() && body.name != "Sun" {
                 // Root body that isn't the Sun (e.g. Sgr A*) — supermassive black hole
@@ -4783,7 +4887,7 @@ fn render_tracking_station_frame(
             soi_radius_m: Some(body.soi_radius).filter(|r| r.is_finite()),
             is_galactic_orbit,
             catalog_stars: vec![],
-            catalog_planets: vec![],
+            catalog_planets: children,
             catalog_zone: None,
             catalog_distance_ly: None,
             catalog_spectral: None,
