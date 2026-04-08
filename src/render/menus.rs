@@ -640,11 +640,14 @@ impl RenderState {
                                 ui.add_space(2.0);
                                 if info.is_galactic_orbit {
                                     const KPC: f64 = 3.086e19; // 1 kpc in meters
+                                    const AU: f64 = 1.496e11;
                                     let sma_kpc = sma / KPC;
                                     if sma_kpc >= 1.0 {
                                         ui.label(format!("Semi-major axis: {:.2} kpc", sma_kpc));
-                                    } else {
+                                    } else if sma_kpc * 1000.0 >= 0.5 {
                                         ui.label(format!("Semi-major axis: {:.0} pc", sma_kpc * 1000.0));
+                                    } else {
+                                        ui.label(format!("Semi-major axis: {:.0} AU", sma / AU));
                                     }
                                 } else {
                                     ui.label(format!("Semi-major axis: {}", format_distance(sma)));

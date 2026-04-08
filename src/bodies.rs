@@ -1018,6 +1018,38 @@ impl SolarSystem {
             is_gas_giant: true,
         });
 
+        // === CRUCIBLE (index 21) ===
+        // An engineered world orbiting Sgr A* at 13 AU, moved here by the Builders.
+        let crucible_mass = 3.2 * 5.972e24 * PHYSICS_SCALE * PHYSICS_SCALE;
+        let crucible_sma = 13.0 * 1.496e11 * PHYSICS_SCALE; // 13 AU
+        bodies.push(CelestialBody {
+            name: "Crucible".to_string(),
+            description: "The destination of the Expedition. An engineered world moved to 13 AU from Sgr A* by the Builders, harboring a thinking ocean.".to_string(),
+            mass: crucible_mass,
+            radius: 1.4 * 6.371e6 * PHYSICS_SCALE,
+            color: [0.9, 0.75, 0.2, 1.0],
+            parent: Some(0),
+            orbit: Some(Orbit {
+                semi_major_axis: crucible_sma,
+                eccentricity: 0.04,
+                argument_of_periapsis: 0.0,
+                mean_anomaly_at_epoch: 0.0,
+            }),
+            soi_radius: calculate_soi(crucible_sma, crucible_mass, sgr_a_mass),
+            atmosphere: Some(Atmosphere {
+                surface_pressure: 3.8 * 101325.0,
+                scale_height: 5800.0,
+                color: [0.7, 0.65, 0.4],
+            }),
+            sidereal_period: None,
+            accretion_disc: None,
+            galactic_mass_profile: false,
+            mineable_resources: vec![ResourceType::MetalOre, ResourceType::Regolith, ResourceType::Water, ResourceType::LithiumOre, ResourceType::RareEarthElements, ResourceType::UraniumOre],
+            atmospheric_resources: vec![ResourceType::AtmosphericCo2],
+            habitability_score: 28,
+            is_gas_giant: false,
+        });
+
         let sun_index = bodies.iter().position(|b| b.name == "Sun").expect("Sun not found");
         let earth_index = bodies.iter().position(|b| b.name == "Earth").expect("Earth not found");
         let moon_index = bodies.iter().position(|b| b.name == "Moon").expect("Moon not found");

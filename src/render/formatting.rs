@@ -87,14 +87,15 @@ pub(crate) fn format_power_si(watts: f64) -> String {
     }
 }
 
-/// Format pressure in Pascals to a human-readable string
+/// Format pressure in Pascals to a human-readable string (always in atm)
 pub(crate) fn format_pressure(pa: f64) -> String {
-    if pa >= 101_325.0 * 0.5 {
-        format!("{:.2} atm", pa / 101_325.0)
-    } else if pa >= 1000.0 {
-        format!("{:.1} kPa", pa / 1000.0)
+    let atm = pa / 101_325.0;
+    if atm >= 0.1 {
+        format!("{:.2} atm", atm)
+    } else if atm >= 0.001 {
+        format!("{:.4} atm", atm)
     } else {
-        format!("{:.1} Pa", pa)
+        format!("{:.1e} atm", atm)
     }
 }
 

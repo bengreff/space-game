@@ -3395,7 +3395,8 @@ fn inject_catalog_planets(
 
             // Record orbit info only for single-star groups (their innermost pair).
             // For multi-star groups the members already have their innermost pair set.
-            if ga_members.len() == 1 {
+            // Skip star 0 (the primary) — it IS the center; it doesn't orbit anything.
+            if ga_members.len() == 1 && ga_members[0] != 0 {
                 star_orbit_info[ga_members[0]] = Some(StarOrbitInfo {
                     local_offset_x: delta_a_x,
                     local_offset_y: delta_a_y,
@@ -3405,7 +3406,7 @@ fn inject_catalog_planets(
                     arg_peri: std::f64::consts::PI, // A side: flipped 180°
                 });
             }
-            if gb_members.len() == 1 {
+            if gb_members.len() == 1 && gb_members[0] != 0 {
                 star_orbit_info[gb_members[0]] = Some(StarOrbitInfo {
                     local_offset_x: delta_b_x,
                     local_offset_y: delta_b_y,
@@ -3419,7 +3420,8 @@ fn inject_catalog_planets(
             // For pairs where at least one group has multiple members, record group-level
             // orbit data. This draws the wide orbit connecting two sub-groups (e.g. how the
             // {A,WD} group and {B,C} group in Regulus orbit each other at 4200 AU).
-            if ga_members.len() > 1 {
+            // Skip groups containing star 0 — the primary's group IS the center.
+            if ga_members.len() > 1 && !ga_members.contains(&0) {
                 group_orbits.push(GroupOrbit {
                     members: ga_members.clone(),
                     delta_x: delta_a_x,
@@ -3429,7 +3431,7 @@ fn inject_catalog_planets(
                     arg_peri: std::f64::consts::PI,
                 });
             }
-            if gb_members.len() > 1 {
+            if gb_members.len() > 1 && !gb_members.contains(&0) {
                 group_orbits.push(GroupOrbit {
                     members: gb_members.clone(),
                     delta_x: delta_b_x,
@@ -3474,7 +3476,7 @@ fn inject_catalog_planets(
             let temp = spectral_temperature(cat_star.spectral_type);
             let rgb = sunscatter::galaxy::star_color::stellar_color(temp);
             let star_color_arr = [rgb[0], rgb[1], rgb[2], 1.0];
-            let star_radius = cat_star.radius_solar * 6.957e8; // meters
+            let star_radius = (cat_star.radius_solar * 6.957e8).max(12_000.0); // meters, min 12km (neutron star) for visibility
 
             bodies.push((sx, sy, star_radius, star_color_arr, 0.0, [0.0, 0.0, 0.0], synthetic_idx));
 
@@ -3610,7 +3612,12 @@ fn inject_catalog_planets(
             (px, py, body.orbit_sma_km * 1000.0)
         } else {
             let host_idx = host_star_index(body.designation, sys.stars);
-            let [hx, hy] = star_positions[host_idx.min(num_stars - 1)];
+            let [hx, hy] = if num_stars > 0 {
+                star_positions[host_idx.min(num_stars - 1)]
+            } else {
+                // Starless system (e.g. Sgr A*): planets orbit the system center directly
+                [star_x, star_y]
+            };
             (hx, hy, body.orbit_sma_au * 1.496e11)
         };
 
@@ -3792,15 +3799,16 @@ fn build_procedural_star_data(
 
     if radius < 0.1 * LIGHT_YEAR {
         // Zoomed in too close for any stars — except a focused one
+        let mut out = Vec::new();
         if let Some((sx, sy, si)) = render_state.focused_star_id {
             if let Some(star_data) = lookup_focused_star(game, sx, sy, si) {
-                let out = vec![star_data];
+                out.push(star_data);
                 sync_focused(render_state, &out[0]);
-                return out;
             }
         }
+        ensure_sgr_a_catalog_stars(game, &mut out, game.solar_system.time);
         game.galaxy.tick();
-        return Vec::new();
+        return out;
     }
 
     if galaxy_view {
@@ -3886,6 +3894,7 @@ fn build_procedural_star_data(
             }
         }
 
+        ensure_sgr_a_catalog_stars(game, &mut out, game_time);
         game.galaxy.tick();
         return out;
     }
@@ -4036,6 +4045,9 @@ fn build_procedural_star_data(
         out.truncate(MAX_STARS);
     }
 
+    // Ensure Sgr A* catalog stars are always present for orbit rendering
+    ensure_sgr_a_catalog_stars(game, &mut out, game.solar_system.time);
+
     // Tick galaxy cache (LRU eviction)
     game.galaxy.tick();
 
@@ -4126,13 +4138,82 @@ fn lookup_focused_star(
     })
 }
 
-/// Build per-body star flag: true for stars (parent is root, no accretion disc).
+/// Ensure all Sgr A* catalog stars are present in the star list for orbit rendering.
+/// Without this, non-focused Sgr A* catalog stars can drop out of the list due to viewport
+/// culling or the 0.1 ly early-return, causing their orbits to disappear at different zoom
+/// levels than when the star is focused.
+fn ensure_sgr_a_catalog_stars(
+    game: &Game,
+    out: &mut Vec<sunscatter::render::StarRenderData>,
+    game_time: f64,
+) {
+    for (_coord, cat_stars) in &game.galaxy.catalog_by_sector {
+        for star in cat_stars {
+            if star.catalog_index == 0 { continue; }
+            // Check if this is a Sgr A* orbit star
+            let sys = match sunscatter::galaxy::catalog::lookup_system(star.catalog_index) {
+                Some(s) => s,
+                None => continue,
+            };
+            if !sys.is_sgr_a_orbit || sys.stars.is_empty() { continue; }
+            // Skip if already in the list
+            if out.iter().any(|s| s.catalog_index == star.catalog_index) { continue; }
+            // Propagate to current position and add
+            let m = star.mean_anomaly_0 + star.mean_motion * game_time;
+            let [current_x, current_y] = sunscatter::galaxy::kepler_position(
+                star.semi_major_axis,
+                star.eccentricity as f64,
+                star.arg_periapsis as f64,
+                m,
+            );
+            let mass_solar = star.mass / 1.989e30;
+            let orbital_period_s = if star.mean_motion > 0.0 {
+                std::f64::consts::TAU / star.mean_motion
+            } else {
+                0.0
+            };
+            let lum_clamped = star.luminosity.max(0.001);
+            let alpha = 0.5 + 0.5 * (lum_clamped.log10() / 4.0).clamp(0.0, 1.0);
+            let lum_factor = (1.0 + (lum_clamped.ln() * 0.06) as f64).clamp(1.0, 2.5) as f32;
+            let catalog_name = sunscatter::galaxy::catalog::lookup_system(star.catalog_index).map(|s| s.name);
+            let num_catalog_stars = sys.stars.len() as u8;
+            out.push(sunscatter::render::StarRenderData {
+                x: current_x,
+                y: current_y,
+                color: star.color,
+                luminosity: star.luminosity,
+                radius_m: star.radius_m,
+                temperature: star.temperature,
+                mass_solar,
+                star_type: star.star_type.display_name(),
+                catalog_prefix: star.star_type.catalog_prefix(),
+                sector_x: _coord.x,
+                sector_y: _coord.y,
+                sector_index: star.sector_index,
+                alpha,
+                lum_factor,
+                semi_major_axis_m: star.semi_major_axis,
+                eccentricity: star.eccentricity,
+                arg_periapsis: star.arg_periapsis,
+                orbital_period_s,
+                catalog_name,
+                catalog_index: star.catalog_index,
+                num_catalog_stars,
+            });
+        }
+    }
+}
+
+/// Build per-body star flag: true for stars (parent is root, no accretion disc, stellar mass).
+/// Planets orbiting the root (e.g. Crucible orbiting Sgr A*) are excluded by the mass check.
 fn build_body_is_star(game: &Game) -> Vec<bool> {
+    const MIN_STAR_MASS_KG: f64 = 1e28; // ~5 Jupiter masses — well below stellar limit
     game.solar_system.bodies.iter().map(|body| {
         match body.parent {
             Some(parent_idx) => {
                 game.solar_system.bodies[parent_idx].parent.is_none()
                     && body.accretion_disc.is_none()
+                    && body.mass > MIN_STAR_MASS_KG
             }
             None => false,
         }
@@ -4150,26 +4231,28 @@ fn build_orbit_data(game: &Game, scaled_positions: &[[f64; 2]], render_state: &R
                 (Some(parent_idx), Some(orbit)) => {
                     let parent_body = &game.solar_system.bodies[parent_idx];
                     if parent_body.parent.is_none() {
-                        // Star orbit: only show in galaxy view when this star is tracked
-                        if in_galaxy_view && render_state.tracked_body == Some(i) {
-                            let parent_pos = scaled_positions[parent_idx];
-                            let orbit_color = [
-                                body.color[0] * 0.4,
-                                body.color[1] * 0.4,
-                                body.color[2] * 0.4,
-                                0.5,
-                            ];
-                            return Some(OrbitRenderData {
-                                parent_x: parent_pos[0] * SCALE,
-                                parent_y: parent_pos[1] * SCALE,
-                                semi_major_axis: orbit.semi_major_axis * SCALE * BODY_SCALE,
-                                eccentricity: orbit.eccentricity,
-                                argument_of_periapsis: orbit.argument_of_periapsis,
-                                color: orbit_color,
-                                segments: 256,
-                            });
+                        // Body orbiting root (Sgr A*): show orbit when body is sub-pixel
+                        let body_world_radius = (body.radius * BODY_SCALE * SCALE) as f32;
+                        let body_pixels = body_world_radius * pixels_per_world_unit * 2.0;
+                        if body_pixels >= 1.0 {
+                            return None;
                         }
-                        return None;
+                        let parent_pos = scaled_positions[parent_idx];
+                        let orbit_color = [
+                            body.color[0] * 0.4,
+                            body.color[1] * 0.4,
+                            body.color[2] * 0.4,
+                            0.5,
+                        ];
+                        return Some(OrbitRenderData {
+                            parent_x: parent_pos[0] * SCALE,
+                            parent_y: parent_pos[1] * SCALE,
+                            semi_major_axis: orbit.semi_major_axis * SCALE * BODY_SCALE,
+                            eccentricity: orbit.eccentricity,
+                            argument_of_periapsis: orbit.argument_of_periapsis,
+                            color: orbit_color,
+                            segments: 256,
+                        });
                     }
 
                     // In galaxy view, skip all non-star orbits
@@ -4834,9 +4917,10 @@ fn render_tracking_station_frame(
         let is_star = body.parent.is_none() || body_is_star[i];
         // Collect children (moons/planets whose parent is this body) for the info panel.
         // For non-star bodies (planets), children are moons. For stars, children are planets.
-        let children: Vec<sunscatter::render::CatalogPlanetInfo> = game.solar_system.bodies.iter().filter(|b| {
-            b.parent == Some(i)
-        }).map(|b| sunscatter::render::CatalogPlanetInfo {
+        // Exclude child stars (e.g. the Sun) from the planetary system — only show planets.
+        let children: Vec<sunscatter::render::CatalogPlanetInfo> = game.solar_system.bodies.iter().enumerate().filter(|(j, b)| {
+            b.parent == Some(i) && !body_is_star[*j]
+        }).map(|(_, b)| sunscatter::render::CatalogPlanetInfo {
             name: b.name.clone(),
             designation: String::new(),
             temperature_k: 0.0,
@@ -5807,6 +5891,13 @@ fn handle_flight_mouse_input(
                         render_state.focus_on_body(body_idx); // Preserves focused_star for catalog planets
                         game.flight.tracking_ship = false;
                         println!("Focused on: {}", name);
+                    } else if let Some(body_idx) = render_state.body_at_screen_pos_loose(mouse_pos[0], mouse_pos[1]) {
+                        // Check loose (indicator radius) before star dot — ensures companion
+                        // star bodies are found before the ProceduralStar dot re-centers on A.
+                        let name = render_state.body_names.get(body_idx).cloned().unwrap_or_default();
+                        render_state.focus_on_body(body_idx); // Preserves focused_star for catalog planets
+                        game.flight.tracking_ship = false;
+                        println!("Focused on: {}", name);
                     } else if let Some(star_idx) = render_state.star_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
                         if let Some(star) = render_state.current_procedural_stars.get(star_idx) {
                             let world_x = star.x * SCALE;
@@ -5820,11 +5911,6 @@ fn handle_flight_mouse_input(
                             game.flight.tracking_ship = false;
                             println!("Focused on star: {}", star.format_name());
                         }
-                    } else if let Some(body_idx) = render_state.body_at_screen_pos_loose(mouse_pos[0], mouse_pos[1]) {
-                        let name = render_state.body_names.get(body_idx).cloned().unwrap_or_default();
-                        render_state.focus_on_body(body_idx); // Preserves focused_star for catalog planets
-                        game.flight.tracking_ship = false;
-                        println!("Focused on: {}", name);
                     }
                     *last_click_time = None;
                 } else {
@@ -6247,6 +6333,13 @@ fn handle_tracking_station_mouse_input(
                         render_state.focus_on_body(body_idx); // Preserves focused_star for catalog planets
                         println!("Focused on: {}", name);
                         was_double_click = true;
+                    } else if let Some(body_idx) = render_state.body_at_screen_pos_loose(mouse_pos[0], mouse_pos[1]) {
+                        // Check loose (indicator radius) before star dot — ensures companion
+                        // star bodies are found before the ProceduralStar dot re-centers on A.
+                        let name = render_state.body_names.get(body_idx).cloned().unwrap_or_default();
+                        render_state.focus_on_body(body_idx); // Preserves focused_star for catalog planets
+                        println!("Focused on: {}", name);
+                        was_double_click = true;
                     } else if let Some(star_idx) = render_state.star_at_screen_pos(mouse_pos[0], mouse_pos[1]) {
                         if let Some(star) = render_state.current_procedural_stars.get(star_idx) {
                             let world_x = star.x * SCALE;
@@ -6260,11 +6353,6 @@ fn handle_tracking_station_mouse_input(
                             println!("Focused on star: {}", star.format_name());
                             was_double_click = true;
                         }
-                    } else if let Some(body_idx) = render_state.body_at_screen_pos_loose(mouse_pos[0], mouse_pos[1]) {
-                        let name = render_state.body_names.get(body_idx).cloned().unwrap_or_default();
-                        render_state.focus_on_body(body_idx); // Preserves focused_star for catalog planets
-                        println!("Focused on: {}", name);
-                        was_double_click = true;
                     }
                     *last_click_time = None;
                 } else {

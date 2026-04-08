@@ -4,6 +4,11 @@ use super::density;
 use super::star_color;
 use super::{ProceduralStar, StarType, solve_kepler_nr};
 
+/// No procedural stars within this radius of the Sun. The catalog handles
+/// the solar neighborhood; without this, random stars appear closer than
+/// Alpha Centauri (4.37 ly) due to the ~4.3 ly average procedural spacing.
+const SUN_EXCLUSION_RADIUS_LY: f64 = 15.0;
+
 /// Generate all stars for a sector, deterministically from the galaxy seed.
 pub fn generate_sector(
     sector_x: u16,
@@ -13,6 +18,17 @@ pub fn generate_sector(
     let count = density::sector_star_count(sector_x, sector_y, galaxy_seed);
     let origin = density::sector_origin_meters(sector_x, sector_y);
     let sector_meters = SECTOR_SIDE_LY * LIGHT_YEAR;
+
+    // Sun's t=0 galactic position (matches catalog.rs / bodies.rs)
+    let sun_pos = {
+        let (a, e, m0) = (1.996e20_f64, 0.07_f64, 4.8534_f64);
+        let big_e = solve_kepler_nr(m0, e);
+        let nu = 2.0 * ((1.0 + e).sqrt() * (big_e / 2.0).sin())
+            .atan2((1.0 - e).sqrt() * (big_e / 2.0).cos());
+        let r = a * (1.0 - e * big_e.cos());
+        [r * nu.cos(), r * nu.sin()]
+    };
+    let exclusion_r2 = (SUN_EXCLUSION_RADIUS_LY * LIGHT_YEAR) * (SUN_EXCLUSION_RADIUS_LY * LIGHT_YEAR);
 
     let mut stars = Vec::with_capacity(count as usize);
 
@@ -27,6 +43,13 @@ pub fn generate_sector(
         // Position: uniform within sector
         let px = origin[0] + rng.next_f64() * sector_meters;
         let py = origin[1] + rng.next_f64() * sector_meters;
+
+        // Skip stars inside the Sun's exclusion zone (catalog stars cover this region)
+        let dx = px - sun_pos[0];
+        let dy = py - sun_pos[1];
+        if dx * dx + dy * dy < exclusion_r2 {
+            continue;
+        }
 
         // Spectral type by initial mass function (IMF)
         // Weights: M=76%, K=12%, G=7%, F=3%, A=1.5%, B=0.4%, O=0.1%
@@ -119,19 +142,29 @@ pub fn generate_sector(
         // Random mean anomaly at t=0
         let mean_anomaly_0 = rng.next_f64() * std::f64::consts::TAU;
 
-        // Derive consistent orbital elements so position at t=0 = (px, py)
-        // Solve Kepler for E₀ from M₀
-        let big_e0 = solve_kepler_nr(mean_anomaly_0, e);
-        // True anomaly at t=0
-        let nu_0 = 2.0 * ((1.0 + e).sqrt() * (big_e0 / 2.0).sin())
-            .atan2((1.0 - e).sqrt() * (big_e0 / 2.0).cos());
-        // Argument of periapsis: angular position at t=0 = theta_0 = nu_0 + arg_peri
-        let arg_periapsis = theta_0 - nu_0;
-        // Semi-major axis: radial position at t=0 = galactic_r = a(1 − e·cos(E₀))
-        let semi_major_axis = if e > 0.0 {
-            galactic_r / (1.0 - e * big_e0.cos())
+        // Derive consistent orbital elements so kepler_position(a,e,ω,M₀) = (px, py).
+        // IMPORTANT: kepler_position() uses a first-order approximation when e < 0.1,
+        // so we must derive elements using the SAME approximation. Otherwise the rendered
+        // t=0 position diverges from (px, py) by O(e²·a) — up to ~100 ly at galactic
+        // distances — breaking the exclusion zone check which uses (px, py).
+        let (arg_periapsis, semi_major_axis) = if e < 0.1 {
+            // Match kepler_position's first-order path: ν ≈ M + 2e·sin(M), r = a·(1−e·cos(M))
+            let nu_approx = mean_anomaly_0 + 2.0 * e * mean_anomaly_0.sin();
+            let omega = theta_0 - nu_approx;
+            let a = galactic_r / (1.0 - e * mean_anomaly_0.cos());
+            (omega, a)
         } else {
-            galactic_r
+            // Exact Newton-Raphson (matches kepler_position's e >= 0.1 path)
+            let big_e0 = solve_kepler_nr(mean_anomaly_0, e);
+            let nu_0 = 2.0 * ((1.0 + e).sqrt() * (big_e0 / 2.0).sin())
+                .atan2((1.0 - e).sqrt() * (big_e0 / 2.0).cos());
+            let omega = theta_0 - nu_0;
+            let a = if e > 0.0 {
+                galactic_r / (1.0 - e * big_e0.cos())
+            } else {
+                galactic_r
+            };
+            (omega, a)
         };
         // Mean motion from enclosed mass at semi-major axis
         let mean_motion = if semi_major_axis > 0.0 {
@@ -160,4 +193,106 @@ pub fn generate_sector(
     }
 
     stars
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bodies::{LIGHT_YEAR, position_to_sector};
+
+    #[test]
+    fn no_procedural_stars_within_exclusion_zone() {
+        // Compute Sun's t=0 position (same as generate_sector)
+        let sun_pos = {
+            let (a, e, m0) = (1.996e20_f64, 0.07_f64, 4.8534_f64);
+            let big_e = solve_kepler_nr(m0, e);
+            let nu = 2.0 * ((1.0 + e).sqrt() * (big_e / 2.0).sin())
+                .atan2((1.0 - e).sqrt() * (big_e / 2.0).cos());
+            let r = a * (1.0 - e * big_e.cos());
+            [r * nu.cos(), r * nu.sin()]
+        };
+        let sun_ly = [sun_pos[0] / LIGHT_YEAR, sun_pos[1] / LIGHT_YEAR];
+        eprintln!("Sun galactic pos: ({:.4}, {:.4}) ly", sun_ly[0], sun_ly[1]);
+
+        // Get Sun's sector
+        let sun_sector = position_to_sector(sun_pos).expect("Sun should be in a valid sector");
+        eprintln!("Sun sector: ({}, {})", sun_sector.x, sun_sector.y);
+
+        let galaxy_seed = 0xDEAD_BEEF_CAFE_1234_u64;
+        let exclusion_r = SUN_EXCLUSION_RADIUS_LY * LIGHT_YEAR;
+
+        // Check Sun's sector and all 8 neighbors
+        let mut closest_dist_ly = f64::MAX;
+        let mut total_excluded = 0u32;
+        for dy in -1i16..=1 {
+            for dx in -1i16..=1 {
+                let sx = (sun_sector.x as i16 + dx) as u16;
+                let sy = (sun_sector.y as i16 + dy) as u16;
+                let stars = generate_sector(sx, sy, galaxy_seed);
+                for star in &stars {
+                    let ddx = star.pos[0] - sun_pos[0];
+                    let ddy = star.pos[1] - sun_pos[1];
+                    let dist = (ddx * ddx + ddy * ddy).sqrt();
+                    let dist_ly = dist / LIGHT_YEAR;
+                    if dist_ly < closest_dist_ly {
+                        closest_dist_ly = dist_ly;
+                    }
+                    if dist < exclusion_r {
+                        total_excluded += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("Closest procedural star: {:.2} ly from Sun", closest_dist_ly);
+        eprintln!("Stars found inside exclusion zone: {}", total_excluded);
+        assert!(closest_dist_ly >= SUN_EXCLUSION_RADIUS_LY,
+            "Found star at {:.2} ly, expected >= {} ly", closest_dist_ly, SUN_EXCLUSION_RADIUS_LY);
+    }
+
+    #[test]
+    fn kepler_position_matches_generated_position_at_t0() {
+        // Verify that kepler_position(a, e, ω, M₀) returns the same position
+        // as the generated (px, py). A mismatch here means the exclusion zone
+        // check (on px, py) wouldn't match what's actually rendered.
+        use crate::galaxy::kepler_position;
+
+        let galaxy_seed = 0xDEAD_BEEF_CAFE_1234_u64;
+        let sun_sector = position_to_sector({
+            let (a, e, m0) = (1.996e20_f64, 0.07_f64, 4.8534_f64);
+            let big_e = solve_kepler_nr(m0, e);
+            let nu = 2.0 * ((1.0 + e).sqrt() * (big_e / 2.0).sin())
+                .atan2((1.0 - e).sqrt() * (big_e / 2.0).cos());
+            let r = a * (1.0 - e * big_e.cos());
+            [r * nu.cos(), r * nu.sin()]
+        }).unwrap();
+
+        let mut max_error_ly = 0.0_f64;
+        let mut star_count = 0u32;
+        for dy in -1i16..=1 {
+            for dx in -1i16..=1 {
+                let sx = (sun_sector.x as i16 + dx) as u16;
+                let sy = (sun_sector.y as i16 + dy) as u16;
+                let stars = generate_sector(sx, sy, galaxy_seed);
+                for star in &stars {
+                    let [kx, ky] = kepler_position(
+                        star.semi_major_axis,
+                        star.eccentricity as f64,
+                        star.arg_periapsis as f64,
+                        star.mean_anomaly_0,
+                    );
+                    let err_x = kx - star.pos[0];
+                    let err_y = ky - star.pos[1];
+                    let err_ly = (err_x * err_x + err_y * err_y).sqrt() / LIGHT_YEAR;
+                    if err_ly > max_error_ly {
+                        max_error_ly = err_ly;
+                    }
+                    star_count += 1;
+                }
+            }
+        }
+        eprintln!("Checked {} stars, max kepler_position error: {:.6} ly", star_count, max_error_ly);
+        // Position error must be sub-ly so the 15 ly exclusion zone is meaningful
+        assert!(max_error_ly < 0.01,
+            "kepler_position at t=0 diverges from generated pos by {:.2} ly", max_error_ly);
+    }
 }

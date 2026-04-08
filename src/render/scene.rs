@@ -285,13 +285,38 @@ impl RenderState {
             self.focused_star,
         );
 
-        // Draw galactic orbit line for the focused star
-        if let Some(idx) = self.focused_star {
-            let star = &self.current_procedural_stars[idx];
-            Self::add_galactic_orbit_line(
-                &self.camera, &mut all_vertices, &mut all_indices,
-                star, scale,
-            );
+        // Near Sgr A* (within 1000 ly), show galactic orbits for all catalog stars
+        // and the focused star (even if procedural). Only when not in galaxy view
+        // and the star's dot is sub-pixel — orbits disappear as you zoom in.
+        if !in_galaxy_view {
+            const SGR_A_RADIUS_M: f64 = 1000.0 * 9.461e15; // 1000 ly
+
+            for (i, star) in self.current_procedural_stars.iter().enumerate() {
+                let dist_from_sgr_a = (star.x * star.x + star.y * star.y).sqrt();
+                let near_sgr_a = dist_from_sgr_a < SGR_A_RADIUS_M;
+                let is_focused = Some(i) == self.focused_star;
+
+                // Within 1000 ly: catalog stars + focused star
+                // Outside: focused star only
+                if near_sgr_a {
+                    if !is_focused && star.catalog_index == 0 { continue; }
+                } else {
+                    if !is_focused { continue; }
+                }
+
+                // Sub-pixel check using physical stellar radius (matches the
+                // hexagon-vs-circle transition in add_procedural_stars_impl).
+                // Orbit disappears when you zoom in close enough that the star's
+                // physical disk exceeds 1 pixel.
+                let radius_px = star.radius_m * scale
+                    * self.camera.zoom as f64 * self.size.height as f64 * 0.5;
+                if radius_px >= 1.0 { continue; }
+
+                Self::add_galactic_orbit_line(
+                    &self.camera, &mut all_vertices, &mut all_indices,
+                    star, scale,
+                );
+            }
         }
 
         // Draw all orbit lines (on top of atmosphere, behind bodies)

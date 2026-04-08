@@ -169,8 +169,11 @@ pub fn build_catalog_stars() -> std::collections::HashMap<SectorCoord, Vec<Proce
     for (i, sys) in catalog_data::CATALOG.iter().enumerate() {
         let catalog_index = (i + 1) as u16;
 
-        // Use primary star properties for the dot
-        let primary = &sys.stars[0];
+        // Skip empty systems (e.g. Sgr A* — Crucible is a real body in bodies.rs)
+        let primary = match sys.stars.first() {
+            Some(p) => p,
+            None => continue,
+        };
         let mass_kg = primary.mass_solar * M_SUN;
         let luminosity = primary.luminosity_solar as f32;
         let temperature = spectral_temperature(primary.spectral_type);
