@@ -119,7 +119,7 @@ impl Ship {
 
     /// Calculate orbital elements from state vectors
     /// Returns (Orbit, true_anomaly, retrograde)
-    pub(crate) fn calculate_orbit_from_state(&self, pos: [f64; 2], vel: [f64; 2], parent_mass: f64) -> Option<(Orbit, f64, bool)> {
+    pub fn calculate_orbit_from_state(&self, pos: [f64; 2], vel: [f64; 2], parent_mass: f64) -> Option<(Orbit, f64, bool)> {
         let rx = pos[0];
         let ry = pos[1];
         let r = (rx * rx + ry * ry).sqrt();
@@ -218,7 +218,7 @@ impl Ship {
     }
 
     /// Convert mean anomaly to true anomaly
-    pub(crate) fn mean_to_true_anomaly(&self, orbit: &Orbit, mean_anomaly: f64) -> f64 {
+    pub fn mean_to_true_anomaly(&self, orbit: &Orbit, mean_anomaly: f64) -> f64 {
         let eccentric_anomaly = orbit.solve_kepler(mean_anomaly);
         orbit.true_anomaly(eccentric_anomaly)
     }

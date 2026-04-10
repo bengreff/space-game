@@ -180,7 +180,8 @@ Both solar system bodies and procedural stars use the same `BodyInfoData` struct
 
 Panel sections:
 - **Name** — light blue (200, 200, 255) for stars, white for non-stars
-- **Description** — star type string (italic, light blue-grey) for stars, or body description for non-stars
+- **Star type** (stars only) — star type string (italic, light blue `(160, 160, 200)`)
+- **Description** — body/system description (italic, gray `(160, 160, 160)`), if non-empty. Stars show both star type and description.
 - **Physical Properties** — Radius (R☉ + metric for stars, metric only for non-stars), surface gravity, mass (M☉ for stars, metric for non-stars)
 - **Stellar Properties** (stars only) — luminosity (L☉), temperature (K), SOI
 - **Atmosphere** (non-stars only) — pressure + height, or "No atmosphere"
@@ -225,8 +226,8 @@ Catalog systems span 5 zones:
 ### Requirement: Catalog data structures
 
 Each catalog system contains:
-- `CatalogSystem` — name, zone, distance from Sol, galactic position (ly), orbital elements, list of stars, bodies, and binary orbits
-- `CatalogStar` — name, spectral type, mass/radius/luminosity in solar units (multi-star systems store all components)
+- `CatalogSystem` — name, description (system-level from `nearby_stars.md`), zone, distance from Sol, galactic position (ly), orbital elements, list of stars, bodies, and binary orbits
+- `CatalogStar` — name, per-star description (empty for single-star systems where the system description is used), spectral type, mass/radius/luminosity in solar units (multi-star systems store all components)
 - `CatalogBody` — planet/moon with name, designation, orbital parameters, physical properties (mass, radius, gravity, temperature), atmosphere, habitability score, science value, resources, description
 - `CatalogAtmosphere` — pressure (atm), composition string, scale height (km)
 - `StarOrbitData` — binary/hierarchical stellar pair orbital parameters: star_a/star_b indices, semi-major axis (AU), eccentricity, period (years)
@@ -283,7 +284,7 @@ When a multi-star system is focused, `inject_catalog_planets()`:
 - **GIVEN** a focused star with `num_catalog_stars > 1`
 - **WHEN** `add_procedural_stars_impl` renders the star field
 - **THEN** the focused star's procedural dot (hexagon/circle) is suppressed (no vertices generated)
-- **AND** the star's screen position is still recorded for hover/click hit testing
+- **AND** the star's screen position is NOT recorded for hit testing (preventing the invisible barycenter dot from capturing clicks and re-centering the camera)
 - **AND** companion star bodies from `inject_catalog_planets()` replace the dot visually
 
 #### Scenario: Hierarchical quadruple system with group orbits (Regulus)
@@ -315,11 +316,13 @@ At runtime, stars are propagated purely via their corrected Kepler elements (no 
 
 ### Requirement: Galactic orbit line rendering
 
-Galactic orbit ellipses are drawn around the galactic center (0,0) using each star's orbital elements (SMA, eccentricity, argument of periapsis). The orbit is rendered as a thick line strip (dual-vertex with perpendicular offset for width). Segment count: 5120 for catalog stars (smooth at high zoom), 512 for procedural stars.
+Galactic orbit ellipses are drawn around the galactic center (0,0) using each star's orbital elements (SMA, eccentricity, argument of periapsis). The orbit is rendered as a thick line strip (dual-vertex with perpendicular offset for width). Segment count is adaptive via `orbit_segments()` in `render/types.rs`: ~1 segment per 3 pixels of screen-space circumference, clamped to [64, `ORBIT_SEGMENTS`=5120]. This single function governs every orbit in the game (body orbits, galactic orbits, patched-conic arcs, hyperbolic trajectories).
 
 All orbits (including the focused star) are gated by two conditions: not in galaxy view, and the star's physical disk must be sub-pixel (< 1px on screen). The sub-pixel check uses `star.radius_m` (the physical stellar radius in meters), matching the same threshold that controls whether the star is rendered as a hexagon dot vs a real circle. This means each star's orbit naturally disappears at a different zoom level as you zoom in and its physical disk grows past 1px.
 
 Within 1000 ly of Sgr A* (distance computed from star.x/star.y in meters), all catalog stars (catalog_index > 0) and the focused star (even if procedural) show galactic orbit lines when sub-pixel. Outside this radius, only the focused star shows its orbit (when sub-pixel).
+
+The Sun's galactic orbit follows this same catalog star pipeline — it has no special-case rendering through the body orbit system. Bodies whose parent is the root (Sgr A*) skip body-orbit rendering entirely, deferring to the catalog star orbit pipeline. This means the Sun's orbit appears only in star field view and only when focused, consistent with other distant catalog stars.
 
 Sgr A* catalog stars are always included in the procedural star list (`current_procedural_stars`) regardless of viewport culling or zoom level. This ensures their orbit visibility is determined solely by the sub-pixel check, not by whether the star's dot happens to be on-screen. Without this, non-focused Sgr A* stars could drop out of the list (due to viewport culling or the 0.1 ly close-zoom early return), causing their orbits to disappear at a different zoom level than when focused.
 
@@ -367,6 +370,7 @@ When a catalog star is focused (catalog_index > 0), the info panel shows additio
 
 **Individual companion stars** (double-click on a companion star):
 - Standard star info panel with physical/stellar properties
+- Description: per-star description from `CatalogStar.description` (falls back to system description if empty)
 - Planetary System section shows **only planets orbiting this specific star** (filtered by `host_star_index()`)
 - Orbit section shows the stellar orbit around the barycenter (not galactic orbit)
 - `is_galactic_orbit = false` for stellar orbits
@@ -406,5 +410,5 @@ Common sections across all catalog star views:
 - `src/render/interaction.rs` — `update_star_hover()`, `star_at_screen_pos()`, star focus tracking in `update_tracking()`
 - `src/render/menus.rs` — Star hover labels and info panel in tracking station, catalog system info and planetary system sections
 - `src/render/flight.rs` — Star hover labels in flight mode
-- `src/render/types.rs` — BodyInfoData with luminosity_solar, star_type, temperature_k, soi_radius_m, is_galactic_orbit, catalog_stars, catalog_planets, catalog_zone, catalog_distance_ly, catalog_spectral fields; CatalogStarInfo struct; CatalogPlanetInfo struct; OrbitRenderData with per-orbit segments field
+- `src/render/types.rs` — BodyInfoData with luminosity_solar, star_type, temperature_k, soi_radius_m, is_galactic_orbit, catalog_stars, catalog_planets, catalog_zone, catalog_distance_ly, catalog_spectral fields; CatalogStarInfo struct; CatalogPlanetInfo struct; OrbitRenderData struct; ORBIT_SEGMENTS constant (5120); orbit_segments() adaptive function
 - `src/bodies.rs` — `calculate_soi()` (public), `galactic_enclosed_mass()` used for star SOI computation

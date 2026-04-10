@@ -11,7 +11,7 @@ The tracking station provides a solar system observatory view. It renders all ce
 - "Tracking Station" label at bottom of screen (14pt, gray)
 - Hovered body labels (white text above body, same as flight)
 - Vessels rendered with full parts at each vessel's position (falls back to colored triangle icon if no part data)
-- Vessel orbit lines in grey (`[0.6, 0.6, 0.6, 0.4]`). Only elliptical orbits (e < 1) are rendered using 256-segment parametric ellipse line approximation.
+- Vessel orbit lines in grey (`[0.6, 0.6, 0.6, 0.4]`). Only elliptical orbits (e < 1) are rendered using adaptive segment count via `orbit_segments()` (max `ORBIT_SEGMENTS` = 5120).
 
 ### Galaxy View
 - Galaxy view activates when the screen span exceeds a distance-dependent threshold: 120 ly near Sgr A*, linearly increasing to 800 ly at the Sun's distance (26,000 ly) and beyond.
@@ -40,7 +40,8 @@ The tracking station provides a solar system observatory view. It renders all ce
 - Panel only shown when a body is being tracked (`tracked_body.is_some()`)
 - Displays:
   - Body name as heading (18pt, white)
-  - Description in italic gray (12pt) if non-empty
+  - Star type in italic light blue `(160, 160, 200)` (12pt, stars only)
+  - Description in italic gray `(160, 160, 160)` (12pt) if non-empty. Stars show both star type and description.
   - Separator
   - "Physical Properties" subheading (hidden when `radius_m == 0.0`, i.e. for barycenters): radius (auto-scaled units), surface gravity (m/s^2), mass (scientific notation)
   - Atmosphere section: surface pressure (Pa/kPa/atm) and visible height, or "No atmosphere" in gray

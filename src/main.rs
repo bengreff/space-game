@@ -1167,7 +1167,6 @@ fn render_flight_frame(
                                 eccentricity: orbit.eccentricity,
                                 argument_of_periapsis: orbit.argument_of_periapsis,
                                 color: orbit_color,
-                                segments: 256,
                             });
                         }
                         return None;
@@ -1209,7 +1208,6 @@ fn render_flight_frame(
                         eccentricity: orbit.eccentricity,
                         argument_of_periapsis: orbit.argument_of_periapsis,
                         color: orbit_color,
-                        segments: 256,
                     })
                 }
                 _ => None,
@@ -1732,7 +1730,6 @@ fn render_flight_frame(
                     eccentricity: orbit.eccentricity,
                     argument_of_periapsis: orbit.argument_of_periapsis,
                     color: [0.5, 0.5, 0.5, 0.3], // Dimmed grey
-                    segments: 256,
                 })
             });
             let parts = v.vessel.as_ref().map(|fv| {
@@ -3494,7 +3491,6 @@ fn inject_catalog_planets(
                     eccentricity: orbit_info.eccentricity,
                     argument_of_periapsis: orbit_info.arg_peri,
                     color: orbit_color,
-                    segments: 5120,
                 }));
             } else {
                 orbits.push(None);
@@ -3532,7 +3528,11 @@ fn inject_catalog_planets(
 
             catalog_body_info.insert(synthetic_idx, BodyInfoData {
                 name: cat_star.name.to_string(),
-                description: String::new(),
+                description: if cat_star.description.is_empty() {
+                    sys.description.to_string()
+                } else {
+                    cat_star.description.to_string()
+                },
                 radius_m: star_radius,
                 surface_gravity_ms2: star_surface_gravity,
                 mass_kg: star_mass_kg,
@@ -3591,7 +3591,6 @@ fn inject_catalog_planets(
                 eccentricity: go.eccentricity,
                 argument_of_periapsis: go.arg_peri,
                 color: orbit_color,
-                segments: 5120,
             }));
         }
     }
@@ -3665,7 +3664,6 @@ fn inject_catalog_planets(
                 eccentricity: ecc,
                 argument_of_periapsis: 0.0,
                 color: orbit_color,
-                segments: 5120,
             }));
         }
 
@@ -3702,7 +3700,7 @@ fn inject_catalog_planets(
             atmosphere_height_m: body.atmosphere.as_ref().map(|a| a.scale_height_km * 5000.0),
             orbit_semi_major_axis_m: Some(sma),
             orbit_eccentricity: Some(body.orbit_ecc),
-            orbit_period_s: Some(body.orbit_period_days * 86400.0),
+            orbit_period_s: Some(body.orbit_period_days.abs() * 86400.0),
             mineable_resources: body.resources.to_vec(),
             atmospheric_resources: body.atmosphere.as_ref().map(|_| {
                 body.resources.iter().filter(|r| matches!(r,
@@ -4231,28 +4229,9 @@ fn build_orbit_data(game: &Game, scaled_positions: &[[f64; 2]], render_state: &R
                 (Some(parent_idx), Some(orbit)) => {
                     let parent_body = &game.solar_system.bodies[parent_idx];
                     if parent_body.parent.is_none() {
-                        // Body orbiting root (Sgr A*): show orbit when body is sub-pixel
-                        let body_world_radius = (body.radius * BODY_SCALE * SCALE) as f32;
-                        let body_pixels = body_world_radius * pixels_per_world_unit * 2.0;
-                        if body_pixels >= 1.0 {
-                            return None;
-                        }
-                        let parent_pos = scaled_positions[parent_idx];
-                        let orbit_color = [
-                            body.color[0] * 0.4,
-                            body.color[1] * 0.4,
-                            body.color[2] * 0.4,
-                            0.5,
-                        ];
-                        return Some(OrbitRenderData {
-                            parent_x: parent_pos[0] * SCALE,
-                            parent_y: parent_pos[1] * SCALE,
-                            semi_major_axis: orbit.semi_major_axis * SCALE * BODY_SCALE,
-                            eccentricity: orbit.eccentricity,
-                            argument_of_periapsis: orbit.argument_of_periapsis,
-                            color: orbit_color,
-                            segments: 256,
-                        });
+                        // Body orbiting root (Sgr A*): handled by catalog star
+                        // orbit pipeline (star field view, focused-only visibility)
+                        return None;
                     }
 
                     // In galaxy view, skip all non-star orbits
@@ -4282,7 +4261,6 @@ fn build_orbit_data(game: &Game, scaled_positions: &[[f64; 2]], render_state: &R
                         eccentricity: orbit.eccentricity,
                         argument_of_periapsis: orbit.argument_of_periapsis,
                         color: orbit_color,
-                        segments: 256,
                     })
                 }
                 _ => None,
@@ -4386,7 +4364,6 @@ fn build_tracking_vessel_data(
                 eccentricity: orbit.eccentricity,
                 argument_of_periapsis: orbit.argument_of_periapsis,
                 color: [0.6, 0.6, 0.6, 0.4], // Grey for all vessels in tracking station
-                segments: 256,
             }
         });
         let parts = v.vessel.as_ref().map(|fv| {
@@ -4994,11 +4971,15 @@ fn render_tracking_station_frame(
             if is_multi_star {
                 // Multi-star system: barycenter view
                 let sys = cat.unwrap();
-                let desc = match sys.stars.len() {
-                    2 => "Binary star system",
-                    3 => "Triple star system",
-                    4 => "Quadruple star system",
-                    _ => "Multiple star system",
+                let desc = if sys.description.is_empty() {
+                    match sys.stars.len() {
+                        2 => "Binary star system",
+                        3 => "Triple star system",
+                        4 => "Quadruple star system",
+                        _ => "Multiple star system",
+                    }
+                } else {
+                    sys.description
                 };
                 let catalog_stars: Vec<CatalogStarInfo> = sys.stars.iter().map(|st| CatalogStarInfo {
                     name: st.name.to_string(),
@@ -5061,7 +5042,7 @@ fn render_tracking_station_frame(
 
                 BodyInfoData {
                     name: s.format_name(),
-                    description: String::new(),
+                    description: cat.map(|sys| sys.description.to_string()).unwrap_or_default(),
                     radius_m: s.radius_m,
                     surface_gravity_ms2: surface_gravity,
                     mass_kg,

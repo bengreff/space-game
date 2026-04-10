@@ -417,7 +417,7 @@ impl SolarSystem {
         let sgr_a_mass = 8.26e36 * PHYSICS_SCALE * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Sagittarius A*".to_string(),
-            description: String::new(),
+            description: "The supermassive black hole at the center of the Milky Way, four million times the mass of the Sun. Its accretion disc glows with the superheated remains of stars that wandered too close.".to_string(),
             mass: sgr_a_mass,
             radius: 1.2e10 * PHYSICS_SCALE,
             color: [0.0, 0.0, 0.0, 1.0],
@@ -446,7 +446,7 @@ impl SolarSystem {
         let sun_sma = 1.996e20 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Sun".to_string(),
-            description: String::new(),
+            description: "A G-type main sequence star, home star of humanity. Medium-sized and middle-aged at 4.6 billion years, it fuses 600 million tonnes of hydrogen per second into helium, bathing the inner solar system in light and warmth.".to_string(),
             mass: sun_mass,
             radius: sun_radius,
             color: [1.0, 0.95, 0.3, 1.0],
@@ -474,7 +474,7 @@ impl SolarSystem {
         let mercury_sma = 5.79e10 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Mercury".to_string(),
-            description: String::new(),
+            description: "The smallest planet and closest to the Sun. A dense, cratered world baked by solar radiation on its dayside and frozen on its nightside, with a massive iron core comprising 85% of its radius.".to_string(),
             mass: mercury_mass,
             radius: 2.44e6 * PHYSICS_SCALE,
             color: [0.7, 0.7, 0.7, 1.0],
@@ -501,7 +501,7 @@ impl SolarSystem {
         let venus_sma = 1.082e11 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Venus".to_string(),
-            description: String::new(),
+            description: "Earth's twin in size, shrouded in a crushing carbon dioxide atmosphere 90 times thicker than Earth's. Surface temperatures reach 735 K beneath perpetual sulfuric acid clouds — the hottest planet in the solar system.".to_string(),
             mass: venus_mass,
             radius: 6.052e6 * PHYSICS_SCALE,
             color: [0.9, 0.85, 0.7, 1.0],
@@ -533,7 +533,7 @@ impl SolarSystem {
         let earth_idx = bodies.len();
         bodies.push(CelestialBody {
             name: "Earth".to_string(),
-            description: String::new(),
+            description: "The cradle of humanity. A blue marble of liquid oceans, nitrogen-oxygen atmosphere, and teeming biosphere — the only world known to harbor life before the age of interstellar exploration.".to_string(),
             mass: earth_mass,
             radius: 6.371e6 * PHYSICS_SCALE,
             color: [0.15, 0.5, 0.15, 1.0],
@@ -564,7 +564,7 @@ impl SolarSystem {
         let moon_sma = 3.844e8 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Moon".to_string(),
-            description: String::new(),
+            description: "Earth's only natural satellite, born from a giant impact 4.5 billion years ago. An airless world of ancient lava plains and impact craters, its polar regions harbor water ice in permanently shadowed craters.".to_string(),
             mass: moon_mass,
             radius: 1.737e6 * PHYSICS_SCALE,
             color: [0.75, 0.75, 0.75, 1.0],
@@ -592,7 +592,7 @@ impl SolarSystem {
         let mars_idx = bodies.len();
         bodies.push(CelestialBody {
             name: "Mars".to_string(),
-            description: String::new(),
+            description: "The Red Planet. A cold, dry world with a thin CO\u{2082} atmosphere, ancient river channels, and the tallest volcano in the solar system. Subsurface ice deposits make it humanity's most promising near-term colony site.".to_string(),
             mass: mars_mass,
             radius: 3.39e6 * PHYSICS_SCALE,
             color: [0.8, 0.3, 0.2, 1.0],
@@ -623,7 +623,7 @@ impl SolarSystem {
         let phobos_sma = 9.376e6 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Phobos".to_string(),
-            description: String::new(),
+            description: "Mars's larger moon, a captured asteroid just 22 km across. Orbits so close that it rises in the west and sets in the east, completing three orbits per Martian day. Slowly spiraling inward toward eventual destruction.".to_string(),
             mass: phobos_mass,
             radius: 1.127e4 * PHYSICS_SCALE,
             color: [0.5, 0.45, 0.4, 1.0],
@@ -650,7 +650,7 @@ impl SolarSystem {
         let deimos_sma = 2.346e7 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Deimos".to_string(),
-            description: String::new(),
+            description: "The smaller and more distant of Mars's two moons. A dark, potato-shaped body just 12 km across, its surface blanketed in a thick layer of regolith that gives it a smooth, muted appearance.".to_string(),
             mass: deimos_mass,
             radius: 6.2e3 * PHYSICS_SCALE,
             color: [0.55, 0.5, 0.45, 1.0],
@@ -678,7 +678,7 @@ impl SolarSystem {
         let jupiter_idx = bodies.len();
         bodies.push(CelestialBody {
             name: "Jupiter".to_string(),
-            description: String::new(),
+            description: "The solar system's giant. A swirling mass of hydrogen and helium 318 times Earth's mass, banded by 400 km/h winds and marked by the Great Red Spot — a storm larger than Earth that has raged for centuries.".to_string(),
             mass: jupiter_mass,
             radius: 6.991e7 * PHYSICS_SCALE,
             color: [0.8, 0.7, 0.5, 1.0],
@@ -709,7 +709,7 @@ impl SolarSystem {
         let io_sma = 4.218e8 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Io".to_string(),
-            description: String::new(),
+            description: "The most volcanically active body in the solar system. Tidal forces from Jupiter continuously flex its interior, driving hundreds of active volcanoes that paint the surface in sulfurous yellows and reds.".to_string(),
             mass: io_mass,
             radius: 1.822e6 * PHYSICS_SCALE,
             color: [0.9, 0.85, 0.3, 1.0],
@@ -736,7 +736,7 @@ impl SolarSystem {
         let europa_sma = 6.711e8 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Europa".to_string(),
-            description: String::new(),
+            description: "An ice-shelled moon hiding a global saltwater ocean beneath its cracked surface. Tidal heating from Jupiter keeps the subsurface liquid — one of the most promising places to search for extraterrestrial life.".to_string(),
             mass: europa_mass,
             radius: 1.561e6 * PHYSICS_SCALE,
             color: [0.85, 0.8, 0.75, 1.0],
@@ -763,7 +763,7 @@ impl SolarSystem {
         let ganymede_sma = 1.070e9 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Ganymede".to_string(),
-            description: String::new(),
+            description: "The largest moon in the solar system, bigger than Mercury. The only moon with its own magnetic field, Ganymede has a subsurface ocean sandwiched between layers of ice and a differentiated rocky core.".to_string(),
             mass: ganymede_mass,
             radius: 2.634e6 * PHYSICS_SCALE,
             color: [0.65, 0.6, 0.55, 1.0],
@@ -790,7 +790,7 @@ impl SolarSystem {
         let callisto_sma = 1.883e9 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Callisto".to_string(),
-            description: String::new(),
+            description: "The outermost Galilean moon, ancient and heavily cratered. Far enough from Jupiter to avoid the worst radiation, Callisto is considered the safest site for a crewed base in the Jovian system.".to_string(),
             mass: callisto_mass,
             radius: 2.410e6 * PHYSICS_SCALE,
             color: [0.45, 0.42, 0.4, 1.0],
@@ -818,7 +818,7 @@ impl SolarSystem {
         let saturn_idx = bodies.len();
         bodies.push(CelestialBody {
             name: "Saturn".to_string(),
-            description: String::new(),
+            description: "The ringed giant. A gas planet of pale gold banded by ammonia crystal clouds, encircled by a spectacular ring system of ice and rock particles spanning 280,000 km but averaging just 10 meters thick.".to_string(),
             mass: saturn_mass,
             radius: 5.823e7 * PHYSICS_SCALE,
             color: [0.9, 0.85, 0.6, 1.0],
@@ -849,7 +849,7 @@ impl SolarSystem {
         let titan_sma = 1.222e9 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Titan".to_string(),
-            description: String::new(),
+            description: "Saturn's largest moon and the only body besides Earth with stable surface liquids — lakes and seas of liquid methane and ethane beneath a thick orange nitrogen atmosphere denser than Earth's.".to_string(),
             mass: titan_mass,
             radius: 2.575e6 * PHYSICS_SCALE,
             color: [0.85, 0.7, 0.4, 1.0],
@@ -880,7 +880,7 @@ impl SolarSystem {
         let rhea_sma = 5.27e8 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Rhea".to_string(),
-            description: String::new(),
+            description: "Saturn's second-largest moon, a battered ice world. Its surface is almost entirely water ice, heavily cratered in the leading hemisphere and streaked with bright ice cliffs in the trailing hemisphere.".to_string(),
             mass: rhea_mass,
             radius: 7.64e5 * PHYSICS_SCALE,
             color: [0.8, 0.8, 0.8, 1.0],
@@ -907,7 +907,7 @@ impl SolarSystem {
         let iapetus_sma = 3.56e9 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Iapetus".to_string(),
-            description: String::new(),
+            description: "The yin-yang moon. One hemisphere is dark as coal, the other bright as snow — a dramatic two-tone coloring caused by swept-up dust from Saturn's outer Phoebe ring. A towering equatorial ridge circles its waist.".to_string(),
             mass: iapetus_mass,
             radius: 7.36e5 * PHYSICS_SCALE,
             color: [0.6, 0.55, 0.5, 1.0],
@@ -934,7 +934,7 @@ impl SolarSystem {
         let dione_sma = 3.774e8 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Dione".to_string(),
-            description: String::new(),
+            description: "A mid-sized icy moon of Saturn with bright ice cliffs called chasmata carved across its trailing hemisphere. Evidence suggests a thin subsurface ocean may exist beneath its frozen crust.".to_string(),
             mass: dione_mass,
             radius: 5.62e5 * PHYSICS_SCALE,
             color: [0.85, 0.85, 0.85, 1.0],
@@ -961,7 +961,7 @@ impl SolarSystem {
         let uranus_sma = 2.867e12 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Uranus".to_string(),
-            description: String::new(),
+            description: "The ice giant that rolls on its side, its axis tilted 98 degrees from the ecliptic. A bland blue-green sphere of hydrogen, helium, and methane ice, with faint rings and 27 known moons.".to_string(),
             mass: uranus_mass,
             radius: 2.536e7 * PHYSICS_SCALE,
             color: [0.6, 0.85, 0.9, 1.0],
@@ -992,7 +992,7 @@ impl SolarSystem {
         let neptune_sma = 4.515e12 * PHYSICS_SCALE;
         bodies.push(CelestialBody {
             name: "Neptune".to_string(),
-            description: String::new(),
+            description: "The outermost planet, a vivid blue ice giant lashed by the fastest winds in the solar system — up to 2,100 km/h. Despite receiving minimal sunlight, its atmosphere is violently active, driven by internal heat.".to_string(),
             mass: neptune_mass,
             radius: 2.462e7 * PHYSICS_SCALE,
             color: [0.3, 0.5, 0.9, 1.0],

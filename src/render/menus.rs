@@ -402,13 +402,15 @@ impl RenderState {
                             };
                             ui.heading(egui::RichText::new(&info.name).size(18.0).color(name_color));
 
-                            // Description — star type (italic) or body description
+                            // Star type label (italic, light blue)
                             if let Some(ref st) = info.star_type {
                                 ui.label(egui::RichText::new(st)
                                     .size(12.0)
                                     .italics()
                                     .color(egui::Color32::from_rgb(160, 160, 200)));
-                            } else if !info.description.is_empty() {
+                            }
+                            // Description (italic, gray)
+                            if !info.description.is_empty() {
                                 ui.label(egui::RichText::new(&info.description)
                                     .size(12.0)
                                     .italics()

@@ -118,7 +118,7 @@ Bodies with atmosphere data SHALL have an atmosphere ring drawn behind all other
 
 ### Requirement: Body orbit lines
 
-Orbit lines for celestial bodies SHALL be drawn as thick lines (dual-vertex strips) with `line_width = 0.002 / camera.zoom`. Segment count is per-orbit via `OrbitRenderData.segments`: 256 for solar system bodies, 5120 for catalog exoplanet orbits (which span stellar-distance scales and need smooth curves at high zoom).
+Orbit lines for celestial bodies SHALL be drawn as thick lines (dual-vertex strips) with `line_width = 0.002 / camera.zoom`. Segment count is adaptive via `orbit_segments()`: ~1 segment per 3 pixels of circumference, capped at `ORBIT_SEGMENTS` (5120).
 
 #### Scenario: Orbit line vertex colors
 - **GIVEN** orbit color C

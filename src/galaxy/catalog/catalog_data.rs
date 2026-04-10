@@ -16,6 +16,7 @@ pub static CATALOG: &[CatalogSystem] = &[
 // 1. Alpha Centauri
 CatalogSystem {
     name: "Alpha Centauri",
+    description: "The closest star system to Sol. A triple system: the bright binary pair A and B orbit each other at 11-36 AU, while the dim red dwarf Proxima traces a vast, loosely bound orbit around them at roughly 12,000 AU. This is humanity\u{2019}s first interstellar landfall, and it does not disappoint \u{2014} a parallel solar system orbiting A, a compact trio around B, and the momentous discovery of life at Proxima.",
     zone: 1,
     distance_ly: 4.37,
     galactic_pos_ly: [20.8, -20989.0],
@@ -26,9 +27,9 @@ CatalogSystem {
     orbit_period_myr: 170.5,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Alpha Centauri A", spectral_type: "G2V", mass_solar: 1.10, radius_solar: 1.22, luminosity_solar: 1.52 },
-        CatalogStar { name: "Alpha Centauri B", spectral_type: "K1V", mass_solar: 0.91, radius_solar: 0.86, luminosity_solar: 0.50 },
-        CatalogStar { name: "Proxima Centauri", spectral_type: "M5.5Ve", mass_solar: 0.12, radius_solar: 0.15, luminosity_solar: 0.0017 },
+        CatalogStar { name: "Alpha Centauri A", description: "A solar twin — a G2V main-sequence star almost identical to the Sun but 10% more massive and 50% more luminous. The dominant member of the system's bright inner binary.", spectral_type: "G2V", mass_solar: 1.10, radius_solar: 1.22, luminosity_solar: 1.52 },
+        CatalogStar { name: "Alpha Centauri B", description: "A cooler K1V orange dwarf locked in a 79-year elliptical dance with A. Slightly less massive than the Sun, it hosts a compact trio of worlds in tight orbits.", spectral_type: "K1V", mass_solar: 0.91, radius_solar: 0.86, luminosity_solar: 0.50 },
+        CatalogStar { name: "Proxima Centauri", description: "A dim M5.5 red dwarf — the closest star to Sol at 4.24 ly. Prone to violent flares that periodically sterilize its habitable zone, yet life has found a way on Erebus.", spectral_type: "M5.5Ve", mass_solar: 0.12, radius_solar: 0.15, luminosity_solar: 0.0017 },
     ],
     bodies: &[
         // Planets of Alpha Centauri A
@@ -201,6 +202,7 @@ CatalogSystem {
 // 2. Barnard's Star
 CatalogSystem {
     name: "Barnard's Star",
+    description: "The second nearest star system. An ancient red dwarf (10+ billion years old) with the highest proper motion of any known star \u{2014} it visibly shifts against the background stars over a human lifetime. Its planetary system is remarkably compact: four confirmed sub-Earths huddle within 0.05 AU, all too hot for liquid water.",
     zone: 1,
     distance_ly: 5.96,
     galactic_pos_ly: [26.9, -20987.0],
@@ -211,7 +213,7 @@ CatalogSystem {
     orbit_period_myr: 223.8,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Barnard's Star", spectral_type: "M4V", mass_solar: 0.16, radius_solar: 0.19, luminosity_solar: 0.0035 },
+        CatalogStar { name: "Barnard's Star", description: "", spectral_type: "M4V", mass_solar: 0.16, radius_solar: 0.19, luminosity_solar: 0.0035 },
     ],
     bodies: &[
         CatalogBody {
@@ -292,6 +294,7 @@ CatalogSystem {
 // 3. Wolf 359
 CatalogSystem {
     name: "Wolf 359",
+    description: "One of the dimmest and smallest stars near Sol \u{2014} and one of the most violent. Wolf 359 is an extreme flare star that can double its brightness in minutes during outbursts. Superflares occur roughly monthly, bathing the entire inner system in hard UV and X-rays.",
     zone: 1,
     distance_ly: 7.86,
     galactic_pos_ly: [16.7, -20995.5],
@@ -302,7 +305,7 @@ CatalogSystem {
     orbit_period_myr: 173.4,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Wolf 359", spectral_type: "M6.5Ve", mass_solar: 0.09, radius_solar: 0.11, luminosity_solar: 0.0014 },
+        CatalogStar { name: "Wolf 359", description: "", spectral_type: "M6.5Ve", mass_solar: 0.09, radius_solar: 0.11, luminosity_solar: 0.0014 },
     ],
     bodies: &[
         CatalogBody {
@@ -347,6 +350,7 @@ CatalogSystem {
 // 4. Lalande 21185
 CatalogSystem {
     name: "Lalande 21185",
+    description: "A relatively bright M-dwarf \u{2014} calm compared to Wolf 359 or Proxima, with infrequent flares and a stable luminosity. One confirmed super-Earth orbits close in, with room for more planets in the habitable zone.",
     zone: 1,
     distance_ly: 8.31,
     galactic_pos_ly: [22.7, -21000.3],
@@ -357,7 +361,7 @@ CatalogSystem {
     orbit_period_myr: 185.9,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Lalande 21185", spectral_type: "M2V", mass_solar: 0.39, radius_solar: 0.39, luminosity_solar: 0.021 },
+        CatalogStar { name: "Lalande 21185", description: "", spectral_type: "M2V", mass_solar: 0.39, radius_solar: 0.39, luminosity_solar: 0.021 },
     ],
     bodies: &[
         CatalogBody {
@@ -414,6 +418,7 @@ CatalogSystem {
 // 5. Sirius
 CatalogSystem {
     name: "Sirius",
+    description: "The brightest star in Earth\u{2019}s sky, and a system of extremes. Sirius A is a hot, luminous A-type star that pushes the habitable zone out beyond 4 AU. Sirius B is a white dwarf \u{2014} the collapsed remnant of a star that was once even more massive \u{2014} orbiting at 8-31 AU. What remains is a stark, radiation-intense environment.",
     zone: 1,
     distance_ly: 8.60,
     galactic_pos_ly: [17.5, -20997.9],
@@ -424,8 +429,8 @@ CatalogSystem {
     orbit_period_myr: 170.0,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Sirius A", spectral_type: "A1V", mass_solar: 2.06, radius_solar: 1.71, luminosity_solar: 25.4 },
-        CatalogStar { name: "Sirius B", spectral_type: "DA2", mass_solar: 1.02, radius_solar: 0.008, luminosity_solar: 0.0 },
+        CatalogStar { name: "Sirius A", description: "The brightest star in Earth's sky. A young, hot A1V main-sequence star burning through hydrogen 25 times more luminously than the Sun.", spectral_type: "A1V", mass_solar: 2.06, radius_solar: 1.71, luminosity_solar: 25.4 },
+        CatalogStar { name: "Sirius B", description: "A dense white dwarf the size of Earth but with the mass of the Sun. The collapsed remnant of a star that was once the more massive member of the pair.", spectral_type: "DA2", mass_solar: 1.02, radius_solar: 0.008, luminosity_solar: 0.0 },
     ],
     bodies: &[
         // index 0: Pyrrhus (1.8 M_J = 1.8 * 317.8 = 572.04)
@@ -487,6 +492,7 @@ CatalogSystem {
 // 6. Luyten 726-8 / UV Ceti
 CatalogSystem {
     name: "Luyten 726-8",
+    description: "A close binary of two extreme flare stars separated by roughly 5 AU. UV Ceti (the B component) is the archetype of its class \u{2014} capable of brightening by a factor of 75 in seconds during superflares. Together, these two tiny red dwarfs create a radiation environment that makes Wolf 359 look gentle.",
     zone: 1,
     distance_ly: 8.73,
     galactic_pos_ly: [26.9, -21000.2],
@@ -497,8 +503,8 @@ CatalogSystem {
     orbit_period_myr: 181.5,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "BL Ceti", spectral_type: "M5.5Ve", mass_solar: 0.10, radius_solar: 0.14, luminosity_solar: 0.0006 },
-        CatalogStar { name: "UV Ceti", spectral_type: "M6Ve", mass_solar: 0.10, radius_solar: 0.14, luminosity_solar: 0.0004 },
+        CatalogStar { name: "BL Ceti", description: "The slightly calmer twin of this red dwarf binary, though still prone to occasional flares. An M5.5 star barely above the hydrogen-burning limit.", spectral_type: "M5.5Ve", mass_solar: 0.10, radius_solar: 0.14, luminosity_solar: 0.0006 },
+        CatalogStar { name: "UV Ceti", description: "The prototypical flare star — an M6 red dwarf that can brighten by several magnitudes in seconds. Its violent outbursts make it one of the most magnetically active stars known.", spectral_type: "M6Ve", mass_solar: 0.10, radius_solar: 0.14, luminosity_solar: 0.0004 },
     ],
     bodies: &[
         CatalogBody {
@@ -533,6 +539,7 @@ CatalogSystem {
 // 7. Ross 154
 CatalogSystem {
     name: "Ross 154",
+    description: "A flare star, though less extreme than Wolf 359 or UV Ceti. Flares occur frequently but rarely reach the catastrophic intensities of the UV Ceti class. The system has no confirmed planets, but radial velocity surveys suggest the presence of small rocky worlds.",
     zone: 1,
     distance_ly: 9.69,
     galactic_pos_ly: [25.4, -20982.5],
@@ -543,7 +550,7 @@ CatalogSystem {
     orbit_period_myr: 165.1,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Ross 154", spectral_type: "M3.5Ve", mass_solar: 0.17, radius_solar: 0.20, luminosity_solar: 0.0038 },
+        CatalogStar { name: "Ross 154", description: "", spectral_type: "M3.5Ve", mass_solar: 0.17, radius_solar: 0.20, luminosity_solar: 0.0038 },
     ],
     bodies: &[
         CatalogBody {
@@ -588,6 +595,7 @@ CatalogSystem {
 // 8. Ross 248
 CatalogSystem {
     name: "Ross 248",
+    description: "A faint red dwarf notable for its high velocity \u{2014} in approximately 33,000 years, Ross 248 will briefly become the closest star to Sol, passing within 3.0 light-years before receding again. A transient neighbor, visiting from the deep galaxy.",
     zone: 1,
     distance_ly: 10.30,
     galactic_pos_ly: [33.1, -20996.5],
@@ -598,7 +606,7 @@ CatalogSystem {
     orbit_period_myr: 184.7,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Ross 248", spectral_type: "M5.5Ve", mass_solar: 0.12, radius_solar: 0.16, luminosity_solar: 0.0018 },
+        CatalogStar { name: "Ross 248", description: "", spectral_type: "M5.5Ve", mass_solar: 0.12, radius_solar: 0.16, luminosity_solar: 0.0018 },
     ],
     bodies: &[
         CatalogBody {
@@ -631,6 +639,7 @@ CatalogSystem {
 // 9. Epsilon Eridani (Ran)
 CatalogSystem {
     name: "Epsilon Eridani",
+    description: "A young star \u{2014} only 800 million years old \u{2014} and it shows. Epsilon Eridani is surrounded by a prominent debris disk analogous to a young Kuiper Belt, with warm dust between 3-20 AU and a cold outer belt at 70 AU. This is a solar system still in its adolescence: planets are geologically hyperactive, surfaces are fresh, and everything is still settling down.",
     zone: 1,
     distance_ly: 10.50,
     galactic_pos_ly: [20.9, -21002.2],
@@ -641,7 +650,7 @@ CatalogSystem {
     orbit_period_myr: 166.5,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Epsilon Eridani", spectral_type: "K2V", mass_solar: 0.82, radius_solar: 0.74, luminosity_solar: 0.34 },
+        CatalogStar { name: "Epsilon Eridani", description: "", spectral_type: "K2V", mass_solar: 0.82, radius_solar: 0.74, luminosity_solar: 0.34 },
     ],
     bodies: &[
         CatalogBody {
@@ -724,7 +733,7 @@ CatalogSystem {
             name: "Styx", designation: "e-III",
             is_moon: true, parent_body_idx: Some(3),
             orbit_sma_au: 0.0, orbit_sma_km: 2500000.0,
-            orbit_ecc: 0.0, orbit_period_days: 18.0,
+            orbit_ecc: 0.0, orbit_period_days: -18.0,
             mass_earth: 0.002, radius_earth: 0.11, gravity_g: 0.17, temperature_k: 85.0,
             atmosphere: None,
             habitability: 0, science: 15,
@@ -776,6 +785,7 @@ CatalogSystem {
 // 10. Lacaille 9352 (GJ 887)
 CatalogSystem {
     name: "Lacaille 9352",
+    description: "One of the brightest nearby M-dwarfs, and remarkably quiet \u{2014} very few flares detected. This stability makes its planets among the most hospitable in the M-dwarf category. Two confirmed super-Earths orbit close in.",
     zone: 1,
     distance_ly: 10.74,
     galactic_pos_ly: [23.8, -20981.3],
@@ -786,7 +796,7 @@ CatalogSystem {
     orbit_period_myr: 172.0,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Lacaille 9352", spectral_type: "M2V", mass_solar: 0.49, radius_solar: 0.47, luminosity_solar: 0.033 },
+        CatalogStar { name: "Lacaille 9352", description: "", spectral_type: "M2V", mass_solar: 0.49, radius_solar: 0.47, luminosity_solar: 0.033 },
     ],
     bodies: &[
         CatalogBody {
@@ -831,6 +841,7 @@ CatalogSystem {
 // 11. Ross 128
 CatalogSystem {
     name: "Ross 128",
+    description: "A quiet M-dwarf \u{2014} one of the least active red dwarfs in the solar neighborhood. Unlike Proxima, Wolf 359, or UV Ceti, Ross 128 produces almost no detectable flares. This calm stellar environment makes its habitable-zone planet one of the best prospects for stable surface conditions in Zone 1 \u{2014} and, as it turns out, for life.",
     zone: 1,
     distance_ly: 11.01,
     galactic_pos_ly: [26.3, -20981.4],
@@ -841,7 +852,7 @@ CatalogSystem {
     orbit_period_myr: 179.4,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Ross 128", spectral_type: "M4V", mass_solar: 0.17, radius_solar: 0.20, luminosity_solar: 0.0036 },
+        CatalogStar { name: "Ross 128", description: "", spectral_type: "M4V", mass_solar: 0.17, radius_solar: 0.20, luminosity_solar: 0.0036 },
     ],
     bodies: &[
         CatalogBody {
@@ -886,6 +897,7 @@ CatalogSystem {
 // 12. EZ Aquarii
 CatalogSystem {
     name: "EZ Aquarii",
+    description: "A hierarchical triple system: A and B form a close binary (separation ~0.03 AU), with C orbiting the pair at roughly 5 AU. All three are flare stars. The gravitational dynamics severely limit stable planetary orbits.",
     zone: 1,
     distance_ly: 11.27,
     galactic_pos_ly: [28.1, -20981.7],
@@ -896,9 +908,9 @@ CatalogSystem {
     orbit_period_myr: 169.0,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "EZ Aquarii A", spectral_type: "M5Ve", mass_solar: 0.10, radius_solar: 0.14, luminosity_solar: 0.0006 },
-        CatalogStar { name: "EZ Aquarii B", spectral_type: "M5Ve", mass_solar: 0.10, radius_solar: 0.14, luminosity_solar: 0.0005 },
-        CatalogStar { name: "EZ Aquarii C", spectral_type: "M5Ve", mass_solar: 0.10, radius_solar: 0.13, luminosity_solar: 0.0004 },
+        CatalogStar { name: "EZ Aquarii A", description: "The most massive component of this triple red dwarf system, locked in a tight 2.2-year orbit with B. An M5 flare star with an erratic magnetic personality.", spectral_type: "M5Ve", mass_solar: 0.10, radius_solar: 0.14, luminosity_solar: 0.0006 },
+        CatalogStar { name: "EZ Aquarii B", description: "The close companion to A, nearly identical in size and mass. The AB pair orbits their common center with a separation of just 3.5 AU.", spectral_type: "M5Ve", mass_solar: 0.10, radius_solar: 0.14, luminosity_solar: 0.0005 },
+        CatalogStar { name: "EZ Aquarii C", description: "The outermost and faintest member, circling the AB pair at roughly 5 AU. Slightly cooler and dimmer than its siblings.", spectral_type: "M5Ve", mass_solar: 0.10, radius_solar: 0.13, luminosity_solar: 0.0004 },
     ],
     bodies: &[
         CatalogBody {
@@ -922,6 +934,7 @@ CatalogSystem {
 // 13. Procyon
 CatalogSystem {
     name: "Procyon",
+    description: "The eighth brightest star in Earth\u{2019}s sky. Procyon A is an F-type subgiant \u{2014} brighter and more massive than Sol, beginning to evolve off the main sequence. Procyon B is a dim white dwarf. Like the Sirius system, the white dwarf\u{2019}s past as a red giant may have disrupted any primordial planetary system.",
     zone: 1,
     distance_ly: 11.46,
     galactic_pos_ly: [17.4, -21001.6],
@@ -932,8 +945,8 @@ CatalogSystem {
     orbit_period_myr: 170.9,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Procyon A", spectral_type: "F5IV-V", mass_solar: 1.50, radius_solar: 2.05, luminosity_solar: 6.93 },
-        CatalogStar { name: "Procyon B", spectral_type: "DA", mass_solar: 0.60, radius_solar: 0.012, luminosity_solar: 0.0 },
+        CatalogStar { name: "Procyon A", description: "A bright F5 subgiant beginning to evolve off the main sequence, twice the Sun's diameter and nearly seven times as luminous. The eighth-brightest star as seen from Earth.", spectral_type: "F5IV-V", mass_solar: 1.50, radius_solar: 2.05, luminosity_solar: 6.93 },
+        CatalogStar { name: "Procyon B", description: "A faint white dwarf companion on a 41-year orbit. One of the least massive white dwarfs known, it exhausted its fuel roughly 1.7 billion years ago.", spectral_type: "DA", mass_solar: 0.60, radius_solar: 0.012, luminosity_solar: 0.0 },
     ],
     bodies: &[
         // index 0: Zephyr (0.047 M_J = 0.047 * 317.8 = 14.9)
@@ -1019,7 +1032,7 @@ CatalogSystem {
             name: "Wrack", designation: "d-III",
             is_moon: true, parent_body_idx: Some(3),
             orbit_sma_au: 0.0, orbit_sma_km: 1800000.0,
-            orbit_ecc: 0.0, orbit_period_days: 15.0,
+            orbit_ecc: 0.0, orbit_period_days: -15.0,
             mass_earth: 0.0005, radius_earth: 0.06, gravity_g: 0.14, temperature_k: 140.0,
             atmosphere: None,
             habitability: 0, science: 15,
@@ -1035,6 +1048,7 @@ CatalogSystem {
 // 14. 61 Cygni
 CatalogSystem {
     name: "61 Cygni",
+    description: "A wide binary of two orange K-type stars separated by roughly 84 AU \u{2014} far enough apart that each can host its own stable planetary system. The first star system to have its distance measured by parallax (in 1838), 61 Cygni holds a special place in the history of astronomy.",
     zone: 1,
     distance_ly: 11.40,
     galactic_pos_ly: [35.1, -20990.6],
@@ -1045,8 +1059,8 @@ CatalogSystem {
     orbit_period_myr: 188.2,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "61 Cygni A", spectral_type: "K5V", mass_solar: 0.70, radius_solar: 0.67, luminosity_solar: 0.15 },
-        CatalogStar { name: "61 Cygni B", spectral_type: "K7V", mass_solar: 0.63, radius_solar: 0.60, luminosity_solar: 0.09 },
+        CatalogStar { name: "61 Cygni A", description: "A K5V orange dwarf and the brighter half of this well-studied binary. Notable for its high proper motion — the first star whose distance was measured by stellar parallax in 1838.", spectral_type: "K5V", mass_solar: 0.70, radius_solar: 0.67, luminosity_solar: 0.15 },
+        CatalogStar { name: "61 Cygni B", description: "A K7V dwarf slightly cooler and fainter than its companion. The pair orbits with a 659-year period at a mean separation of 84 AU.", spectral_type: "K7V", mass_solar: 0.63, radius_solar: 0.60, luminosity_solar: 0.09 },
     ],
     bodies: &[
         // Planets of 61 Cygni A
@@ -1121,6 +1135,7 @@ CatalogSystem {
 // 15. Struve 2398 (GJ 725)
 CatalogSystem {
     name: "Struve 2398",
+    description: "A wide M-dwarf binary with enough separation for both stars to host stable planetary systems. Both have confirmed super-Earths \u{2014} including one in the habitable zone of B.",
     zone: 1,
     distance_ly: 11.64,
     galactic_pos_ly: [32.7, -20984.8],
@@ -1131,8 +1146,8 @@ CatalogSystem {
     orbit_period_myr: 177.6,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "GJ 725 A", spectral_type: "M3V", mass_solar: 0.33, radius_solar: 0.35, luminosity_solar: 0.013 },
-        CatalogStar { name: "GJ 725 B", spectral_type: "M3.5V", mass_solar: 0.26, radius_solar: 0.28, luminosity_solar: 0.008 },
+        CatalogStar { name: "GJ 725 A", description: "The primary of a close red dwarf pair separated by about 15 AU. A quiet M3 dwarf with modest flare activity.", spectral_type: "M3V", mass_solar: 0.33, radius_solar: 0.35, luminosity_solar: 0.013 },
+        CatalogStar { name: "GJ 725 B", description: "The slightly cooler and fainter companion, an M3.5 dwarf trailing A in a roughly 20-year orbit.", spectral_type: "M3.5V", mass_solar: 0.26, radius_solar: 0.28, luminosity_solar: 0.008 },
     ],
     bodies: &[
         // Planets of GJ 725 A
@@ -1181,6 +1196,7 @@ CatalogSystem {
 // 16. Groombridge 34 (GJ 15)
 CatalogSystem {
     name: "Groombridge 34",
+    description: "A wide binary (147 AU separation) with two confirmed planets around the A component: a close-orbiting super-Earth and a distant Neptune-mass world. The wide separation allows stable planetary systems around each star.",
     zone: 1,
     distance_ly: 11.62,
     galactic_pos_ly: [34.2, -20997.3],
@@ -1191,8 +1207,8 @@ CatalogSystem {
     orbit_period_myr: 187.9,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Groombridge 34 A", spectral_type: "M1V", mass_solar: 0.38, radius_solar: 0.38, luminosity_solar: 0.022 },
-        CatalogStar { name: "Groombridge 34 B", spectral_type: "M3.5V", mass_solar: 0.16, radius_solar: 0.19, luminosity_solar: 0.003 },
+        CatalogStar { name: "Groombridge 34 A", description: "An M1 red dwarf and the brighter component of this pair. Relatively calm for its spectral class, with a measured rotation period suggesting middle age.", spectral_type: "M1V", mass_solar: 0.38, radius_solar: 0.38, luminosity_solar: 0.022 },
+        CatalogStar { name: "Groombridge 34 B", description: "A much fainter M3.5 companion also known as GQ Andromedae — a known flare star orbiting A at about 40 AU.", spectral_type: "M3.5V", mass_solar: 0.16, radius_solar: 0.19, luminosity_solar: 0.003 },
     ],
     bodies: &[
         // Planets of Groombridge 34 A
@@ -1254,6 +1270,7 @@ CatalogSystem {
 // 17. Epsilon Indi
 CatalogSystem {
     name: "Epsilon Indi",
+    description: "An orange K-dwarf with a distant pair of brown dwarf companions. The brown dwarfs orbit each other at roughly 2.5 AU and together orbit Epsilon Indi A at 1,500 AU \u{2014} far too distant to affect the inner planetary system. The main event is the directly imaged super-Jupiter, one of the coldest exoplanets ever photographed.",
     zone: 1,
     distance_ly: 11.81,
     galactic_pos_ly: [19.0, -20981.2],
@@ -1264,9 +1281,9 @@ CatalogSystem {
     orbit_period_myr: 192.7,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Epsilon Indi A", spectral_type: "K5V", mass_solar: 0.76, radius_solar: 0.73, luminosity_solar: 0.22 },
-        CatalogStar { name: "Epsilon Indi Ba", spectral_type: "T1V", mass_solar: 0.070, radius_solar: 0.08, luminosity_solar: 0.000022 },
-        CatalogStar { name: "Epsilon Indi Bb", spectral_type: "T6V", mass_solar: 0.047, radius_solar: 0.07, luminosity_solar: 0.0000038 },
+        CatalogStar { name: "Epsilon Indi A", description: "A K5V orange dwarf slightly cooler than the Sun, long studied as a potential host for habitable worlds. It anchors the system while its brown dwarf companions orbit far out.", spectral_type: "K5V", mass_solar: 0.76, radius_solar: 0.73, luminosity_solar: 0.22 },
+        CatalogStar { name: "Epsilon Indi Ba", description: "A T1 brown dwarf — a failed star too small to sustain hydrogen fusion. It forms a close pair with Bb, orbiting A at roughly 1,500 AU.", spectral_type: "T1V", mass_solar: 0.070, radius_solar: 0.08, luminosity_solar: 0.000022 },
+        CatalogStar { name: "Epsilon Indi Bb", description: "A cooler T6 brown dwarf locked in a tight binary with Ba. Together they represent one of the nearest brown dwarf systems to the Sun.", spectral_type: "T6V", mass_solar: 0.047, radius_solar: 0.07, luminosity_solar: 0.0000038 },
     ],
     bodies: &[
         CatalogBody {
@@ -1367,6 +1384,7 @@ CatalogSystem {
 // 18. Tau Ceti
 CatalogSystem {
     name: "Tau Ceti",
+    description: "The most Sun-like star within 12 light-years. Tau Ceti is a G-type dwarf with 78% of Sol\u{2019}s mass and 52% its luminosity \u{2014} close enough to feel familiar. A dense debris disk confirms an active planetary environment. Six planets, including an ocean world harboring the third form of alien life discovered in Zone 1.",
     zone: 1,
     distance_ly: 11.91,
     galactic_pos_ly: [25.2, -21003.9],
@@ -1377,7 +1395,7 @@ CatalogSystem {
     orbit_period_myr: 204.5,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Tau Ceti", spectral_type: "G8.5V", mass_solar: 0.78, radius_solar: 0.79, luminosity_solar: 0.52 },
+        CatalogStar { name: "Tau Ceti", description: "", spectral_type: "G8.5V", mass_solar: 0.78, radius_solar: 0.79, luminosity_solar: 0.52 },
     ],
     bodies: &[
         CatalogBody {
@@ -1492,6 +1510,7 @@ CatalogSystem {
 // 19. YZ Ceti
 CatalogSystem {
     name: "YZ Ceti",
+    description: "An ultracool red dwarf with a remarkably compact planetary system \u{2014} three confirmed terrestrial worlds packed within 0.05 AU, all completing orbits in less than five days. YZ Ceti b may possess a magnetic field strong enough to interact with the stellar wind, producing coherent radio bursts.",
     zone: 2,
     distance_ly: 12.1,
     galactic_pos_ly: [29.0, -21003.0],
@@ -1502,7 +1521,7 @@ CatalogSystem {
     orbit_period_myr: 198.2,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "YZ Ceti", spectral_type: "M4.5V", mass_solar: 0.13, radius_solar: 0.17, luminosity_solar: 0.0023 },
+        CatalogStar { name: "YZ Ceti", description: "", spectral_type: "M4.5V", mass_solar: 0.13, radius_solar: 0.17, luminosity_solar: 0.0023 },
     ],
     bodies: &[
         CatalogBody {
@@ -1561,6 +1580,7 @@ CatalogSystem {
 // 20. Luyten's Star (GJ 273)
 CatalogSystem {
     name: "Luyten's Star",
+    description: "A quiet, well-studied M-dwarf with a confirmed super-Earth squarely in the habitable zone. Luyten\u{2019}s Star is among the least active red dwarfs in the solar neighborhood \u{2014} low flare rate, stable luminosity, minimal UV flux. This calm stellar environment has allowed Luyten b to retain a substantial atmosphere and develop an ocean teeming with alien life built on manganese chemistry.",
     zone: 2,
     distance_ly: 12.36,
     galactic_pos_ly: [17.2, -21002.5],
@@ -1571,7 +1591,7 @@ CatalogSystem {
     orbit_period_myr: 194.2,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Luyten's Star", spectral_type: "M3.5V", mass_solar: 0.29, radius_solar: 0.29, luminosity_solar: 0.009 },
+        CatalogStar { name: "Luyten's Star", description: "", spectral_type: "M3.5V", mass_solar: 0.29, radius_solar: 0.29, luminosity_solar: 0.009 },
     ],
     bodies: &[
         CatalogBody {
@@ -1620,6 +1640,7 @@ CatalogSystem {
 // 21. Teegarden's Star
 CatalogSystem {
     name: "Teegarden's Star",
+    description: "One of the faintest stars in the solar neighborhood \u{2014} so dim it was not discovered until 2003, despite being one of the closest. Teegarden\u{2019}s Star is an ultracool M7 dwarf near the bottom of the main sequence, barely sustaining hydrogen fusion. Yet it hosts three confirmed planets, two of which orbit in the habitable zone with near-Earth masses.",
     zone: 2,
     distance_ly: 12.50,
     galactic_pos_ly: [33.7, -20999.8],
@@ -1630,7 +1651,7 @@ CatalogSystem {
     orbit_period_myr: 172.3,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Teegarden's Star", spectral_type: "M7V", mass_solar: 0.09, radius_solar: 0.11, luminosity_solar: 0.001 },
+        CatalogStar { name: "Teegarden's Star", description: "", spectral_type: "M7V", mass_solar: 0.09, radius_solar: 0.11, luminosity_solar: 0.001 },
     ],
     bodies: &[
         CatalogBody {
@@ -1679,6 +1700,7 @@ CatalogSystem {
 // 22. GJ 1061
 CatalogSystem {
     name: "GJ 1061",
+    description: "A very faint, very quiet red dwarf \u{2014} one of the nearest M5.5 dwarfs and among the least active. Three confirmed planets orbit within 0.06 AU, with planet d sitting in the conservative habitable zone.",
     zone: 2,
     distance_ly: 12.0,
     galactic_pos_ly: [11.6, -20996.6],
@@ -1689,7 +1711,7 @@ CatalogSystem {
     orbit_period_myr: 185.8,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "GJ 1061", spectral_type: "M5.5V", mass_solar: 0.12, radius_solar: 0.16, luminosity_solar: 0.0017 },
+        CatalogStar { name: "GJ 1061", description: "", spectral_type: "M5.5V", mass_solar: 0.12, radius_solar: 0.16, luminosity_solar: 0.0017 },
     ],
     bodies: &[
         CatalogBody {
@@ -1738,6 +1760,7 @@ CatalogSystem {
 // 23. Lacaille 8760 (AX Microscopii)
 CatalogSystem {
     name: "Lacaille 8760",
+    description: "The brightest red dwarf visible from Earth\u{2019}s southern hemisphere, and one of the most massive M-dwarfs in the solar neighborhood. At 0.60 solar masses, Lacaille 8760 sits at the top of the M-dwarf range, producing significantly more light and heat than the typical faint red dwarfs that dominate Zone 1.",
     zone: 2,
     distance_ly: 12.87,
     galactic_pos_ly: [20.2, -20979.7],
@@ -1748,7 +1771,7 @@ CatalogSystem {
     orbit_period_myr: 200.1,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Lacaille 8760", spectral_type: "M0V", mass_solar: 0.60, radius_solar: 0.55, luminosity_solar: 0.075 },
+        CatalogStar { name: "Lacaille 8760", description: "", spectral_type: "M0V", mass_solar: 0.60, radius_solar: 0.55, luminosity_solar: 0.075 },
     ],
     bodies: &[
         CatalogBody {
@@ -1797,6 +1820,7 @@ CatalogSystem {
 // 24. Kapteyn's Star
 CatalogSystem {
     name: "Kapteyn's Star",
+    description: "A relic. Kapteyn\u{2019}s Star is a halo subdwarf \u{2014} a metal-poor, ancient star approximately 11 billion years old, predating the formation of the Milky Way\u{2019}s disk. It was likely captured from a disrupted dwarf galaxy and now moves through the solar neighborhood on a highly inclined, retrograde orbit. Any worlds here would be among the oldest in the galaxy.",
     zone: 2,
     distance_ly: 12.83,
     galactic_pos_ly: [11.5, -20995.7],
@@ -1807,7 +1831,7 @@ CatalogSystem {
     orbit_period_myr: 220.2,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Kapteyn's Star", spectral_type: "M1V", mass_solar: 0.28, radius_solar: 0.29, luminosity_solar: 0.012 },
+        CatalogStar { name: "Kapteyn's Star", description: "", spectral_type: "M1V", mass_solar: 0.28, radius_solar: 0.29, luminosity_solar: 0.012 },
     ],
     bodies: &[
         CatalogBody {
@@ -1846,6 +1870,7 @@ CatalogSystem {
 // 25. Wolf 1061
 CatalogSystem {
     name: "Wolf 1061",
+    description: "A quiet M-dwarf with three confirmed planets, one of which (Wolf 1061c) orbits near the inner edge of the habitable zone. The star has low magnetic activity and infrequent flares, making it one of the more hospitable M-dwarf systems in Zone 2.",
     zone: 2,
     distance_ly: 14.1,
     galactic_pos_ly: [37.5, -20995.3],
@@ -1856,7 +1881,7 @@ CatalogSystem {
     orbit_period_myr: 173.9,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Wolf 1061", spectral_type: "M3V", mass_solar: 0.25, radius_solar: 0.26, luminosity_solar: 0.009 },
+        CatalogStar { name: "Wolf 1061", description: "", spectral_type: "M3V", mass_solar: 0.25, radius_solar: 0.26, luminosity_solar: 0.009 },
     ],
     bodies: &[
         CatalogBody {
@@ -1905,6 +1930,7 @@ CatalogSystem {
 // 26. GJ 1002
 CatalogSystem {
     name: "GJ 1002",
+    description: "A very faint, very quiet red dwarf with two confirmed planets \u{2014} both in the habitable zone, both near Earth mass. GJ 1002 is one of the least active M-dwarfs known, with no detected flares in decades of observation. This extraordinary stellar calm gives its planets the best chance of any M-dwarf system at retaining stable atmospheres.",
     zone: 2,
     distance_ly: 15.8,
     galactic_pos_ly: [37.1, -20983.7],
@@ -1915,7 +1941,7 @@ CatalogSystem {
     orbit_period_myr: 155.4,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "GJ 1002", spectral_type: "M5.5V", mass_solar: 0.12, radius_solar: 0.14, luminosity_solar: 0.0015 },
+        CatalogStar { name: "GJ 1002", description: "", spectral_type: "M5.5V", mass_solar: 0.12, radius_solar: 0.14, luminosity_solar: 0.0015 },
     ],
     bodies: &[
         CatalogBody {
@@ -1964,6 +1990,7 @@ CatalogSystem {
 // 27. Gliese 876 (Ross 780)
 CatalogSystem {
     name: "Gliese 876",
+    description: "The first M-dwarf found to host a multi-planet system, and one of the most dynamically fascinating planetary architectures in the solar neighborhood. Four confirmed planets span a huge range of masses: two gas giants locked in a Laplace resonance, a hot super-Earth, and an inner Earth-mass world.",
     zone: 2,
     distance_ly: 15.2,
     galactic_pos_ly: [29.1, -20977.8],
@@ -1974,7 +2001,7 @@ CatalogSystem {
     orbit_period_myr: 187.9,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Gliese 876", spectral_type: "M4V", mass_solar: 0.33, radius_solar: 0.38, luminosity_solar: 0.013 },
+        CatalogStar { name: "Gliese 876", description: "", spectral_type: "M4V", mass_solar: 0.33, radius_solar: 0.38, luminosity_solar: 0.013 },
     ],
     bodies: &[
         // bodies[0]: d
@@ -2049,6 +2076,7 @@ CatalogSystem {
 // 28. Altair (Alpha Aquilae)
 CatalogSystem {
     name: "Altair",
+    description: "The twelfth brightest star in Earth\u{2019}s sky. Altair is a hot A-type star spinning at 286 km/s \u{2014} so fast that it is visibly oblate, with an equatorial radius 25% larger than its polar radius. This rapid rotation drives gravity darkening: the poles are hotter and brighter than the equator.",
     zone: 2,
     distance_ly: 16.7,
     galactic_pos_ly: [36.2, -20980.8],
@@ -2059,7 +2087,7 @@ CatalogSystem {
     orbit_period_myr: 177.2,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Altair", spectral_type: "A7V", mass_solar: 1.79, radius_solar: 2.03, luminosity_solar: 10.6 },
+        CatalogStar { name: "Altair", description: "", spectral_type: "A7V", mass_solar: 1.79, radius_solar: 2.03, luminosity_solar: 10.6 },
     ],
     bodies: &[
         // bodies[0]: Scintilla
@@ -2120,7 +2148,7 @@ CatalogSystem {
         // bodies[5]: Outrider (moon of Azurhaven, bodies[1])
         CatalogBody {
             name: "Outrider", designation: "c-IV", is_moon: true, parent_body_idx: Some(1),
-            orbit_sma_au: 0.0, orbit_sma_km: 3000000.0, orbit_ecc: 0.0, orbit_period_days: 25.0,
+            orbit_sma_au: 0.0, orbit_sma_km: 3000000.0, orbit_ecc: 0.0, orbit_period_days: -25.0,
             mass_earth: 0.002, radius_earth: 0.11, gravity_g: 0.17, temperature_k: 180.0,
             atmosphere: None,
             habitability: 0, science: 15,
@@ -2156,6 +2184,7 @@ CatalogSystem {
 // 29. 70 Ophiuchi
 CatalogSystem {
     name: "70 Ophiuchi",
+    description: "A close binary of two orange K-type stars with an 88-year orbital period and a separation ranging from 11.4 to 34.8 AU. 70 Ophiuchi was the subject of one of the most famous false planet claims in history \u{2014} in 1855, a supposed Jupiter-mass planet was announced, then debunked.",
     zone: 2,
     distance_ly: 16.7,
     galactic_pos_ly: [32.1, -20977.7],
@@ -2166,8 +2195,8 @@ CatalogSystem {
     orbit_period_myr: 179.0,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "70 Ophiuchi A", spectral_type: "K0V", mass_solar: 0.90, radius_solar: 0.84, luminosity_solar: 0.43 },
-        CatalogStar { name: "70 Ophiuchi B", spectral_type: "K4V", mass_solar: 0.70, radius_solar: 0.65, luminosity_solar: 0.12 },
+        CatalogStar { name: "70 Ophiuchi A", description: "A K0V orange dwarf and the primary of this well-known visual binary. Slightly less massive than the Sun, it accounts for most of the system's luminosity.", spectral_type: "K0V", mass_solar: 0.90, radius_solar: 0.84, luminosity_solar: 0.43 },
+        CatalogStar { name: "70 Ophiuchi B", description: "A K4V dwarf in a highly eccentric 88-year orbit around A. The pair's separation swings between 11 and 35 AU — wide enough for stable planetary orbits around each star.", spectral_type: "K4V", mass_solar: 0.70, radius_solar: 0.65, luminosity_solar: 0.12 },
     ],
     bodies: &[
         CatalogBody {
@@ -2208,6 +2237,7 @@ CatalogSystem {
 // 30. 40 Eridani (Keid)
 CatalogSystem {
     name: "40 Eridani",
+    description: "A hierarchical triple system: the bright K-dwarf primary orbits at ~400 AU from the B-C pair (a white dwarf and red dwarf in a tight 250-year mutual orbit). 40 Eridani A is famous as the canonical location of the planet Vulcan in Star Trek \u{2014} and while the real system lacks pointed-eared logicians, it does have a stable, Sun-like star with a habitable zone at a comfortable distance.",
     zone: 2,
     distance_ly: 16.3,
     galactic_pos_ly: [18.0, -21007.4],
@@ -2218,9 +2248,9 @@ CatalogSystem {
     orbit_period_myr: 195.4,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "40 Eridani A", spectral_type: "K1V", mass_solar: 0.84, radius_solar: 0.81, luminosity_solar: 0.46 },
-        CatalogStar { name: "40 Eridani B", spectral_type: "DA4", mass_solar: 0.57, radius_solar: 0.014, luminosity_solar: 0.013 },
-        CatalogStar { name: "40 Eridani C", spectral_type: "M4.5V", mass_solar: 0.20, radius_solar: 0.23, luminosity_solar: 0.003 },
+        CatalogStar { name: "40 Eridani A", description: "A K1V orange dwarf and the primary of this remarkable triple system. Bright enough to see with the naked eye from Earth, it hosts the system's only habitable worlds.", spectral_type: "K1V", mass_solar: 0.84, radius_solar: 0.81, luminosity_solar: 0.46 },
+        CatalogStar { name: "40 Eridani B", description: "A white dwarf — the first ever observed in a multiple star system. It forms a close pair with C, orbiting A at about 400 AU.", spectral_type: "DA4", mass_solar: 0.57, radius_solar: 0.014, luminosity_solar: 0.013 },
+        CatalogStar { name: "40 Eridani C", description: "A faint M4.5 flare star gravitationally bound to the white dwarf B. The BC pair takes roughly 250 years to complete one mutual orbit.", spectral_type: "M4.5V", mass_solar: 0.20, radius_solar: 0.23, luminosity_solar: 0.003 },
     ],
     bodies: &[
         CatalogBody {
@@ -2272,6 +2302,7 @@ CatalogSystem {
 // 31. Sigma Draconis (Alsafi)
 CatalogSystem {
     name: "Sigma Draconis",
+    description: "A quiet, stable G/K-borderline star \u{2014} nearly as Sun-like as Tau Ceti but slightly cooler and dimmer. Sigma Draconis has very low chromospheric activity, a slow rotation period, and a mature age (~5.4 billion years). One of the most boring stars in the solar neighborhood \u{2014} and in stellar astrophysics, boring is excellent.",
     zone: 2,
     distance_ly: 18.8,
     galactic_pos_ly: [29.8, -20974.3],
@@ -2282,7 +2313,7 @@ CatalogSystem {
     orbit_period_myr: 166.9,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Sigma Draconis", spectral_type: "G9V", mass_solar: 0.87, radius_solar: 0.78, luminosity_solar: 0.41 },
+        CatalogStar { name: "Sigma Draconis", description: "", spectral_type: "G9V", mass_solar: 0.87, radius_solar: 0.78, luminosity_solar: 0.41 },
     ],
     bodies: &[
         CatalogBody {
@@ -2331,6 +2362,7 @@ CatalogSystem {
 // 32. Eta Cassiopeiae (Achird)
 CatalogSystem {
     name: "Eta Cassiopeiae",
+    description: "The nearest near-solar twin. Eta Cassiopeiae A has almost exactly one solar mass and slightly higher luminosity, making its habitable zone essentially identical to Sol\u{2019}s \u{2014} centered around 1.1 AU. The K7V companion orbits at a wide separation, close enough to provide spectacular sky views but far enough to permit stable orbits throughout A\u{2019}s habitable zone.",
     zone: 2,
     distance_ly: 19.4,
     galactic_pos_ly: [41.1, -21001.0],
@@ -2341,8 +2373,8 @@ CatalogSystem {
     orbit_period_myr: 190.3,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Eta Cassiopeiae A", spectral_type: "G0V", mass_solar: 1.00, radius_solar: 1.04, luminosity_solar: 1.23 },
-        CatalogStar { name: "Eta Cassiopeiae B", spectral_type: "K7V", mass_solar: 0.57, radius_solar: 0.55, luminosity_solar: 0.06 },
+        CatalogStar { name: "Eta Cassiopeiae A", description: "A G0V star nearly identical to the Sun in mass and temperature but slightly more luminous. One of the most Sun-like stars in the solar neighborhood.", spectral_type: "G0V", mass_solar: 1.00, radius_solar: 1.04, luminosity_solar: 1.23 },
+        CatalogStar { name: "Eta Cassiopeiae B", description: "A K7V orange-red dwarf companion orbiting A every 480 years at a mean distance of 71 AU. Far enough out that both stars could host stable planetary systems.", spectral_type: "K7V", mass_solar: 0.57, radius_solar: 0.55, luminosity_solar: 0.06 },
     ],
     bodies: &[
         CatalogBody {
@@ -2405,6 +2437,7 @@ CatalogSystem {
 // 33. Delta Pavonis
 CatalogSystem {
     name: "Delta Pavonis",
+    description: "One of the most scrutinized stars in SETI history. Delta Pavonis is a G8 subgiant \u{2014} slightly evolved off the main sequence, brighter and larger than the Sun, with an estimated age of 6.6-6.9 billion years. It is metal-rich, stable, and surrounded by a habitable zone almost identical to Sol\u{2019}s.",
     zone: 2,
     distance_ly: 19.9,
     galactic_pos_ly: [13.8, -20974.9],
@@ -2415,7 +2448,7 @@ CatalogSystem {
     orbit_period_myr: 167.8,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Delta Pavonis", spectral_type: "G8V", mass_solar: 1.05, radius_solar: 1.22, luminosity_solar: 1.22 },
+        CatalogStar { name: "Delta Pavonis", description: "", spectral_type: "G8V", mass_solar: 1.05, radius_solar: 1.22, luminosity_solar: 1.22 },
     ],
     bodies: &[
         CatalogBody {
@@ -2474,6 +2507,7 @@ CatalogSystem {
 // 34. 82 Eridani
 CatalogSystem {
     name: "82 Eridani",
+    description: "A near-solar analog with three confirmed super-Earths and a prominent dust disk extending from 20-100 AU. 82 Eridani is slightly less luminous than the Sun but very similar in mass and spectral type, with a mature age (~5.4 billion years) and low activity.",
     zone: 2,
     distance_ly: 19.7,
     galactic_pos_ly: [16.4, -21010.4],
@@ -2484,7 +2518,7 @@ CatalogSystem {
     orbit_period_myr: 166.4,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "82 Eridani", spectral_type: "G6V", mass_solar: 0.97, radius_solar: 0.92, luminosity_solar: 0.74 },
+        CatalogStar { name: "82 Eridani", description: "", spectral_type: "G6V", mass_solar: 0.97, radius_solar: 0.92, luminosity_solar: 0.74 },
     ],
     bodies: &[
         // bodies[0]
@@ -2578,7 +2612,7 @@ CatalogSystem {
         // bodies[8]: Vagabond (moon of Deepcast, bodies[4])
         CatalogBody {
             name: "Vagabond", designation: "f-IV", is_moon: true, parent_body_idx: Some(4),
-            orbit_sma_au: 0.0, orbit_sma_km: 4000000.0, orbit_ecc: 0.0, orbit_period_days: 35.0,
+            orbit_sma_au: 0.0, orbit_sma_km: 4000000.0, orbit_ecc: 0.0, orbit_period_days: -35.0,
             mass_earth: 0.001, radius_earth: 0.08, gravity_g: 0.16, temperature_k: 75.0,
             atmosphere: None,
             habitability: 0, science: 15,
@@ -2592,6 +2626,7 @@ CatalogSystem {
 // 35. Gliese 581
 CatalogSystem {
     name: "Gliese 581",
+    description: "Once the most famous exoplanet system in the world. Gliese 581 was the site of multiple planet claims in the late 2000s, including the celebrated (and later disputed) Gliese 581 g \u{2014} allegedly the first rocky planet in a habitable zone. The dust has settled: three planets are now firmly confirmed, while d remains disputed.",
     zone: 2,
     distance_ly: 20.5,
     galactic_pos_ly: [18.8, -20972.1],
@@ -2602,7 +2637,7 @@ CatalogSystem {
     orbit_period_myr: 196.0,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Gliese 581", spectral_type: "M3V", mass_solar: 0.31, radius_solar: 0.30, luminosity_solar: 0.013 },
+        CatalogStar { name: "Gliese 581", description: "", spectral_type: "M3V", mass_solar: 0.31, radius_solar: 0.30, luminosity_solar: 0.013 },
     ],
     bodies: &[
         CatalogBody {
@@ -2661,6 +2696,7 @@ CatalogSystem {
 // 36. HD 219134 (HR 8832)
 CatalogSystem {
     name: "HD 219134",
+    description: "The most prolific known exoplanet host within 25 light-years. Six confirmed planets orbit this orange K-dwarf, spanning a wide range of masses and orbital distances \u{2014} from a scorching lava world at 0.039 AU to a sub-Saturn at 3.1 AU. Planet b was the first transiting exoplanet discovered around a star visible to the naked eye.",
     zone: 2,
     distance_ly: 21.3,
     galactic_pos_ly: [44.1, -20998.4],
@@ -2671,7 +2707,7 @@ CatalogSystem {
     orbit_period_myr: 181.3,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "HD 219134", spectral_type: "K3V", mass_solar: 0.81, radius_solar: 0.78, luminosity_solar: 0.27 },
+        CatalogStar { name: "HD 219134", description: "", spectral_type: "K3V", mass_solar: 0.81, radius_solar: 0.78, luminosity_solar: 0.27 },
     ],
     bodies: &[
         CatalogBody {
@@ -2740,6 +2776,7 @@ CatalogSystem {
 // 37. Gliese 667 C
 CatalogSystem {
     name: "Gliese 667 C",
+    description: "A hierarchical triple system: the bright K-dwarf pair (A and B) orbit each other at roughly 12 AU, while the M-dwarf C orbits the pair at approximately 230 AU. Gliese 667 C attracted intense attention in the 2010s when up to seven planets were claimed, including three super-Earths in the habitable zone.",
     zone: 2,
     distance_ly: 22.0,
     galactic_pos_ly: [24.4, -20968.5],
@@ -2750,9 +2787,9 @@ CatalogSystem {
     orbit_period_myr: 202.6,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Gliese 667 A", spectral_type: "K3V", mass_solar: 0.73, radius_solar: 0.68, luminosity_solar: 0.13 },
-        CatalogStar { name: "Gliese 667 B", spectral_type: "K5V", mass_solar: 0.69, radius_solar: 0.64, luminosity_solar: 0.09 },
-        CatalogStar { name: "Gliese 667 C", spectral_type: "M1.5V", mass_solar: 0.33, radius_solar: 0.34, luminosity_solar: 0.014 },
+        CatalogStar { name: "Gliese 667 A", description: "The K3V primary of this compact triple system. It forms a close pair with B, the two orbiting each other every 42 years at about 12 AU.", spectral_type: "K3V", mass_solar: 0.73, radius_solar: 0.68, luminosity_solar: 0.13 },
+        CatalogStar { name: "Gliese 667 B", description: "A K5V dwarf slightly cooler than A, locked in a tight binary dance with the primary. Together the AB pair dominates the system's luminosity.", spectral_type: "K5V", mass_solar: 0.69, radius_solar: 0.64, luminosity_solar: 0.09 },
+        CatalogStar { name: "Gliese 667 C", description: "A dim M1.5 red dwarf orbiting the AB pair at roughly 230 AU. Despite its faintness, it hosts one of the most planet-rich habitable zones known — up to three super-Earths crowd its temperate region.", spectral_type: "M1.5V", mass_solar: 0.33, radius_solar: 0.34, luminosity_solar: 0.014 },
     ],
     bodies: &[
         // bodies[0]
@@ -2835,6 +2872,7 @@ CatalogSystem {
 // 38. Vega (Alpha Lyrae)
 CatalogSystem {
     name: "Vega",
+    description: "The brightest star in the northern summer sky and the former pole star (~12,000 BCE). Vega is a young, hot A-type star spinning so fast that it has deformed itself into an oblate spheroid. Vega was the first star discovered to have an infrared excess, revealing a debris disk that made it the prototype for the Vega phenomenon.",
     zone: 3,
     distance_ly: 25.0,
     galactic_pos_ly: [46.9, -20982.5],
@@ -2845,7 +2883,7 @@ CatalogSystem {
     orbit_period_myr: 185.0,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Vega", spectral_type: "A0V", mass_solar: 2.13, radius_solar: 2.82, luminosity_solar: 40.1 },
+        CatalogStar { name: "Vega", description: "", spectral_type: "A0V", mass_solar: 2.13, radius_solar: 2.82, luminosity_solar: 40.1 },
     ],
     bodies: &[
         CatalogBody {
@@ -2894,6 +2932,7 @@ CatalogSystem {
 // 39. Fomalhaut (Alpha Piscis Austrini)
 CatalogSystem {
     name: "Fomalhaut",
+    description: "One of the brightest stars in Earth\u{2019}s sky and the centerpiece of the most spectacular debris disk system within 50 light-years. Fomalhaut A is ringed by a complex, multi-belt debris structure: a warm inner belt at 8-15 AU, a gap sculpted by unseen planets, and the famous outer ring at 130-160 AU.",
     zone: 3,
     distance_ly: 25.1,
     galactic_pos_ly: [32.6, -20968.5],
@@ -2904,9 +2943,9 @@ CatalogSystem {
     orbit_period_myr: 217.2,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Fomalhaut A", spectral_type: "A4V", mass_solar: 1.92, radius_solar: 1.84, luminosity_solar: 16.6 },
-        CatalogStar { name: "Fomalhaut B (TW Piscis Austrini)", spectral_type: "K0V", mass_solar: 0.73, radius_solar: 0.69, luminosity_solar: 0.19 },
-        CatalogStar { name: "Fomalhaut C (LP 876-10)", spectral_type: "M3V", mass_solar: 0.18, radius_solar: 0.21, luminosity_solar: 0.004 },
+        CatalogStar { name: "Fomalhaut A", description: "A bright A4V star surrounded by a dramatic debris disk — one of the first extrasolar dust rings ever imaged. At 16.6 solar luminosities, it dominates this widely separated triple system.", spectral_type: "A4V", mass_solar: 1.92, radius_solar: 1.84, luminosity_solar: 16.6 },
+        CatalogStar { name: "Fomalhaut B (TW Piscis Austrini)", description: "A K0V orange dwarf lying nearly a full light-year from A. Despite the vast separation, proper motion confirms it is gravitationally bound to the system.", spectral_type: "K0V", mass_solar: 0.73, radius_solar: 0.69, luminosity_solar: 0.19 },
+        CatalogStar { name: "Fomalhaut C (LP 876-10)", description: "A dim M3 red dwarf and the most distant member of the trio at 3.2 ly from A. Its membership in the Fomalhaut system was only confirmed in 2013.", spectral_type: "M3V", mass_solar: 0.18, radius_solar: 0.21, luminosity_solar: 0.004 },
     ],
     bodies: &[
         CatalogBody {
@@ -2951,7 +2990,7 @@ CatalogSystem {
         },
         CatalogBody {
             name: "Wayward", designation: "c-III", is_moon: true, parent_body_idx: Some(1),
-            orbit_sma_au: 0.0, orbit_sma_km: 3500000.0, orbit_ecc: 0.0, orbit_period_days: 30.0,
+            orbit_sma_au: 0.0, orbit_sma_km: 3500000.0, orbit_ecc: 0.0, orbit_period_days: -30.0,
             mass_earth: 0.001, radius_earth: 0.08, gravity_g: 0.16, temperature_k: 80.0,
             atmosphere: None,
             habitability: 0, science: 15,
@@ -2988,6 +3027,7 @@ CatalogSystem {
 // 40. GJ 357
 CatalogSystem {
     name: "GJ 357",
+    description: "A relatively bright M-dwarf in Hydra with an unusually well-characterized planetary system. GJ 357 b was discovered by TESS as a transiting hot Earth \u{2014} one of the nearest transiting planets to Sol. Two additional planets were confirmed by radial velocity, including GJ 357 d near the outer habitable zone.",
     zone: 3,
     distance_ly: 31.0,
     galactic_pos_ly: [-6.6, -20987.9],
@@ -2998,7 +3038,7 @@ CatalogSystem {
     orbit_period_myr: 180.5,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "GJ 357", spectral_type: "M2V", mass_solar: 0.34, radius_solar: 0.33, luminosity_solar: 0.016 },
+        CatalogStar { name: "GJ 357", description: "", spectral_type: "M2V", mass_solar: 0.34, radius_solar: 0.33, luminosity_solar: 0.016 },
     ],
     bodies: &[
         CatalogBody {
@@ -3047,6 +3087,7 @@ CatalogSystem {
 // 41. Wolf 1069
 CatalogSystem {
     name: "Wolf 1069",
+    description: "An unusually quiet red dwarf. Wolf 1069 rotates slowly \u{2014} a period of 150-170 days \u{2014} which suppresses magnetic activity and flare production to levels far below typical M-dwarfs. This stellar calm is what makes its habitable-zone planet one of the most remarkable discoveries in Zone 3: a world where life has not merely survived, but colonized the sky.",
     zone: 3,
     distance_ly: 31.2,
     galactic_pos_ly: [32.6, -21022.0],
@@ -3057,7 +3098,7 @@ CatalogSystem {
     orbit_period_myr: 191.1,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Wolf 1069", spectral_type: "M5V", mass_solar: 0.17, radius_solar: 0.19, luminosity_solar: 0.0035 },
+        CatalogStar { name: "Wolf 1069", description: "", spectral_type: "M5V", mass_solar: 0.17, radius_solar: 0.19, luminosity_solar: 0.0035 },
     ],
     bodies: &[
         CatalogBody {
@@ -3096,6 +3137,7 @@ CatalogSystem {
 // 42. HD 260655
 CatalogSystem {
     name: "HD 260655",
+    description: "A bright M-dwarf in Gemini with two confirmed transiting rocky planets, both too close to their star for liquid water. HD 260655 is moderately active but not a violent flare star, and its relative brightness makes the system an excellent target for atmospheric characterization.",
     zone: 3,
     distance_ly: 33.0,
     galactic_pos_ly: [19.0, -21024.3],
@@ -3106,7 +3148,7 @@ CatalogSystem {
     orbit_period_myr: 184.8,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "HD 260655", spectral_type: "M0V", mass_solar: 0.44, radius_solar: 0.44, luminosity_solar: 0.033 },
+        CatalogStar { name: "HD 260655", description: "", spectral_type: "M0V", mass_solar: 0.44, radius_solar: 0.44, luminosity_solar: 0.033 },
     ],
     bodies: &[
         CatalogBody {
@@ -3155,6 +3197,7 @@ CatalogSystem {
 // 43. Pollux (Beta Geminorum)
 CatalogSystem {
     name: "Pollux",
+    description: "The brightest star in Gemini and the closest giant star to Sol with a confirmed exoplanet. Pollux is an evolved orange giant \u{2014} a star that was once a hot A-type main-sequence star, now swollen to nearly nine times the Sun\u{2019}s radius as it burns helium in its core.",
     zone: 3,
     distance_ly: 33.8,
     galactic_pos_ly: [16.6, -21025.1],
@@ -3165,7 +3208,7 @@ CatalogSystem {
     orbit_period_myr: 170.1,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Pollux", spectral_type: "K0III", mass_solar: 1.91, radius_solar: 8.8, luminosity_solar: 33.0 },
+        CatalogStar { name: "Pollux", description: "", spectral_type: "K0III", mass_solar: 1.91, radius_solar: 8.8, luminosity_solar: 33.0 },
     ],
     bodies: &[
         CatalogBody {
@@ -3244,6 +3287,7 @@ CatalogSystem {
 // 44. L 98-59
 CatalogSystem {
     name: "L 98-59",
+    description: "A compact M-dwarf system in Volans that has become one of the most intensively studied planetary systems in the sky. Four transiting planets were confirmed by TESS and radial velocity, with JWST detecting sulfur-rich volcanic atmospheres on the inner worlds. A fifth planet in the habitable zone was confirmed in 2025.",
     zone: 3,
     distance_ly: 34.6,
     galactic_pos_ly: [-10.5, -20987.8],
@@ -3254,7 +3298,7 @@ CatalogSystem {
     orbit_period_myr: 182.6,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "L 98-59", spectral_type: "M3V", mass_solar: 0.31, radius_solar: 0.30, luminosity_solar: 0.011 },
+        CatalogStar { name: "L 98-59", description: "", spectral_type: "M3V", mass_solar: 0.31, radius_solar: 0.30, luminosity_solar: 0.011 },
     ],
     bodies: &[
         CatalogBody {
@@ -3313,6 +3357,7 @@ CatalogSystem {
 // 45. Denebola (Beta Leonis)
 CatalogSystem {
     name: "Denebola",
+    description: "A hot, young A-type star in Leo\u{2019}s tail, surrounded by a prominent infrared-excess debris disk at an estimated age of 100-300 Myr. Denebola is younger than Vega and rotating rapidly, and its planetary system is correspondingly immature: surfaces are fresh, geological activity is intense, and the debris disk is actively evolving.",
     zone: 3,
     distance_ly: 35.9,
     galactic_pos_ly: [-9.9, -21004.0],
@@ -3323,7 +3368,7 @@ CatalogSystem {
     orbit_period_myr: 166.9,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Denebola", spectral_type: "A3V", mass_solar: 1.75, radius_solar: 1.73, luminosity_solar: 15.0 },
+        CatalogStar { name: "Denebola", description: "", spectral_type: "A3V", mass_solar: 1.75, radius_solar: 1.73, luminosity_solar: 15.0 },
     ],
     bodies: &[
         CatalogBody {
@@ -3392,6 +3437,7 @@ CatalogSystem {
 // 46. Arcturus (Alpha Bootis)
 CatalogSystem {
     name: "Arcturus",
+    description: "The fourth brightest star in Earth\u{2019}s sky and one of the most luminous stars within 50 light-years. Arcturus is an ancient red giant \u{2014} approximately 7.1 billion years old \u{2014} that has swollen to 25 times the Sun\u{2019}s radius and brightened to 170 times its luminosity. Any inner planets were consumed when Arcturus expanded off the main sequence.",
     zone: 3,
     distance_ly: 36.7,
     galactic_pos_ly: [33.4, -20956.7],
@@ -3402,7 +3448,7 @@ CatalogSystem {
     orbit_period_myr: 172.4,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Arcturus", spectral_type: "K1III", mass_solar: 1.08, radius_solar: 25.4, luminosity_solar: 170.0 },
+        CatalogStar { name: "Arcturus", description: "", spectral_type: "K1III", mass_solar: 1.08, radius_solar: 25.4, luminosity_solar: 170.0 },
     ],
     bodies: &[
         CatalogBody {
@@ -3451,6 +3497,7 @@ CatalogSystem {
 // 47. TRAPPIST-1
 CatalogSystem {
     name: "TRAPPIST-1",
+    description: "The most famous planetary system in the sky. Seven rocky, Earth-sized planets packed into a region smaller than Mercury\u{2019}s orbit around the Sun, forming a near-resonant chain. Three of the seven orbit within the habitable zone. This is humanity\u{2019}s best laboratory for comparative planetology \u{2014} seven worlds, one star, nearly identical ages and compositions.",
     zone: 3,
     distance_ly: 40.7,
     galactic_pos_ly: [-16.8, -20990.5],
@@ -3461,7 +3508,7 @@ CatalogSystem {
     orbit_period_myr: 178.5,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "TRAPPIST-1", spectral_type: "M8V", mass_solar: 0.09, radius_solar: 0.12, luminosity_solar: 0.0005 },
+        CatalogStar { name: "TRAPPIST-1", description: "", spectral_type: "M8V", mass_solar: 0.09, radius_solar: 0.12, luminosity_solar: 0.0005 },
     ],
     bodies: &[
         CatalogBody {
@@ -3540,6 +3587,7 @@ CatalogSystem {
 // 48. 55 Cancri (Copernicus)
 CatalogSystem {
     name: "55 Cancri",
+    description: "One of the first stars found to host a multi-planet system, and still one of the richest. Five planets orbit 55 Cancri A, spanning from an ultra-short-period lava world to a cold gas giant at Jupiter-like distances. The innermost, Janssen, became a sensation in 2024 when JWST detected an atmosphere on a world once thought too hot to retain one.",
     zone: 3,
     distance_ly: 41.0,
     galactic_pos_ly: [12.1, -21030.6],
@@ -3550,8 +3598,8 @@ CatalogSystem {
     orbit_period_myr: 193.0,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "55 Cancri A (Copernicus)", spectral_type: "K0V", mass_solar: 0.91, radius_solar: 0.94, luminosity_solar: 0.57 },
-        CatalogStar { name: "55 Cancri B", spectral_type: "M3V", mass_solar: 0.25, radius_solar: 0.26, luminosity_solar: 0.006 },
+        CatalogStar { name: "55 Cancri A (Copernicus)", description: "A K0V star slightly less luminous than the Sun, famous for hosting one of the richest known exoplanet systems — five confirmed planets spanning a vast range of orbits.", spectral_type: "K0V", mass_solar: 0.91, radius_solar: 0.94, luminosity_solar: 0.57 },
+        CatalogStar { name: "55 Cancri B", description: "A faint M3 red dwarf companion orbiting Copernicus at roughly 1,000 AU. Too distant to significantly perturb the inner planetary system.", spectral_type: "M3V", mass_solar: 0.25, radius_solar: 0.26, luminosity_solar: 0.006 },
     ],
     bodies: &[
         CatalogBody {
@@ -3662,6 +3710,7 @@ CatalogSystem {
 // 49. Upsilon Andromedae (Titawin)
 CatalogSystem {
     name: "Upsilon Andromedae",
+    description: "The first multi-planet system discovered around a main-sequence star other than the Sun (1999), and still one of the most dynamically extreme. Three confirmed gas giants orbit with high mutual inclinations \u{2014} their orbital planes tilted by up to 30 degrees relative to each other.",
     zone: 3,
     distance_ly: 44.0,
     galactic_pos_ly: [54.7, -21023.7],
@@ -3672,8 +3721,8 @@ CatalogSystem {
     orbit_period_myr: 169.6,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Upsilon Andromedae A (Titawin)", spectral_type: "F8V", mass_solar: 1.27, radius_solar: 1.48, luminosity_solar: 3.57 },
-        CatalogStar { name: "Upsilon Andromedae B", spectral_type: "M4V", mass_solar: 0.20, radius_solar: 0.22, luminosity_solar: 0.004 },
+        CatalogStar { name: "Upsilon Andromedae A (Titawin)", description: "An F8V star hotter and more luminous than the Sun, hosting at least four known planets — including some of the first multi-planet systems discovered around a main-sequence star.", spectral_type: "F8V", mass_solar: 1.27, radius_solar: 1.48, luminosity_solar: 3.57 },
+        CatalogStar { name: "Upsilon Andromedae B", description: "A faint M4 red dwarf companion at a projected separation of about 750 AU. Its influence on the inner planetary system is negligible.", spectral_type: "M4V", mass_solar: 0.20, radius_solar: 0.22, luminosity_solar: 0.004 },
     ],
     bodies: &[
         CatalogBody {
@@ -3754,6 +3803,7 @@ CatalogSystem {
 // 50. 47 Ursae Majoris (Chalawan)
 CatalogSystem {
     name: "47 Ursae Majoris",
+    description: "A solar twin \u{2014} one of the most Sun-like stars within 50 light-years. Chalawan has almost identical mass to Sol, with a planetary system that resembles a scaled-up version of our outer solar system. Three confirmed gas giants orbit at 2.1, 3.6, and 11.6 AU. This is the system that most closely mirrors Sol\u{2019}s architecture.",
     zone: 3,
     distance_ly: 45.3,
     galactic_pos_ly: [28.0, -21037.8],
@@ -3764,7 +3814,7 @@ CatalogSystem {
     orbit_period_myr: 166.6,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "47 Ursae Majoris (Chalawan)", spectral_type: "G1V", mass_solar: 1.03, radius_solar: 1.24, luminosity_solar: 1.60 },
+        CatalogStar { name: "47 Ursae Majoris (Chalawan)", description: "", spectral_type: "G1V", mass_solar: 1.03, radius_solar: 1.24, luminosity_solar: 1.60 },
     ],
     bodies: &[
         CatalogBody {
@@ -3883,6 +3933,7 @@ CatalogSystem {
 // 51. LHS 1140
 CatalogSystem {
     name: "LHS 1140",
+    description: "A quiet M-dwarf notable for hosting one of the most intensively studied habitable-zone planets in the sky. LHS 1140 b was identified early as a high-priority target for atmospheric characterization. JWST detected nitrogen and water vapor \u{2014} consistent with a secondary atmosphere outgassed from the rocky surface.",
     zone: 3,
     distance_ly: 49.0,
     galactic_pos_ly: [57.8, -21027.1],
@@ -3893,7 +3944,7 @@ CatalogSystem {
     orbit_period_myr: 185.5,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "LHS 1140", spectral_type: "M4V", mass_solar: 0.18, radius_solar: 0.21, luminosity_solar: 0.004 },
+        CatalogStar { name: "LHS 1140", description: "", spectral_type: "M4V", mass_solar: 0.18, radius_solar: 0.21, luminosity_solar: 0.004 },
     ],
     bodies: &[
         CatalogBody {
@@ -3932,6 +3983,7 @@ CatalogSystem {
 // 52. Mu Arae (Cervantes)
 CatalogSystem {
     name: "Mu Arae",
+    description: "A Sun-like star in Ara, slightly evolved off the main sequence. Cervantes is famous for its four confirmed planets, all named after characters from Don Quixote: the hot Neptune Dulcinea, the habitable-zone gas giant Rocinante, the eccentric Jupiter Quijote, and the distant cold giant Sancho.",
     zone: 4,
     distance_ly: 51.0,
     galactic_pos_ly: [-10.9, -20955.3],
@@ -3942,7 +3994,7 @@ CatalogSystem {
     orbit_period_myr: 170.3,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Cervantes", spectral_type: "G3V", mass_solar: 1.08, radius_solar: 1.36, luminosity_solar: 1.90 },
+        CatalogStar { name: "Cervantes", description: "", spectral_type: "G3V", mass_solar: 1.08, radius_solar: 1.36, luminosity_solar: 1.90 },
     ],
     bodies: &[
         CatalogBody {
@@ -4061,6 +4113,7 @@ CatalogSystem {
 // 53. Castor (Alpha Geminorum)
 CatalogSystem {
     name: "Castor",
+    description: "Six stars bound in a hierarchical dance. The A pair and B pair orbit each other at roughly 100 AU, while the C pair \u{2014} two red dwarfs in an eclipsing binary \u{2014} traces a vast orbit at over 1,000 AU. From any planet in this system, the sky is extraordinary: multiple brilliant stellar components across the visual field.",
     zone: 4,
     distance_ly: 51.0,
     galactic_pos_ly: [17.3, -21042.7],
@@ -4071,12 +4124,12 @@ CatalogSystem {
     orbit_period_myr: 171.1,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Castor Aa", spectral_type: "A1V", mass_solar: 2.15, radius_solar: 2.4, luminosity_solar: 37.0 },
-        CatalogStar { name: "Castor Ab", spectral_type: "A2V", mass_solar: 1.70, radius_solar: 1.6, luminosity_solar: 14.0 },
-        CatalogStar { name: "Castor Ba", spectral_type: "A2V", mass_solar: 1.70, radius_solar: 1.6, luminosity_solar: 14.0 },
-        CatalogStar { name: "Castor Bb", spectral_type: "A5V", mass_solar: 1.40, radius_solar: 1.4, luminosity_solar: 6.0 },
-        CatalogStar { name: "Castor Ca (YY Gem)", spectral_type: "M1V", mass_solar: 0.60, radius_solar: 0.62, luminosity_solar: 0.08 },
-        CatalogStar { name: "Castor Cb", spectral_type: "M1V", mass_solar: 0.60, radius_solar: 0.57, luminosity_solar: 0.07 },
+        CatalogStar { name: "Castor Aa", description: "The brightest component of the Castor sextuple — a hot A1V star dominating the system's visual output at 37 solar luminosities.", spectral_type: "A1V", mass_solar: 2.15, radius_solar: 2.4, luminosity_solar: 37.0 },
+        CatalogStar { name: "Castor Ab", description: "A spectroscopic companion to Aa in a tight 9.2-day orbit. An A2V star contributing significantly to the combined light of the Castor A pair.", spectral_type: "A2V", mass_solar: 1.70, radius_solar: 1.6, luminosity_solar: 14.0 },
+        CatalogStar { name: "Castor Ba", description: "The primary of the Castor B spectroscopic binary, an A2V star similar to Ab. The BA pair orbits the A pair every 467 years.", spectral_type: "A2V", mass_solar: 1.70, radius_solar: 1.6, luminosity_solar: 14.0 },
+        CatalogStar { name: "Castor Bb", description: "The fainter companion in the B pair, an A5V star in a 2.9-day orbit around Ba.", spectral_type: "A5V", mass_solar: 1.40, radius_solar: 1.4, luminosity_solar: 6.0 },
+        CatalogStar { name: "Castor Ca (YY Gem)", description: "A red dwarf and eclipsing binary component of the Castor C pair, also known as YY Geminorum. One of the best-studied low-mass eclipsing systems.", spectral_type: "M1V", mass_solar: 0.60, radius_solar: 0.62, luminosity_solar: 0.08 },
+        CatalogStar { name: "Castor Cb", description: "The nearly identical twin of Ca — together they form a tight eclipsing binary orbiting far from the bright AB quartet.", spectral_type: "M1V", mass_solar: 0.60, radius_solar: 0.57, luminosity_solar: 0.07 },
     ],
     bodies: &[
         CatalogBody {
@@ -4131,6 +4184,7 @@ CatalogSystem {
 // 54. Pi Mensae
 CatalogSystem {
     name: "Pi Mensae",
+    description: "A solar twin in Mensa harboring a monster. Pi Mensae b is a 12.6 Jupiter-mass super-giant on an orbit so eccentric (e = 0.64) that it sweeps from 1.19 AU to 5.43 AU, scything through the habitable zone every 5.7 years. Every surviving planet is a testament to dynamical resilience.",
     zone: 4,
     distance_ly: 60.0,
     galactic_pos_ly: [-32.2, -20971.4],
@@ -4141,7 +4195,7 @@ CatalogSystem {
     orbit_period_myr: 178.6,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Pi Mensae", spectral_type: "G0V", mass_solar: 1.09, radius_solar: 1.15, luminosity_solar: 1.44 },
+        CatalogStar { name: "Pi Mensae", description: "", spectral_type: "G0V", mass_solar: 1.09, radius_solar: 1.15, luminosity_solar: 1.44 },
     ],
     bodies: &[
         CatalogBody {
@@ -4240,6 +4294,7 @@ CatalogSystem {
 // 55. Beta Pictoris
 CatalogSystem {
     name: "Beta Pictoris",
+    description: "Youth incarnate. Beta Pictoris is 20-26 million years old \u{2014} a newborn by stellar standards, still wrapped in the afterbirth of its formation. Two directly imaged super-Jupiters orbit among the rubble of a spectacular edge-on debris disk. Everything here is raw, unfinished, and violent. Arriving at Beta Pictoris is like visiting our own solar system 4.5 billion years ago.",
     zone: 4,
     distance_ly: 63.4,
     galactic_pos_ly: [-38.3, -21004.9],
@@ -4250,7 +4305,7 @@ CatalogSystem {
     orbit_period_myr: 193.9,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Beta Pictoris", spectral_type: "A6V", mass_solar: 1.75, radius_solar: 1.73, luminosity_solar: 8.7 },
+        CatalogStar { name: "Beta Pictoris", description: "", spectral_type: "A6V", mass_solar: 1.75, radius_solar: 1.73, luminosity_solar: 8.7 },
     ],
     bodies: &[
         CatalogBody {
@@ -4339,6 +4394,7 @@ CatalogSystem {
 // 56. Regulus (Alpha Leonis)
 CatalogSystem {
     name: "Regulus",
+    description: "Regulus lies. It looks young \u{2014} a hot blue subgiant spinning at 86% of its breakup velocity. But its white dwarf companion tells the truth: Regulus A is old, masquerading as a young star, wearing the stolen mass of its dead companion. A system with a secret history of stellar cannibalism.",
     zone: 4,
     distance_ly: 79.0,
     galactic_pos_ly: [-33.6, -21046.7],
@@ -4349,10 +4405,10 @@ CatalogSystem {
     orbit_period_myr: 181.4,
     is_sgr_a_orbit: false,
     stars: &[
-        CatalogStar { name: "Regulus A", spectral_type: "B8V", mass_solar: 3.8, radius_solar: 4.35, luminosity_solar: 316.0 },
-        CatalogStar { name: "Regulus A companion", spectral_type: "DA2", mass_solar: 0.30, radius_solar: 0.015, luminosity_solar: 0.0 },
-        CatalogStar { name: "Regulus B", spectral_type: "K2V", mass_solar: 0.80, radius_solar: 0.81, luminosity_solar: 0.31 },
-        CatalogStar { name: "Regulus C", spectral_type: "M4V", mass_solar: 0.30, radius_solar: 0.35, luminosity_solar: 0.009 },
+        CatalogStar { name: "Regulus A", description: "A blue-white B8V star spinning so fast it bulges at the equator — one of the most rapidly rotating stars visible to the naked eye, at 317 km/s.", spectral_type: "B8V", mass_solar: 3.8, radius_solar: 4.35, luminosity_solar: 316.0 },
+        CatalogStar { name: "Regulus A companion", description: "A faint white dwarf in a close 40-day orbit around Regulus A. Thought to have transferred mass to A before collapsing, spinning A up to its extreme rotation.", spectral_type: "DA2", mass_solar: 0.30, radius_solar: 0.015, luminosity_solar: 0.0 },
+        CatalogStar { name: "Regulus B", description: "A K2V orange dwarf separated from the A pair by about 4,200 AU. It forms a visual pair with the even fainter C component.", spectral_type: "K2V", mass_solar: 0.80, radius_solar: 0.81, luminosity_solar: 0.31 },
+        CatalogStar { name: "Regulus C", description: "A dim M4 red dwarf gravitationally bound to B, with the BC pair orbiting each other every ~600 years.", spectral_type: "M4V", mass_solar: 0.30, radius_solar: 0.35, luminosity_solar: 0.009 },
     ],
     bodies: &[
         CatalogBody {
@@ -4406,6 +4462,7 @@ CatalogSystem {
 // This entry is kept empty to preserve catalog index numbering for subsequent systems.
 CatalogSystem {
     name: "Sagittarius A*",
+    description: "The anchor of the Milky Way. Sagittarius A* is the most massive single object in the galaxy \u{2014} a Kerr black hole spinning at 90% of its maximum rate, dragging spacetime into a vortex around itself. The Builders recognized the gravitational lens for what it was \u{2014} the most powerful telescope in the galaxy \u{2014} and built their observatory here.",
     zone: 5,
     distance_ly: 26000.0,
     galactic_pos_ly: [0.0, 0.0],
@@ -4422,6 +4479,7 @@ CatalogSystem {
 // 58. Perihelion (GCS-1)
 CatalogSystem {
     name: "Perihelion",
+    description: "One of the innermost S-stars, a young blue giant on a punishingly eccentric orbit that brings it within 116 AU of a supermassive black hole every 15.6 years. At periapsis, Perihelion\u{2019}s orbital velocity reaches 3.2% of lightspeed \u{2014} fast enough that relativistic effects are directly measurable.",
     zone: 5,
     distance_ly: 26000.0,
     galactic_pos_ly: [0.0, 0.0],
@@ -4432,7 +4490,7 @@ CatalogSystem {
     orbit_period_myr: 15.6e-6,
     is_sgr_a_orbit: true,
     stars: &[
-        CatalogStar { name: "Perihelion", spectral_type: "B1V", mass_solar: 12.0, radius_solar: 5.2, luminosity_solar: 16000.0 },
+        CatalogStar { name: "Perihelion", description: "", spectral_type: "B1V", mass_solar: 12.0, radius_solar: 5.2, luminosity_solar: 16000.0 },
     ],
     bodies: &[],
     binary_orbits: &[],
@@ -4440,6 +4498,7 @@ CatalogSystem {
 // 59. Harrowgate (GCS-2)
 CatalogSystem {
     name: "Harrowgate",
+    description: "A hot blue star on a violent orbit around Sgr A*. Harrowgate\u{2019}s eccentricity of 0.72 swings it between 504 AU at periapsis and 3,096 AU at apoapsis every 38.4 years \u{2014} a gravitational pendulum that subjects anything in its system to wildly varying tidal stress.",
     zone: 5,
     distance_ly: 26000.0,
     galactic_pos_ly: [0.0, 0.0],
@@ -4450,7 +4509,7 @@ CatalogSystem {
     orbit_period_myr: 38.4e-6,
     is_sgr_a_orbit: true,
     stars: &[
-        CatalogStar { name: "Harrowgate", spectral_type: "B2V", mass_solar: 9.0, radius_solar: 4.5, luminosity_solar: 8500.0 },
+        CatalogStar { name: "Harrowgate", description: "", spectral_type: "B2V", mass_solar: 9.0, radius_solar: 4.5, luminosity_solar: 8500.0 },
     ],
     bodies: &[
         CatalogBody {
@@ -4469,6 +4528,7 @@ CatalogSystem {
 // 60. Ashenmaw (GCS-3)
 CatalogSystem {
     name: "Ashenmaw",
+    description: "The most dramatic star in the galactic center catalog. An 18-solar-mass O-type giant on an orbit so eccentric that it grazes the event horizon\u{2019}s neighborhood every 8.5 years. At periapsis, orbital velocity exceeds 6% of lightspeed. Frame-dragging from Sgr A*\u{2019}s spin causes the orbital plane to precess by several degrees per revolution.",
     zone: 5,
     distance_ly: 26000.0,
     galactic_pos_ly: [0.0, 0.0],
@@ -4479,7 +4539,7 @@ CatalogSystem {
     orbit_period_myr: 8.5e-6,
     is_sgr_a_orbit: true,
     stars: &[
-        CatalogStar { name: "Ashenmaw", spectral_type: "O9V", mass_solar: 18.0, radius_solar: 7.4, luminosity_solar: 90000.0 },
+        CatalogStar { name: "Ashenmaw", description: "", spectral_type: "O9V", mass_solar: 18.0, radius_solar: 7.4, luminosity_solar: 90000.0 },
     ],
     bodies: &[],
     binary_orbits: &[],
@@ -4487,6 +4547,7 @@ CatalogSystem {
 // 61. Solward (GCS-4)
 CatalogSystem {
     name: "Solward",
+    description: "A quiet orange dwarf on a nearly circular orbit, far enough from Sgr A* to retain a full inner planetary system. Solward is an old, metal-rich K-dwarf, probably 6-8 billion years old. In any other context, it would be unremarkable. Here, at the edge of the supermassive black hole\u{2019}s gravitational domain, it is an island of calm \u{2014} and it harbors one of only two confirmed life-bearing worlds in the galactic center.",
     zone: 5,
     distance_ly: 26000.0,
     galactic_pos_ly: [0.0, 0.0],
@@ -4497,7 +4558,7 @@ CatalogSystem {
     orbit_period_myr: 4170.0e-6,
     is_sgr_a_orbit: true,
     stars: &[
-        CatalogStar { name: "Solward", spectral_type: "K3V", mass_solar: 0.75, radius_solar: 0.72, luminosity_solar: 0.32 },
+        CatalogStar { name: "Solward", description: "", spectral_type: "K3V", mass_solar: 0.75, radius_solar: 0.72, luminosity_solar: 0.32 },
     ],
     bodies: &[
         CatalogBody {
@@ -4536,6 +4597,7 @@ CatalogSystem {
 // 62. Duskwell (GCS-5)
 CatalogSystem {
     name: "Duskwell",
+    description: "A dim red dwarf on the most circular orbit in the catalog at 52,000 AU from Sgr A*. At this distance, the black hole\u{2019}s tidal influence is gentle enough that Duskwell has maintained a stable planetary system for billions of years. By galactic center standards, boring. This is precisely what makes it valuable: stability has allowed life to develop on its innermost rocky planet.",
     zone: 5,
     distance_ly: 26000.0,
     galactic_pos_ly: [0.0, 0.0],
@@ -4546,7 +4608,7 @@ CatalogSystem {
     orbit_period_myr: 9470.0e-6,
     is_sgr_a_orbit: true,
     stars: &[
-        CatalogStar { name: "Duskwell", spectral_type: "M2V", mass_solar: 0.40, radius_solar: 0.44, luminosity_solar: 0.035 },
+        CatalogStar { name: "Duskwell", description: "", spectral_type: "M2V", mass_solar: 0.40, radius_solar: 0.44, luminosity_solar: 0.035 },
     ],
     bodies: &[
         CatalogBody {
@@ -4575,6 +4637,7 @@ CatalogSystem {
 // 63. Crucis (GCS-6)
 CatalogSystem {
     name: "Crucis",
+    description: "The closest thing to a familiar star in the entire galactic center catalog. Crucis is a near-solar G5V dwarf orbiting Sagittarius A* at a comfortable 42,000 AU. For the Expedition, Crucis represents something psychologically powerful: a yellow star with rocky planets and liquid water, 26,000 light-years from home but recognizable.",
     zone: 5,
     distance_ly: 26000.0,
     galactic_pos_ly: [0.0, 0.0],
@@ -4585,7 +4648,7 @@ CatalogSystem {
     orbit_period_myr: 5470.0e-6,
     is_sgr_a_orbit: true,
     stars: &[
-        CatalogStar { name: "Crucis", spectral_type: "G5V", mass_solar: 0.93, radius_solar: 0.92, luminosity_solar: 0.73 },
+        CatalogStar { name: "Crucis", description: "", spectral_type: "G5V", mass_solar: 0.93, radius_solar: 0.92, luminosity_solar: 0.73 },
     ],
     bodies: &[
         CatalogBody {
@@ -4620,7 +4683,7 @@ CatalogSystem {
         },
         CatalogBody {
             name: "Mireholm I", designation: "c-I", is_moon: true, parent_body_idx: Some(2),
-            orbit_sma_au: 0.0, orbit_sma_km: 120000.0, orbit_ecc: 0.0, orbit_period_days: 4.2,
+            orbit_sma_au: 0.0, orbit_sma_km: 120000.0, orbit_ecc: 0.0, orbit_period_days: -4.2,
             mass_earth: 0.003, radius_earth: 0.17, gravity_g: 0.10, temperature_k: 148.0,
             atmosphere: None,
             habitability: 1, science: 10,
@@ -4634,6 +4697,7 @@ CatalogSystem {
 // 64. Embervault (GCS-7)
 CatalogSystem {
     name: "Embervault",
+    description: "The only evolved red giant in the catalog. Embervault was once a ~2.5 solar mass main-sequence star that exhausted its core hydrogen roughly 500 million years ago and expanded into the giant branch. Its inner planets are gone, consumed during the expansion. What remains is an outer system transformed: worlds that spent billions of years frozen are now experiencing a geological renaissance.",
     zone: 5,
     distance_ly: 26000.0,
     galactic_pos_ly: [0.0, 0.0],
@@ -4644,7 +4708,7 @@ CatalogSystem {
     orbit_period_myr: 17400.0e-6,
     is_sgr_a_orbit: true,
     stars: &[
-        CatalogStar { name: "Embervault", spectral_type: "K2III", mass_solar: 1.8, radius_solar: 14.0, luminosity_solar: 52.0 },
+        CatalogStar { name: "Embervault", description: "", spectral_type: "K2III", mass_solar: 1.8, radius_solar: 14.0, luminosity_solar: 52.0 },
     ],
     bodies: &[
         CatalogBody {
@@ -4673,6 +4737,7 @@ CatalogSystem {
 // 65. Covenant (GCS-8)
 CatalogSystem {
     name: "Covenant",
+    description: "The most dangerous system in the catalog. Covenant is a high-mass X-ray binary \u{2014} a blue-white B3V primary locked in a tight 0.12 AU orbit with a 1.6 solar mass neutron star. The neutron star accretes from the B-star\u{2019}s powerful stellar wind, radiating as hard X-rays. The entire system is bathed in radiation that would sterilize any unshielded biology in hours.",
     zone: 5,
     distance_ly: 26000.0,
     galactic_pos_ly: [0.0, 0.0],
@@ -4683,8 +4748,8 @@ CatalogSystem {
     orbit_period_myr: 51.0e-6,
     is_sgr_a_orbit: true,
     stars: &[
-        CatalogStar { name: "Covenant A", spectral_type: "B3V", mass_solar: 7.5, radius_solar: 3.8, luminosity_solar: 2400.0 },
-        CatalogStar { name: "Covenant B (neutron star)", spectral_type: "NS", mass_solar: 1.6, radius_solar: 0.0, luminosity_solar: 0.0 },
+        CatalogStar { name: "Covenant A", description: "A hot B3V blue giant pouring out 2,400 solar luminosities — the surviving primary of what was once a more massive binary before its companion went supernova.", spectral_type: "B3V", mass_solar: 7.5, radius_solar: 3.8, luminosity_solar: 2400.0 },
+        CatalogStar { name: "Covenant B (neutron star)", description: "A neutron star — the ultra-dense, city-sized remnant of a supernova explosion. Its intense magnetic field and occasional X-ray pulses betray the violent death of Covenant A's former companion.", spectral_type: "NS", mass_solar: 1.6, radius_solar: 0.0, luminosity_solar: 0.0 },
     ],
     bodies: &[
         CatalogBody {
@@ -4705,6 +4770,7 @@ CatalogSystem {
 // 66. Dimreach (GCS-9)
 CatalogSystem {
     name: "Dimreach",
+    description: "The dimmest star in the catalog \u{2014} a faint red ember radiating less than six-thousandths of the Sun\u{2019}s luminosity. What makes Dimreach notable is not the star itself but what orbits it: a tidally locked rocky world in the habitable zone, the closest system to Sgr A* that offers anything approaching human-survivable surface conditions.",
     zone: 5,
     distance_ly: 26000.0,
     galactic_pos_ly: [0.0, 0.0],
@@ -4715,7 +4781,7 @@ CatalogSystem {
     orbit_period_myr: 1530.0e-6,
     is_sgr_a_orbit: true,
     stars: &[
-        CatalogStar { name: "Dimreach", spectral_type: "M4V", mass_solar: 0.20, radius_solar: 0.24, luminosity_solar: 0.0055 },
+        CatalogStar { name: "Dimreach", description: "", spectral_type: "M4V", mass_solar: 0.20, radius_solar: 0.24, luminosity_solar: 0.0055 },
     ],
     bodies: &[
         CatalogBody {
@@ -4744,6 +4810,7 @@ CatalogSystem {
 // 67. Aureate (GCS-10)
 CatalogSystem {
     name: "Aureate",
+    description: "The brightest main-sequence star in the galactic center catalog and the most distant from Sgr A*. Aureate is an F5V \u{2014} a warm yellow-white dwarf, hotter and more luminous than Sol. It is the most normal stellar system in Zone 5: a well-behaved star with rocky inner planets, a habitable-zone super-Earth, and a gas giant with moons.",
     zone: 5,
     distance_ly: 26000.0,
     galactic_pos_ly: [0.0, 0.0],
@@ -4754,7 +4821,7 @@ CatalogSystem {
     orbit_period_myr: 12340.0e-6,
     is_sgr_a_orbit: true,
     stars: &[
-        CatalogStar { name: "Aureate", spectral_type: "F5V", mass_solar: 1.33, radius_solar: 1.46, luminosity_solar: 3.4 },
+        CatalogStar { name: "Aureate", description: "", spectral_type: "F5V", mass_solar: 1.33, radius_solar: 1.46, luminosity_solar: 3.4 },
     ],
     bodies: &[
         CatalogBody {

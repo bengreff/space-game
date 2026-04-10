@@ -3,7 +3,7 @@ mod colony_ui;
 mod colony_overview_ui;
 mod editor_render;
 mod flight;
-mod formatting;
+pub mod formatting;
 mod geometry;
 mod interaction;
 pub mod management_ui;

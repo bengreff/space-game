@@ -1,6 +1,7 @@
 use super::formatting::apply_heat_tint;
 use super::types::{
     BodyData, OrbitRenderData, ShipRenderData, TrackingVesselData, Vertex, HYPERBOLIC_RENDER_MARGIN,
+    orbit_segments,
 };
 use super::state::RenderState;
 
@@ -90,7 +91,7 @@ impl RenderState {
                 let center_x = orbit.parent_x - c * arg_peri.cos();
                 let center_y = orbit.parent_y - c * arg_peri.sin();
 
-                let segments = orbit.segments;
+                let segments = orbit_segments(a, self.camera.zoom, self.size.height as f32);
                 let line_width = 0.002 / self.camera.zoom as f64; // Thin line in world units
 
                 // Generate orbit ellipse vertices (inner and outer for line thickness)
@@ -314,7 +315,7 @@ impl RenderState {
 
                 Self::add_galactic_orbit_line(
                     &self.camera, &mut all_vertices, &mut all_indices,
-                    star, scale,
+                    star, scale, self.size.height as f32,
                 );
             }
         }
@@ -337,7 +338,7 @@ impl RenderState {
                 let center_x = pcam_x - c * arg_peri.cos();
                 let center_y = pcam_y - c * arg_peri.sin();
 
-                let segments = orbit.segments;
+                let segments = orbit_segments(a, self.camera.zoom, self.size.height as f32);
                 let line_width = 0.002 / self.camera.zoom as f64;
 
                 for i in 0..segments {
@@ -617,7 +618,8 @@ impl RenderState {
                     };
 
                     let is_full_orbit = segment.end_true_anomaly.is_none();
-                    let num_segments = ((angle_span.abs() / std::f64::consts::TAU) * 512.0).max(16.0) as u32;
+                    let full_segments = orbit_segments(a, self.camera.zoom, self.size.height as f32);
+                    let num_segments = ((angle_span.abs() / std::f64::consts::TAU) * full_segments as f64).max(16.0) as u32;
                     let base_index = all_vertices.len() as u32;
 
                     for i in 0..num_segments {
@@ -866,7 +868,7 @@ impl RenderState {
                         }
                     });
 
-                    let num_points = 512usize;
+                    let num_points = orbit_segments(a_abs, self.camera.zoom, self.size.height as f32) as usize;
                     let mut points: Vec<(f64, f64)> = Vec::with_capacity(num_points);
 
                     for i in 0..num_points {
@@ -984,7 +986,7 @@ impl RenderState {
                         None => std::f64::consts::TAU,
                     };
 
-                    let num_segments_draw = 512u32;
+                    let num_segments_draw = orbit_segments(a, self.camera.zoom, self.size.height as f32);
                     let mut prev_point: Option<(f64, f64)> = None;
 
                     for i in 0..=num_segments_draw {
@@ -1806,7 +1808,7 @@ impl RenderState {
                         let center_x = pcam_x - c * arg_peri.cos();
                         let center_y = pcam_y - c * arg_peri.sin();
 
-                        let segments = orbit.segments;
+                        let segments = orbit_segments(a, self.camera.zoom, self.size.height as f32);
                         let line_width = 0.002 / self.camera.zoom as f64;
 
                         for i in 0..segments {
@@ -2201,15 +2203,17 @@ impl RenderState {
                 continue;
             }
 
-            // Store screen position for hit testing (hover/click)
-            screen_positions.push((i, [screen_px, screen_py]));
-
-            // Skip rendering the procedural dot for focused multi-star catalog systems.
+            // Skip rendering AND hit-testing for focused multi-star catalog systems.
             // The companion star bodies (injected by inject_catalog_planets) replace this
             // dot visually — rendering both creates a duplicate at the barycenter.
+            // Hit-testing must also be skipped: the invisible barycenter dot would otherwise
+            // capture clicks, clearing tracked_body and re-centering the camera on star A.
             if focused_star == Some(i) && star.num_catalog_stars > 1 {
                 continue;
             }
+
+            // Store screen position for hit testing (hover/click)
+            screen_positions.push((i, [screen_px, screen_py]));
 
             // Check if physical radius is large enough on screen for a real circle
             // radius_world is in camera-relative world units (shader applies zoom)
@@ -2304,6 +2308,7 @@ impl RenderState {
         all_indices: &mut Vec<u32>,
         star: &StarRenderData,
         scale: f64,
+        screen_height: f32,
     ) {
         let a = star.semi_major_axis_m * scale;
         let e = star.eccentricity as f64;
@@ -2327,7 +2332,7 @@ impl RenderState {
         let line_width = 0.002 / camera.zoom as f64;
         let orbit_color = [star.color[0] * 0.4, star.color[1] * 0.4, star.color[2] * 0.4, 0.5];
 
-        let segments = if star.catalog_index > 0 { 5120u32 } else { 512u32 };
+        let segments = orbit_segments(a, camera.zoom, screen_height);
         let base = all_vertices.len() as u32;
 
         for i in 0..segments {

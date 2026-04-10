@@ -3,6 +3,19 @@ use crate::colony::ResourceType;
 /// Margin from hyperbolic asymptote for trajectory endpoint rendering
 pub const HYPERBOLIC_RENDER_MARGIN: f64 = 0.01;
 
+/// Maximum number of line segments for any orbit ellipse. This is the single
+/// source of truth — every orbit in the game caps at this value. Actual segment
+/// count is adaptive based on screen-space circumference (see `orbit_segments`).
+pub const ORBIT_SEGMENTS: u32 = 5120;
+
+/// Compute adaptive orbit segment count from screen-space size.
+/// Allocates ~1 segment per 3 pixels of circumference, clamped to [64, ORBIT_SEGMENTS].
+pub fn orbit_segments(semi_major_axis_world: f64, zoom: f32, screen_height: f32) -> u32 {
+    let circumference_px = std::f64::consts::TAU * semi_major_axis_world
+        * zoom as f64 * screen_height as f64 * 0.5;
+    (circumference_px / 3.0).clamp(64.0, ORBIT_SEGMENTS as f64) as u32
+}
+
 /// Vertex for 2D rendering
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -70,7 +83,6 @@ pub struct OrbitRenderData {
     pub eccentricity: f64,
     pub argument_of_periapsis: f64,
     pub color: [f32; 4],
-    pub segments: u32,  // number of line segments (256 for solar system, 5120 for catalog)
 }
 
 /// Per-nozzle activation state for RCS thrusters

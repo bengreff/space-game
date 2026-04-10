@@ -149,7 +149,7 @@ fn sun_parent(body_idx: usize, bodies: &[CelestialBody]) -> Option<usize> {
                 // If parent is the Sun (no grandparent or grandparent is root)
                 if bodies[parent].parent.is_none()
                     || bodies[parent].name == "Sun"
-                    || bodies[parent].name == "Sgr A*"
+                    || bodies[parent].name == "Sagittarius A*"
                 {
                     return Some(idx);
                 }

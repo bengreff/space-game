@@ -1,5 +1,5 @@
 /// Format a duration in seconds to a human-readable string
-pub(crate) fn format_duration(seconds: f64) -> String {
+pub fn format_duration(seconds: f64) -> String {
     if !seconds.is_finite() || seconds < 0.0 {
         return "---".to_string();
     }
@@ -23,7 +23,7 @@ pub(crate) fn format_duration(seconds: f64) -> String {
 }
 
 /// Format duration without seconds (for long-running mission timers)
-pub(crate) fn format_duration_no_seconds(seconds: f64) -> String {
+pub fn format_duration_no_seconds(seconds: f64) -> String {
     if !seconds.is_finite() || seconds < 0.0 {
         return "---".to_string();
     }
@@ -44,7 +44,7 @@ pub(crate) fn format_duration_no_seconds(seconds: f64) -> String {
 }
 
 /// Format a distance in meters to a human-readable string with appropriate unit
-pub(crate) fn format_distance(meters: f64) -> String {
+pub fn format_distance(meters: f64) -> String {
     const AU: f64 = 1.496e11;
     if meters >= AU * 0.1 {
         format!("{:.3} AU", meters / AU)
@@ -60,7 +60,7 @@ pub(crate) fn format_distance(meters: f64) -> String {
 }
 
 /// Format mass in kg to a human-readable string with scientific notation
-pub(crate) fn format_mass(kg: f64) -> String {
+pub fn format_mass(kg: f64) -> String {
     if kg >= 1e24 {
         format!("{:.3e} kg", kg)
     } else if kg >= 1e18 {
@@ -73,7 +73,7 @@ pub(crate) fn format_mass(kg: f64) -> String {
 }
 
 /// Format power in Watts to a human-readable string with SI prefixes
-pub(crate) fn format_power_si(watts: f64) -> String {
+pub fn format_power_si(watts: f64) -> String {
     if watts >= 1e12 {
         format!("{:.1} TW", watts / 1e12)
     } else if watts >= 1e9 {
@@ -88,7 +88,7 @@ pub(crate) fn format_power_si(watts: f64) -> String {
 }
 
 /// Format pressure in Pascals to a human-readable string (always in atm)
-pub(crate) fn format_pressure(pa: f64) -> String {
+pub fn format_pressure(pa: f64) -> String {
     let atm = pa / 101_325.0;
     if atm >= 0.1 {
         format!("{:.2} atm", atm)
@@ -102,7 +102,7 @@ pub(crate) fn format_pressure(pa: f64) -> String {
 /// Multi-stop color gradient for porkchop plot.
 /// norm: 0.0 (best/lowest dv) to 1.0 (worst/highest dv), already log-scaled.
 /// Green -> yellow-green -> yellow -> orange -> red
-pub(crate) fn porkchop_color(norm: f32) -> egui::Color32 {
+pub fn porkchop_color(norm: f32) -> egui::Color32 {
     // 5-stop gradient: green, yellow-green, yellow, orange, red
     const STOPS: [(f32, [u8; 3]); 5] = [
         (0.00, [30, 200, 50]),   // green
@@ -135,7 +135,7 @@ pub(crate) fn porkchop_color(norm: f32) -> egui::Color32 {
 /// Returns (r, g, b) in 0.0-1.0 following an approximate electromagnetic
 /// spectrum: dark red at 500K, cherry red ~1000K, orange ~2000K, bright
 /// yellow at 4000K. Below 500K returns None (no glow).
-pub(crate) fn blackbody_color(temp_k: f64) -> Option<[f32; 3]> {
+pub fn blackbody_color(temp_k: f64) -> Option<[f32; 3]> {
     if temp_k < 500.0 {
         return None;
     }
@@ -154,7 +154,7 @@ pub(crate) fn blackbody_color(temp_k: f64) -> Option<[f32; 3]> {
 
 /// Apply heat tinting to a color based on temperature (Kelvin).
 /// Below 500K: no effect. 500K-4000K: blackbody glow from dark red to bright yellow.
-pub(crate) fn apply_heat_tint(color: [f32; 4], temperature: f64) -> [f32; 4] {
+pub fn apply_heat_tint(color: [f32; 4], temperature: f64) -> [f32; 4] {
     let glow = match blackbody_color(temperature) {
         Some(g) => g,
         None => return color,

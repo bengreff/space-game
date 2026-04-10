@@ -16,6 +16,7 @@ use super::star_color;
 /// A complete star system from the catalog.
 pub struct CatalogSystem {
     pub name: &'static str,
+    pub description: &'static str,
     pub zone: u8,
     pub distance_ly: f32,
     pub galactic_pos_ly: [f64; 2],
@@ -42,6 +43,7 @@ pub struct StarOrbitData {
 /// A single stellar component (e.g. Alpha Centauri A).
 pub struct CatalogStar {
     pub name: &'static str,
+    pub description: &'static str,
     pub spectral_type: &'static str,
     pub mass_solar: f64,
     pub radius_solar: f64,

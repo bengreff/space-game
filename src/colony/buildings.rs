@@ -420,6 +420,26 @@ pub enum FactoryRecipe {
 }
 
 impl FactoryRecipe {
+    pub fn all() -> &'static [FactoryRecipe] {
+        &[
+            Self::MetalSmelting,
+            Self::AlloyForging,
+            Self::ElectronicsManufacturing,
+            Self::SuperconductorFabrication,
+            Self::PrecisionInstrumentsManufacturing,
+            Self::Electrolysis,
+            Self::DeuteriumExtraction,
+            Self::SabatierReaction,
+            Self::MethanePurification,
+            Self::KeroseneRefining,
+            Self::UraniumEnrichment,
+            Self::TritiumBreeding,
+            Self::NpuAssembly,
+            Self::RegolithHe3Extraction,
+            Self::GasGiantHe3Separation,
+        ]
+    }
+
     pub fn display_name(&self) -> &'static str {
         match self {
             Self::MetalSmelting => "Metal Smelting",

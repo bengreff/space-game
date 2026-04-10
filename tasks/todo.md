@@ -953,3 +953,34 @@
 - [ ] Visual test: Epsilon Indi — Ba and Bb visible with inner orbit
 - [ ] Visual test: Alpha Centauri — A near system dot, B nearby, Proxima distant
 - [ ] Visual test: simple binaries (Sirius, Procyon) still work correctly
+
+---
+
+# Integration Test Suite
+
+## Implementation
+- [x] Visibility changes: `pub mod formatting` in render/mod.rs, `pub fn` on all formatting functions, `pub fn` on `calculate_orbit_from_state` and `mean_to_true_anomaly` in ship/orbit.rs
+- [x] `tests/common/mod.rs` — Shared helpers: constants, `make_orbit`, `assert_close`, `assert_relative`, `make_solar_system`
+- [x] `tests/formatting.rs` — 15 tests: format_duration, format_distance, format_mass, format_power_si, format_pressure, blackbody_color, apply_heat_tint
+- [x] `tests/orbital_mechanics.rs` — 13 tests: Kepler solver roundtrips (circular, moderate, high, hyperbolic), state vector ↔ elements roundtrips, known-value checks (Earth orbit, galactic mass, SOI, atmosphere)
+- [x] `tests/transfer.rs` — 7 tests: Lambert solver (near-Hohmann, degenerate, edge cases), normalize_angle, Hohmann Earth→Moon
+- [x] `tests/relativistic.rs` — 9 tests: Lorentz gamma at various speeds, gravitational time dilation, relativistic cruise velocity
+- [x] `tests/galaxy.rs` — 5 tests: deterministic generation, Sun exclusion zone, density model sanity (solar neighborhood, edge, center)
+
+## Files Created
+- `tests/common/mod.rs`
+- `tests/formatting.rs`
+- `tests/orbital_mechanics.rs`
+- `tests/transfer.rs`
+- `tests/relativistic.rs`
+- `tests/galaxy.rs`
+
+## Files Modified
+- `src/render/mod.rs` — `mod formatting` → `pub mod formatting`
+- `src/render/formatting.rs` — all `pub(crate) fn` → `pub fn`
+- `src/ship/orbit.rs` — `calculate_orbit_from_state` and `mean_to_true_anomaly`: `pub(crate)` → `pub`
+
+## Verification
+- [x] `cargo test` — 53 tests pass (4 existing + 49 new), zero failures
+- [x] `cargo build` — compiles clean, no regressions
+- [x] `cargo test --test formatting` — single module works independently

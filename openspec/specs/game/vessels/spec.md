@@ -102,7 +102,7 @@ The tracking station sidebar "Fly" button switches to the selected vessel and en
 Inactive vessels with part data (`FlightVessel`) are rendered with their full parts using the same rendering pipeline as the active vessel (generate_part_shape_vertices, decoupler adapters). Inactive vessel parts use the same colors as the active vessel (no dimming). Vessels without part data fall back to triangle icon rendering (8px screen-fixed).
 
 ### Requirement: Background vessel orbits
-Inactive vessels with valid orbits have their orbit lines drawn in dimmed grey (`[0.5, 0.5, 0.5, 0.3]`). Only elliptical orbits (e < 1) are rendered, using 256-segment line approximation. Background vessel orbits SHALL only be visible in map view (when the active ship is smaller than 5 pixels on screen), matching the active vessel's orbit line visibility.
+Inactive vessels with valid orbits have their orbit lines drawn in dimmed grey (`[0.5, 0.5, 0.5, 0.3]`). Only elliptical orbits (e < 1) are rendered, using adaptive segment count via `orbit_segments()` (max `ORBIT_SEGMENTS` = 5120). Background vessel orbits SHALL only be visible in map view (when the active ship is smaller than 5 pixels on screen), matching the active vessel's orbit line visibility.
 
 ### Requirement: Tracking station vessel rendering
 All vessels are rendered with full parts and orbit lines in grey (`[0.6, 0.6, 0.6, 0.4]`). Vessels without part data fall back to colored triangle icons.

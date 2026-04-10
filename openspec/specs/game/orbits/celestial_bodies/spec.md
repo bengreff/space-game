@@ -210,7 +210,7 @@ During loading, `PHYSICS_SCALE` SHALL be applied: masses multiplied by `PHYSICS_
 
 ### Requirement: Hardcoded fallback
 
-If the RON file fails to load (missing file or parse error), the system SHALL fall back to the hardcoded body definitions with a log warning. The hardcoded fallback sets `description` to an empty string for all bodies.
+If the RON file fails to load (missing file or parse error), the system SHALL fall back to the hardcoded body definitions with a log warning. The hardcoded fallback includes descriptions for all 22 bodies (Sgr A* through Neptune, plus Crucible).
 
 ## Galaxy Background Image
 
