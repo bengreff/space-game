@@ -242,7 +242,7 @@ impl FuelType {
     }
 
     pub fn all() -> &'static [FuelType] {
-        &[FuelType::Empty, FuelType::Rp1, FuelType::Methane, FuelType::Hydrogen, FuelType::Monopropellant, FuelType::PureHydrogen, FuelType::Xenon, FuelType::FusionFuel]
+        &[FuelType::Empty, FuelType::Rp1, FuelType::Methane, FuelType::Hydrogen, FuelType::Monopropellant, FuelType::PureHydrogen, FuelType::Xenon, FuelType::FusionFuel, FuelType::Antimatter, FuelType::NuclearPulse]
     }
 
     /// Get propellant masses per grid square (in kg)
