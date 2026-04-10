@@ -3298,17 +3298,15 @@ fn inject_catalog_planets(
     let num_stars = sys.stars.len();
 
     // ── Compute per-star positions for multi-star systems ───────────────────
-    // star_positions[i] = (x, y) in meters for each star in sys.stars
+    // Flat single-barycenter model: every star in the system orbits the one
+    // common system barycenter at (star_x, star_y). Each star's individual
+    // orbit is derived from the FIRST binary_orbits entry in which it appears
+    // (the tightest pair containing that star). No hierarchical group merging
+    // and no nested barycenters — there is exactly one barycenter per system.
     let mut star_positions: Vec<[f64; 2]> = vec![[star_x, star_y]; num_stars];
 
-    // Per-star orbit info for rendering orbital ellipses around barycenters.
-    // Only single-star groups (the first time a star is paired) record orbit info here,
-    // so wider pairs in a hierarchy (e.g. Alpha Cen AB vs Proxima) don't overwrite the
-    // close binary's orbit data for A.
     #[derive(Clone)]
     struct StarOrbitInfo {
-        local_offset_x: f64,      // star position minus its close-pair barycenter at t=0
-        local_offset_y: f64,
         star_sma_m: f64,
         eccentricity: f64,
         period_s: f64,
@@ -3316,48 +3314,46 @@ fn inject_catalog_planets(
     }
     let mut star_orbit_info: Vec<Option<StarOrbitInfo>> = vec![None; num_stars];
 
-    // Group-level orbits for hierarchical pairs where at least one side is multi-star.
-    // These draw the orbit of a sub-group's barycenter around the combined barycenter.
-    struct GroupOrbit {
-        members: Vec<usize>,       // star indices in this group
-        delta_x: f64,              // group shift from pair barycenter
-        delta_y: f64,
-        sma_m: f64,                // group's SMA around pair barycenter
-        eccentricity: f64,
-        arg_peri: f64,             // PI for A side, 0 for B side
-    }
-    let mut group_orbits: Vec<GroupOrbit> = Vec::new();
-
     if num_stars > 1 && !sys.binary_orbits.is_empty() {
-        // Group-based hierarchical binary processing. Each star starts in its own group;
-        // each binary pair merges two groups, shifting both group COMs by their mutual
-        // orbit displacement. Orbit info is only recorded for single-star groups, so
-        // wider hierarchical pairs (e.g. AB vs Proxima) don't overwrite a close pair's
-        // data for its members.
-        let mut group_id: Vec<usize> = (0..num_stars).collect();
-        let mut group_mass: Vec<f64> = sys.stars.iter().map(|s| s.mass_solar).collect();
-        let mut group_members: Vec<Vec<usize>> = (0..num_stars).map(|i| vec![i]).collect();
+        for si in 0..num_stars {
+            // Find the first binary_orbits entry this star participates in.
+            let mut found: Option<(usize, &sunscatter::galaxy::catalog::StarOrbitData, bool)> = None;
+            for (pair_idx, pair) in sys.binary_orbits.iter().enumerate() {
+                if pair.star_a == si {
+                    found = Some((pair_idx, pair, true));
+                    break;
+                }
+                if pair.star_b == si {
+                    found = Some((pair_idx, pair, false));
+                    break;
+                }
+            }
+            let (pair_idx, pair, is_a) = match found {
+                Some(x) => x,
+                None => continue, // star isn't in any pair — leave at barycenter
+            };
 
-        for (pair_idx, pair) in sys.binary_orbits.iter().enumerate() {
-            let a_idx = pair.star_a;
-            let b_idx = pair.star_b;
-            if a_idx >= num_stars || b_idx >= num_stars { continue; }
+            let partner_idx = if is_a { pair.star_b } else { pair.star_a };
+            if partner_idx >= num_stars { continue; }
 
-            let ga = group_id[a_idx];
-            let gb = group_id[b_idx];
-            if ga == gb { continue; }
-
-            let m_ga = group_mass[ga];
-            let m_gb = group_mass[gb];
-            let total_mass = m_ga + m_gb;
+            let m_star = sys.stars[si].mass_solar;
+            let m_partner = sys.stars[partner_idx].mass_solar;
+            let total_mass = m_star + m_partner;
             if total_mass <= 0.0 { continue; }
 
-            let sma_m = pair.sma_au * 1.496e11; // AU → meters
+            // Star's individual SMA around the single system barycenter:
+            // the pair's full separation scaled by the partner's mass fraction
+            // (so this star's position plus the partner's symmetric position
+            // would sum to the pair barycenter — which we declare to BE the
+            // system barycenter).
+            let pair_sma_m = pair.sma_au * 1.496e11;
+            let star_sma_m = pair_sma_m * m_partner / total_mass;
             let period_s = pair.period_years * 365.25 * 86400.0;
             let mean_motion = std::f64::consts::TAU / period_s;
 
-            // Deterministic phase offset per (catalog_index, pair_idx) so stars aren't
-            // all at periapsis. Hash mixes catalog index with pair index.
+            // Deterministic phase offset per (catalog_index, pair_idx) so stars
+            // in different pairs aren't all at periapsis. Stars sharing the
+            // same pair get the same phase, keeping them in opposition.
             let seed = (star.catalog_index as u64)
                 .wrapping_mul(2654435761)
                 .wrapping_add((pair_idx as u64).wrapping_mul(11400714819323198549u64));
@@ -3365,99 +3361,22 @@ fn inject_catalog_planets(
             let m0_pair = phase_frac * std::f64::consts::TAU;
             let mean_anomaly = m0_pair + mean_motion * game_time;
 
-            let [rel_x, rel_y] = sunscatter::galaxy::kepler_position(
-                sma_m, pair.eccentricity, 0.0, mean_anomaly,
+            // arg_peri = PI for the A side (flipped 180°), 0 for B side.
+            // Combined with the shared mean_anomaly this keeps the two stars
+            // of a pair diametrically opposite at all times.
+            let arg_peri = if is_a { std::f64::consts::PI } else { 0.0 };
+
+            let [ox, oy] = sunscatter::galaxy::kepler_position(
+                star_sma_m, pair.eccentricity, arg_peri, mean_anomaly,
             );
+            star_positions[si] = [star_x + ox, star_y + oy];
 
-            // Each group's shift about their mutual barycenter (COM invariant):
-            // group_a shifts by -rel * m_gb / total, group_b shifts by +rel * m_ga / total
-            let frac_ga = m_gb / total_mass;
-            let frac_gb = m_ga / total_mass;
-            let delta_a_x = -rel_x * frac_ga;
-            let delta_a_y = -rel_y * frac_ga;
-            let delta_b_x =  rel_x * frac_gb;
-            let delta_b_y =  rel_y * frac_gb;
-
-            // Shift all members of each group
-            let ga_members = group_members[ga].clone();
-            for &s in &ga_members {
-                star_positions[s][0] += delta_a_x;
-                star_positions[s][1] += delta_a_y;
-            }
-            let gb_members = group_members[gb].clone();
-            for &s in &gb_members {
-                star_positions[s][0] += delta_b_x;
-                star_positions[s][1] += delta_b_y;
-            }
-
-            // Record orbit info only for single-star groups (their innermost pair).
-            // For multi-star groups the members already have their innermost pair set.
-            // Skip star 0 (the primary) — it IS the center; it doesn't orbit anything.
-            if ga_members.len() == 1 && ga_members[0] != 0 {
-                star_orbit_info[ga_members[0]] = Some(StarOrbitInfo {
-                    local_offset_x: delta_a_x,
-                    local_offset_y: delta_a_y,
-                    star_sma_m: sma_m * frac_ga,
-                    eccentricity: pair.eccentricity,
-                    period_s,
-                    arg_peri: std::f64::consts::PI, // A side: flipped 180°
-                });
-            }
-            if gb_members.len() == 1 && gb_members[0] != 0 {
-                star_orbit_info[gb_members[0]] = Some(StarOrbitInfo {
-                    local_offset_x: delta_b_x,
-                    local_offset_y: delta_b_y,
-                    star_sma_m: sma_m * frac_gb,
-                    eccentricity: pair.eccentricity,
-                    period_s,
-                    arg_peri: 0.0,                  // B side: unflipped
-                });
-            }
-
-            // For pairs where at least one group has multiple members, record group-level
-            // orbit data. This draws the wide orbit connecting two sub-groups (e.g. how the
-            // {A,WD} group and {B,C} group in Regulus orbit each other at 4200 AU).
-            // Skip groups containing star 0 — the primary's group IS the center.
-            if ga_members.len() > 1 && !ga_members.contains(&0) {
-                group_orbits.push(GroupOrbit {
-                    members: ga_members.clone(),
-                    delta_x: delta_a_x,
-                    delta_y: delta_a_y,
-                    sma_m: sma_m * frac_ga,
-                    eccentricity: pair.eccentricity,
-                    arg_peri: std::f64::consts::PI,
-                });
-            }
-            if gb_members.len() > 1 && !gb_members.contains(&0) {
-                group_orbits.push(GroupOrbit {
-                    members: gb_members.clone(),
-                    delta_x: delta_b_x,
-                    delta_y: delta_b_y,
-                    sma_m: sma_m * frac_gb,
-                    eccentricity: pair.eccentricity,
-                    arg_peri: 0.0,
-                });
-            }
-
-            // Merge gb into ga
-            let absorbed = std::mem::take(&mut group_members[gb]);
-            for &s in &absorbed {
-                group_id[s] = ga;
-            }
-            group_members[ga].extend(absorbed);
-            group_mass[ga] += group_mass[gb];
-        }
-
-        // Re-center so the primary star (star[0]) is at (star_x, star_y).
-        // The procedural dot represents the system position — users expect it to
-        // coincide with the primary star (e.g. Alpha Centauri A, Regulus A, 40 Eridani A).
-        // Local offsets are relative to each star's own pair barycenter, so this
-        // global shift leaves orbit geometry unchanged.
-        let shift_x = star_x - star_positions[0][0];
-        let shift_y = star_y - star_positions[0][1];
-        for pos in star_positions.iter_mut() {
-            pos[0] += shift_x;
-            pos[1] += shift_y;
+            star_orbit_info[si] = Some(StarOrbitInfo {
+                star_sma_m,
+                eccentricity: pair.eccentricity,
+                period_s,
+                arg_peri,
+            });
         }
     }
 
@@ -3477,16 +3396,13 @@ fn inject_catalog_planets(
 
             bodies.push((sx, sy, star_radius, star_color_arr, 0.0, [0.0, 0.0, 0.0], synthetic_idx));
 
-            // Star orbit rendering. The barycenter at t=0 is this star's current position
-            // minus its innermost pair's local offset — this correctly accounts for wider
-            // hierarchical pairs that have shifted the whole group.
+            // Star orbit rendering: every star's ellipse is centered on the
+            // single system barycenter at (star_x, star_y).
             if let Some(ref orbit_info) = star_orbit_info[si] {
-                let bary_x = sx - orbit_info.local_offset_x;
-                let bary_y = sy - orbit_info.local_offset_y;
                 let orbit_color = [rgb[0] * 0.4, rgb[1] * 0.4, rgb[2] * 0.4, 0.5];
                 orbits.push(Some(OrbitRenderData {
-                    parent_x: bary_x * SCALE,
-                    parent_y: bary_y * SCALE,
+                    parent_x: star_x * SCALE,
+                    parent_y: star_y * SCALE,
                     semi_major_axis: orbit_info.star_sma_m * SCALE,
                     eccentricity: orbit_info.eccentricity,
                     argument_of_periapsis: orbit_info.arg_peri,
@@ -3557,41 +3473,6 @@ fn inject_catalog_planets(
             });
 
             j += 1;
-        }
-
-        // ── Push group-level orbit lines for hierarchical pairs ───────────��─
-        // For each multi-member group that was merged, draw an orbit ellipse for
-        // the group's barycenter around the pair's combined barycenter.
-        // These are orbit-only entries (no corresponding body) — the orbit renderer
-        // iterates orbits independently so extra entries are fine.
-        for go in &group_orbits {
-            // Compute mass-weighted barycenter of this group (post re-centering)
-            let mut bary_x = 0.0f64;
-            let mut bary_y = 0.0f64;
-            let mut total_m = 0.0f64;
-            for &s in &go.members {
-                let m = sys.stars[s].mass_solar;
-                bary_x += m * star_positions[s][0];
-                bary_y += m * star_positions[s][1];
-                total_m += m;
-            }
-            if total_m <= 0.0 { continue; }
-            bary_x /= total_m;
-            bary_y /= total_m;
-
-            // The pair barycenter is the group bary minus the group's delta
-            let pair_bary_x = bary_x - go.delta_x;
-            let pair_bary_y = bary_y - go.delta_y;
-
-            let orbit_color = [0.5f32, 0.5, 0.5, 0.3];
-            orbits.push(Some(OrbitRenderData {
-                parent_x: pair_bary_x * SCALE,
-                parent_y: pair_bary_y * SCALE,
-                semi_major_axis: go.sma_m * SCALE,
-                eccentricity: go.eccentricity,
-                argument_of_periapsis: go.arg_peri,
-                color: orbit_color,
-            }));
         }
     }
 
@@ -4051,7 +3932,13 @@ fn build_procedural_star_data(
 
     // Sync camera to focused star's current-frame position (fix 1-frame-lag drift).
     // In the sectored path, the focused star isn't pre-inserted — search the output.
-    // If the focused star fell outside the visible set, fall back to lookup_focused_star.
+    // If the focused star fell outside the visible set, fall back to lookup_focused_star
+    // AND push it into `out` so that inject_catalog_planets can still find it. Without
+    // this, focusing on a companion star in a multi-star system (e.g. Fomalhaut B at
+    // ~0.9 ly from A) and zooming in below the sector scan radius for A would cause
+    // inject_catalog_planets to early-return, dropping companion-star bodies, which
+    // would in turn cause track_catalog_body to clear tracked_body and snap the camera
+    // back to the barycenter on the next frame.
     if let Some((sx, sy, si)) = render_state.focused_star_id {
         let found = out.iter()
             .find(|s| s.sector_x == sx && s.sector_y == sy && s.sector_index == si)
@@ -4066,6 +3953,7 @@ fn build_procedural_star_data(
             }
         } else if let Some(star_data) = lookup_focused_star(game, sx, sy, si) {
             sync_focused(render_state, &star_data);
+            out.push(star_data);
         }
     }
 

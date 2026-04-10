@@ -2323,6 +2323,8 @@ impl RenderState {
         // Orbit center (focus is at galactic center = 0,0)
         let center_x = -c * arg_peri.cos();
         let center_y = -c * arg_peri.sin();
+        let cos_omega = arg_peri.cos();
+        let sin_omega = arg_peri.sin();
 
         let cam_x = camera.body_center[0] as f64;
         let cam_y = camera.body_center[1] as f64;
@@ -2335,23 +2337,43 @@ impl RenderState {
         let segments = orbit_segments(a, camera.zoom, screen_height);
         let base = all_vertices.len() as u32;
 
+        // For e < 0.1, galaxy::kepler_position() uses a first-order expansion
+        // (ν ≈ M + 2e·sin M, r ≈ a·(1 − e·cos M)) rather than a true Keplerian
+        // ellipse. We must draw the matching curve here — parameterized by mean
+        // anomaly M — so the orbit line passes through the rendered star position.
+        // For e ≥ 0.1, the point at mean anomaly M lies on a true ellipse, so we
+        // use the standard ellipse parameterization (by eccentric anomaly).
+        let use_first_order = e < 0.1;
+        let point = |t: f64| -> (f64, f64) {
+            if use_first_order {
+                // t is mean anomaly M
+                let sin_m = t.sin();
+                let cos_m = t.cos();
+                let nu = t + 2.0 * e * sin_m;
+                let r = a * (1.0 - e * cos_m);
+                let angle = nu + arg_peri;
+                (r * angle.cos(), r * angle.sin())
+            } else {
+                // t is eccentric anomaly E; ellipse with focus at origin
+                let ex = a * t.cos();
+                let ey = b * t.sin();
+                (
+                    center_x + ex * cos_omega - ey * sin_omega,
+                    center_y + ex * sin_omega + ey * cos_omega,
+                )
+            }
+        };
+
         for i in 0..segments {
-            let angle = (i as f64 / segments as f64) * std::f64::consts::TAU;
-            let ex = a * angle.cos();
-            let ey = b * angle.sin();
-            // Rotate by argument of periapsis
-            let wx = center_x + ex * arg_peri.cos() - ey * arg_peri.sin();
-            let wy = center_y + ex * arg_peri.sin() + ey * arg_peri.cos();
+            let t = (i as f64 / segments as f64) * std::f64::consts::TAU;
+            let (wx, wy) = point(t);
 
             let rel_x = (wx - cam_x - off_x) as f32;
             let rel_y = (wy - cam_y - off_y) as f32;
 
             // Perpendicular direction for line thickness
-            let next_angle = ((i + 1) as f64 / segments as f64) * std::f64::consts::TAU;
-            let nex = a * next_angle.cos();
-            let ney = b * next_angle.sin();
-            let nwx = center_x + nex * arg_peri.cos() - ney * arg_peri.sin();
-            let nwy = center_y + nex * arg_peri.sin() + ney * arg_peri.cos();
+            let next_t = ((i + 1) as f64 / segments as f64) * std::f64::consts::TAU;
+            let (nwx, nwy) = point(next_t);
 
             let dx = (nwx - wx) as f32;
             let dy = (nwy - wy) as f32;

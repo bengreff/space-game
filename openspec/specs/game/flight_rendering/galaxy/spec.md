@@ -244,32 +244,37 @@ Procedural stars are suppressed within 15 light-years of the Sun's galactic posi
 
 Zone 5 systems use `is_sgr_a_orbit = true` flag — their `orbit_sma_ly` field stores AU (not ly), and mean motion uses Sgr A* point mass (8.26e36 kg) instead of enclosed galactic mass.
 
-Multi-star systems (Alpha Centauri, Sirius, etc.) appear as a single dot in the galaxy star field using the primary star's properties; the dot represents the primary star's position. When a multi-star system is focused, the procedural star dot is hidden (companion star bodies replace it visually), and companion stars are positioned using `binary_orbits` data and injected as synthetic bodies alongside planets. The dot label shows "{name} System" for multi-star systems (e.g. "Alpha Centauri System").
+Multi-star systems (Alpha Centauri, Sirius, etc.) appear as a single dot in the galaxy star field using the primary star's properties; the dot represents the **single system barycenter** position (not the primary star — the primary orbits this barycenter like every other component). When a multi-star system is focused, the procedural star dot is hidden (component star bodies replace it visually), and all component stars (including the primary) are positioned using `binary_orbits` data and injected as synthetic bodies alongside planets. Every component star orbits the same common barycenter on its own individual ellipse; there are no nested/hierarchical barycenters. The dot label shows "{name} System" for multi-star systems (e.g. "Alpha Centauri System").
 
 ### Requirement: Multi-star system rendering
 
-19 of the 67 catalog systems are multi-star. Each has a `binary_orbits` array of `StarOrbitData` entries encoding hierarchical stellar pairs (tightest binary first, wider orbits subsequent).
+19 of the 67 catalog systems are multi-star. Each has a `binary_orbits` array of `StarOrbitData` entries encoding stellar pairs (tightest binary first, wider orbits subsequent).
+
+Multi-star systems use a **flat single-barycenter model**: every component star orbits one common system barycenter at `(star_x, star_y)` — the position stored on `StarRenderData`. There are no nested/hierarchical barycenters; there is exactly one barycenter per system, and every star (including the primary) has its own individual ellipse around that single point.
 
 When a multi-star system is focused, `inject_catalog_planets()`:
-1. **Positions companion stars using group-based hierarchical merging**: Each star starts in its own group. For each `StarOrbitData` pair (tightest first), the code finds the groups containing `star_a` and `star_b`, computes the mutual orbit displacement with mass-ratio weighting using each group's total mass (`Δ_a = -r * m_gb / (m_ga + m_gb)`, `Δ_b = +r * m_ga / (m_ga + m_gb)`), and shifts **every** member of each group by its group's delta. The two groups are then merged. A deterministic per-pair phase offset from `(catalog_index, pair_idx)` sets the mean anomaly at t=0 so stars aren't all at periapsis.
-2. **Records orbit info only for non-primary single-star groups**: A star's innermost-pair orbit data (local offset at t=0, SMA, eccentricity, period, arg_peri) is captured the first time it is paired — i.e., only when its group has a single member AND the star is not the primary (star index 0). The primary star IS the visual center of the system and does not orbit anything within it. This prevents wider hierarchical pairs (e.g. Alpha Centauri AB vs Proxima) from overwriting a close pair's data for its already-paired members. After the binary loop, all stars are globally re-centered so the **primary star (star[0])** lands at `(star_x, star_y)` — this places the primary (e.g. Alpha Centauri A, Regulus A, 40 Eridani A) at the focused dot position. Local offsets are relative so this shift leaves orbit geometry unchanged.
-3. **Injects companion stars as synthetic bodies**: Each star gets a colored dot based on spectral type temperature, with stellar radius (minimum 12 km floor — real neutron star radius — to ensure zero-radius catalog entries still produce a nonzero body that renders as an indicator ring at stellar scales). Each companion star also gets an orbital ellipse rendered around its barycenter (color: star color × 0.4, alpha 0.5, 5120 segments). The barycenter at render time is computed dynamically as `star_position − local_offset`, so wider hierarchical shifts automatically propagate to the close orbit's ellipse center. Star A's orbit uses `arg_peri = π` (flipped) and star B's uses `arg_peri = 0`, ensuring each star is drawn on its ellipse at the correct angular position.
-3b. **Adds group-level orbit lines for hierarchical pairs**: When a pair merges two groups where at least one has multiple members AND the group does not contain the primary star (index 0), the group's barycenter orbit around the combined barycenter is recorded. Groups containing the primary are skipped because the primary's group IS the center of the system. After all companion stars are pushed, these group orbits are emitted as additional orbit-only entries (gray color `[0.5, 0.5, 0.5, 0.3]`, 5120 segments). This shows the wide orbit connecting two sub-groups — e.g., how {B, C} orbits the system barycenter at 4200 AU in Regulus.
-4. **Builds BodyInfoData for each companion star**: Star type derived from spectral type via `spectral_to_star_type()`, physical properties from `CatalogStar`, planets filtered to only those orbiting this specific star, binary orbit parameters for the orbit section, `is_galactic_orbit = false`.
+1. **Positions each component star around the single system barycenter**: For each star `si` in `sys.stars`, the code finds the first `StarOrbitData` entry in which the star appears (as either `star_a` or `star_b`) — this is the tightest pair containing that star. Using the **raw two-star masses** of that pair (not any accumulated group mass), the star's individual semi-major axis around the system barycenter is `pair.sma_au * m_partner / (m_star + m_partner)`. The star's position at time `t` is `(star_x, star_y) + kepler_position(star_sma, pair.eccentricity, arg_peri, mean_anomaly)`, where `arg_peri = π` when the star is `star_a` of its pair and `0` when it is `star_b`. A deterministic per-pair phase offset from `(catalog_index, pair_idx)` sets the mean anomaly at t=0 so stars in different pairs aren't all at periapsis; two stars that share the same pair share the same phase, keeping them diametrically opposite at all times.
+2. **Records per-star orbit info**: Each star's `StarOrbitInfo` stores `(star_sma_m, eccentricity, period_s, arg_peri)`. There are no local offsets — all orbits are relative to the common system barycenter. Wider hierarchical entries in `binary_orbits` (e.g. Alpha Centauri's `(A, Proxima, 8700 AU)`) only contribute to the star that hasn't already been matched by an earlier entry (here, Proxima) — they do not shift or nest the stars matched by tighter pairs.
+3. **Injects all component stars (including the primary) as synthetic bodies**: Each star gets a colored dot based on spectral type temperature, with stellar radius (minimum 12 km floor — real neutron star radius — to ensure zero-radius catalog entries still produce a nonzero body that renders as an indicator ring at stellar scales). Each star also gets an orbital ellipse rendered around the system barycenter (color: star color × 0.4, alpha 0.5, 5120 segments). All star orbit lines share the same `parent_x, parent_y = star_x, star_y` — the single system barycenter. There are no group-level orbit lines.
+4. **Builds BodyInfoData for each component star**: Star type derived from spectral type via `spectral_to_star_type()`, physical properties from `CatalogStar`, planets filtered to only those orbiting this specific star, the star's own flat-model orbit parameters for the orbit section, `is_galactic_orbit = false`.
 5. **Routes planets to correct host star**: Uses `host_star_index(designation, stars)` to determine which star each planet orbits. The function searches the stars array by name — for designation "Bb", it finds the first star whose name has a word starting with 'B' (e.g. "Regulus B" at index 2, skipping "Regulus A companion" at index 1). Parenthetical words like "(YY Gem)" are skipped. Fallback rules: "Proxima ..." → last star, "AB..." → primary, bare lowercase "b" → star 0.
 
 #### Scenario: Binary star orbit computation
-- **GIVEN** a `StarOrbitData` with `star_a=0, star_b=1, sma_au=23.7, ecc=0.52, period_years=79.9`
-- **THEN** compute mean anomaly from game time plus a deterministic per-pair phase offset, solve Kepler equation for position vector
-- **AND** place star A at `barycenter - r * m_b/(m_a+m_b)`, star B at `barycenter + r * m_a/(m_a+m_b)`
-- **AND** render A's orbit with `arg_peri = π` and B's with `arg_peri = 0` so each star sits on its ellipse
+- **GIVEN** a `StarOrbitData` with `star_a=0, star_b=1, sma_au=23.7, ecc=0.52, period_years=79.9` and masses `m_a, m_b`
+- **THEN** star A's individual SMA around the system barycenter is `23.7 * m_b / (m_a + m_b)` AU with `arg_peri = π`
+- **AND** star B's individual SMA around the system barycenter is `23.7 * m_a / (m_a + m_b)` AU with `arg_peri = 0`
+- **AND** both stars share the same mean anomaly (pair phase offset + `mean_motion * game_time`), keeping them diametrically opposite at all times
+- **AND** both orbit lines are drawn around the same point `(star_x, star_y)`
 
-#### Scenario: Hierarchical triple system (Alpha Centauri)
-- **GIVEN** `binary_orbits = [(A, B, 23.7 AU), (A, Proxima, 8700 AU)]`
-- **WHEN** the second pair is processed, group_a = {A, B} with mass m_a + m_b, group_b = {Proxima}
-- **THEN** both A and B shift together by `-rel2 * m_proxima / total`, Proxima shifts by `+rel2 * (m_a + m_b) / total`
-- **AND** A's close orbit (10.7 AU around the AB barycenter) is preserved — its orbit info from the first pair is not overwritten
-- **AND** A's rendered orbit ellipse has center = A's current position minus A's pair-1 local offset, so the AB barycenter tracks its wide-orbit motion
+#### Scenario: Hierarchical triple system flattened (Alpha Centauri)
+- **GIVEN** `binary_orbits = [(A, B, 23.7 AU), (A, Proxima, 8700 AU)]` and masses `m_A, m_B, m_P`
+- **WHEN** `inject_catalog_planets()` assigns each star its first matching pair
+- **THEN** A takes pair 0 (is_a=true): `sma_A = 23.7 * m_B / (m_A + m_B)`, `arg_peri = π`
+- **AND** B takes pair 0 (is_a=false): `sma_B = 23.7 * m_A / (m_A + m_B)`, `arg_peri = 0`
+- **AND** Proxima takes pair 1 (is_a=false, since A is already matched): `sma_P = 8700 * m_A / (m_A + m_P)`, `arg_peri = 0`
+- **AND** all three stars orbit the **single** system barycenter at `(star_x, star_y)` — there is no AB sub-barycenter
+- **AND** exactly three orbit ellipses are emitted, one per star, all sharing `parent_x, parent_y = star_x, star_y`
+- **AND** no group-level orbit lines are produced
 
 #### Scenario: Planet host star routing
 - **GIVEN** a planet with designation "Bb" in a 3-star system
@@ -287,12 +292,21 @@ When a multi-star system is focused, `inject_catalog_planets()`:
 - **AND** the star's screen position is NOT recorded for hit testing (preventing the invisible barycenter dot from capturing clicks and re-centering the camera)
 - **AND** companion star bodies from `inject_catalog_planets()` replace the dot visually
 
-#### Scenario: Hierarchical quadruple system with group orbits (Regulus)
+#### Scenario: Focused star preserved when outside sector scan radius
+- **GIVEN** the user is tracking a companion star body in a multi-star system (e.g. Fomalhaut B at ~0.9 ly from A) via `tracked_body = Some(synthetic_body_idx)` with `focused_star_id` pointing at the primary
+- **WHEN** the camera is zoomed close enough to the companion that the sectored scan in `build_procedural_star_data` does not reach the primary's sector (primary is more than `radius + margin` away from the scan's lookup center)
+- **THEN** the primary must still be pushed into the output star list via `lookup_focused_star()` (in addition to `sync_focused()` for the 1-frame-lag fix)
+- **AND** this ensures `inject_catalog_planets()` can locate the focused star and inject all companion bodies (including the tracked one)
+- **AND** `track_catalog_body()` finds the tracked companion's synthetic index in the bodies array and keeps the camera on it
+- **AND** the camera does NOT snap back to the system barycenter (primary star) on the next frame
+
+#### Scenario: Hierarchical quadruple system flattened (Regulus)
 - **GIVEN** `binary_orbits = [(A, WD, 0.35 AU), (B, C, 100 AU), (A, B, 4200 AU)]`
-- **WHEN** the third pair merges group {A, WD} (2 members) and group {B, C} (2 members)
-- **THEN** individual orbit lines show A and WD orbiting their tight barycenter, B and C orbiting their barycenter
-- **AND** two group-level orbit lines show {A,WD} barycenter and {B,C} barycenter orbiting the combined barycenter at 4200 AU
-- **AND** group orbit lines use dimmed gray color `[0.5, 0.5, 0.5, 0.3]`
+- **WHEN** `inject_catalog_planets()` assigns each star its first matching pair
+- **THEN** A and WD both take pair 0 and get tight orbits (~0.2 AU scale) around the system barycenter
+- **AND** B and C both take pair 1 and get wider orbits (~50 AU scale) around the **same** system barycenter
+- **AND** the third entry `(A, 4200 AU, B)` does not produce any additional orbit — A and B are already matched by earlier (tighter) pairs, and the flat model has no concept of a "wide hierarchical orbit" since there is only one barycenter
+- **AND** exactly four orbit ellipses are emitted, one per star, all sharing `parent_x, parent_y = star_x, star_y`
 
 ### Requirement: Catalog star positioning from Sun's actual t=0 position
 
@@ -317,6 +331,11 @@ At runtime, stars are propagated purely via their corrected Kepler elements (no 
 ### Requirement: Galactic orbit line rendering
 
 Galactic orbit ellipses are drawn around the galactic center (0,0) using each star's orbital elements (SMA, eccentricity, argument of periapsis). The orbit is rendered as a thick line strip (dual-vertex with perpendicular offset for width). Segment count is adaptive via `orbit_segments()` in `render/types.rs`: ~1 segment per 3 pixels of screen-space circumference, clamped to [64, `ORBIT_SEGMENTS`=5120]. This single function governs every orbit in the game (body orbits, galactic orbits, patched-conic arcs, hyperbolic trajectories).
+
+The point generator in `add_galactic_orbit_line()` (`src/render/scene.rs`) must match the same math branch that `kepler_position()` uses for the star's eccentricity, so the rendered line passes exactly through the star dot:
+
+- **For e < 0.1** (first-order): step by mean anomaly `M ∈ [0, 2π)` and compute `r = a·(1 − e·cos M)`, `ν = M + 2e·sin M`, `(x, y) = (r·cos(ν+ω), r·sin(ν+ω))`. This curve is *not* a true Keplerian ellipse — it's the first-order approximation that `kepler_position()` produces for low-eccentricity orbits. Drawing a true ellipse here would be off by up to `a·e²` (tens of light-years at galactic scales), causing visible separation between the star dot and its orbit line.
+- **For e ≥ 0.1** (true ellipse): parametrize by eccentric anomaly `E ∈ [0, 2π)` as `(a·cos E, b·sin E)` with `b = a·√(1−e²)`, with the ellipse center offset by `-a·e` from the focus at the galactic origin, then rotated by `ω`. This matches the Newton-Raphson branch of `kepler_position()` which places stars on a true ellipse.
 
 All orbits (including the focused star) are gated by two conditions: not in galaxy view, and the star's physical disk must be sub-pixel (< 1px on screen). The sub-pixel check uses `star.radius_m` (the physical stellar radius in meters), matching the same threshold that controls whether the star is rendered as a hexagon dot vs a real circle. This means each star's orbit naturally disappears at a different zoom level as you zoom in and its physical disk grows past 1px.
 
