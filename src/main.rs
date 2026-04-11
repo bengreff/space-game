@@ -4117,9 +4117,17 @@ fn build_orbit_data(game: &Game, scaled_positions: &[[f64; 2]], render_state: &R
                 (Some(parent_idx), Some(orbit)) => {
                     let parent_body = &game.solar_system.bodies[parent_idx];
                     if parent_body.parent.is_none() {
-                        // Body orbiting root (Sgr A*): handled by catalog star
-                        // orbit pipeline (star field view, focused-only visibility)
-                        return None;
+                        // Body orbiting root (Sgr A*): STARS are handled by the
+                        // catalog star orbit pipeline (star field view, focused-only
+                        // visibility). Non-stars (e.g. Crucible, a planet at 13 AU)
+                        // fall through to the normal body-orbit pipeline below.
+                        // Matches the classification in build_body_is_star().
+                        const MIN_STAR_MASS_KG: f64 = 1e28;
+                        let is_star = body.accretion_disc.is_none()
+                            && body.mass > MIN_STAR_MASS_KG;
+                        if is_star {
+                            return None;
+                        }
                     }
 
                     // In galaxy view, skip all non-star orbits
