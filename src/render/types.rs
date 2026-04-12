@@ -1,5 +1,46 @@
 use crate::colony::ResourceType;
 
+/// Events emitted by the render layer (egui UI, flight HUD, etc.) to be applied
+/// to game state by `main.rs` after each frame.
+///
+/// Replaces a collection of per-event `Option<T>` "request" fields on `RenderState`
+/// that were read/cleared each frame. All UI interactions now push variants onto
+/// `RenderState::render_requests`; `main.rs` drains the queue in FIFO order.
+#[derive(Debug, Clone)]
+pub enum RenderRequest {
+    /// Toggle a specific engine on/off.
+    EngineToggle { part_index: usize, enabled: bool },
+    /// Toggle crossfeed on a decoupler.
+    CrossfeedToggle { part_index: usize, enabled: bool },
+    /// Manually decouple a specific decoupler part.
+    Decouple { part_index: usize },
+    /// Deploy a fairing base, jettisoning its shroud.
+    FairingDeploy { part_index: usize },
+    /// Deploy or retract a solar panel.
+    SolarDeploy { part_index: usize, deploy: bool },
+    /// Deploy a parachute.
+    ParachuteDeploy { part_index: usize },
+    /// Cut a deployed parachute.
+    ParachuteCut { part_index: usize },
+    /// Create a maneuver node from the transfer planner.
+    TransferNode {
+        position_angle: f64,
+        prograde_dv: f64,
+        radial_dv: f64,
+        time_to_window: f64,
+    },
+    /// Establish a new colony on the given body.
+    EstablishColony { body_index: usize },
+    /// Transfer vessel cargo to a colony on the given body.
+    TransferCargo { body_index: usize },
+    /// Open the colony screen for the given body.
+    OpenColony { body_index: usize },
+    /// Debug: teleport ship to low Earth orbit.
+    DebugTeleportLeo,
+    /// Debug: teleport ship to landed on the given body.
+    DebugTeleportBody { body_index: usize },
+}
+
 /// Margin from hyperbolic asymptote for trajectory endpoint rendering
 pub const HYPERBOLIC_RENDER_MARGIN: f64 = 0.01;
 

@@ -61,15 +61,14 @@ On success:
 
 On click: `extract_all_cargo()` transfers buildings → colony buildings, resources → colony inventory, food → colony food_stored.
 
-`RenderState` fields: `transfer_cargo_request`, `vessel_has_cargo`, `landed_body_has_colony`
+Click handler pushes `RenderRequest::TransferCargo { body_index }` onto `RenderState::render_requests`. Related state fields: `vessel_has_cargo`, `landed_body_has_colony`.
 
 ### Flight HUD Integration
 
 "Establish Colony" button shown in bottom panel when:
 - Ship is landed, body has no colony, body is not Earth, body is not gas giant, vessel has colony buildings in cargo
 
-`RenderState` fields: `can_establish_colony`, `landed_body_index`, `establish_colony_request`
-Set by `main.rs` before render, processed after render.
+Related state fields: `can_establish_colony`, `landed_body_index`. Click handler pushes `RenderRequest::EstablishColony { body_index }` onto `RenderState::render_requests`; `main.rs` drains the queue after render and calls `game.establish_colony(body_index)`.
 
 ## Colony Simulation (`simulation.rs`)
 
@@ -83,14 +82,14 @@ Per tick calls `simulate_colony_tick()` for each colony.
 
 ### Tick Order
 
-0. **Reactor fuel consumption** — Before power calculation. Fission Reactor: 0.5 kg Enriched Uranium/day. Fusion Reactor: 3 kg He-3 + 2 kg Deuterium/day. Reactors without sufficient fuel produce no power.
+0. **Reactor fuel consumption** — Before power calculation. Fission Reactor: 0.5 kg Enriched Uranium/day. Fusion Reactor: 3 kg He-3 + 2 kg Deuterium/day. When multiple reactors share the same fuel pool, each reactor's check-and-consume is atomic (via `ResourceStorage::remove` / `remove_all`) and they compete in iteration order: once the pool cannot fully cover a reactor's tick, that reactor (and any later reactor of the same type) produces no power this tick. Reactors without sufficient fuel produce no power.
 1. **Power balance (habitat-priority)** — Sum generation (solar scaled by `(AU/sun_distance)^2` and degradation, reactors by degradation and fuel availability). Demand split into `habitat_demand` (Habitat buildings) and `other_demand` (all other buildings + factory recipe power). Habitats get power first: `habitat_power_fraction = min(1, total_gen / habitat_demand)`. Remaining power goes to other buildings: `other_power_fraction = min(1, (total_gen - habitat_demand) / other_demand)`. If `habitat_power_fraction < 1.0` and crew > 0, push `ColonyPowerLoss` notification (deduped by `habitat_unpowered_notified` flag).
-2. **Maintenance** — Consume `maintenance_cost / 30 * days` per building. Robot capacity check. Degradation increases on shortfall; buildings hold at current degradation when fully maintained (no self-repair). Buildings with no maintenance costs (Stockpile) also do not self-repair. After per-building pass, sync degradation within each building type to their average (prevents same-type buildings from drifting apart).
+2. **Maintenance** — Consume `maintenance_cost / 30 * days` per building. Robot capacity check. Degradation increases on shortfall; buildings hold at current degradation when fully maintained (no self-repair). Buildings with no maintenance costs (Stockpile) also do not self-repair. Each building's degradation is tracked independently — siblings of the same type do not share state.
 3. **Construction** — Remaining robot capacity advances first queue item. On completion: add building to colony (no notification).
-4. **Mines** — `2000 * days * (1 - degradation) * other_power_fraction` kg of assigned resource, capped by storage.
-4b. **Atmospheric Collectors** — `10,000 * days * (1 - degradation) * other_power_fraction` kg of assigned resource, capped by storage.
-5. **Factories** — `(outputs_per_batch / batch_hours) * 24 * days * (1 - degradation) * other_power_fraction` throughput. Consume proportional inputs.
-6. **Greenhouses** — Basic: `0.5 * days * water_factor * (1-degradation) * other_power_fraction` kg food (water_factor = water_fill / 2,000). Advanced: `2.5 * days * water_factor * (1-degradation) * other_power_fraction` kg food (water_factor = water_fill / 5,000).
+4. **Mines** — `2000 * days * (1 - degradation) * other_power_fraction * mining_mult` kg of assigned resource, capped by storage. `mining_mult = 1.11^tier("mining")`.
+4b. **Atmospheric Collectors** — `10,000 * days * (1 - degradation) * other_power_fraction * atmo_mult` kg of assigned resource, capped by storage. `atmo_mult = 1.11^tier("atmospheric_science")`.
+5. **Factories** — `(outputs_per_batch / batch_hours) * 24 * days * (1 - degradation) * other_power_fraction * factory_mult` throughput. `factory_mult = 1.11^tier(recipe.efficiency_line_id())`. Consume proportional inputs. Recipe-to-line mapping: MetalSmelting/AlloyForging → "metallurgy", Electronics/Superconductor → "electronics_mfg", PrecisionInstruments → "precision_mfg", Electrolysis/Deuterium/Sabatier/Methane/Kerosene → "chemical_processing", Uranium/Tritium/NPU → "nuclear_engineering", He3 recipes → "isotope_extraction".
+6. **Greenhouses** — Basic: `0.5 * days * water_factor * (1-degradation) * other_power_fraction * agri_mult` kg food (water_factor = water_fill / 2,000). Advanced: `2.5 * days * water_factor * (1-degradation) * other_power_fraction * agri_mult` kg food (water_factor = water_fill / 5,000). `agri_mult = 1.11^tier("agriculture")`.
 6b. **Food cap** — If `food_capacity() > 0` and `food_stored > food_capacity()`, clamp to capacity.
 7. **Food consumption** — `0.5 * crew * days` kg. If food hits 0 and `!food_depleted_notified`, set flag and push notification. Reset flag when food rises above 0.
 7b. **Crew death** — Crisis if food_stored <= 0 or habitat_power_fraction < 1.0 (and crew > 0). On crisis start, record `crew_at_crisis_start`. Deaths per day = `crew_at_crisis_start * 0.005` (1% per 2 days), linear not compounding. Fractional deaths accumulate in `crew_death_accumulator`; whole deaths are subtracted from crew only when the accumulator reaches >= 1.0. Crisis clears (and accumulator resets) when food > 0 and habitat power is full.
@@ -110,16 +109,17 @@ Per tick calls `simulate_colony_tick()` for each colony.
 
 - `Colony::queue_building(bt, hab_score)` — Validates resources, deducts from inventory, pushes `ConstructionQueueItem`
 - Habitability multiplier applied to build cost for affected buildings
-- Robot throughput: ConstructionRobot 20,000 kg/day, LightConstructionRobot 5,000 kg/day
-- Maintenance priority: robots service maintenance first, remaining capacity goes to construction
+- Robot throughput: ConstructionRobot 20,000 kg/day, LightConstructionRobot 5,000 kg/day (both scaled by `1.11^tier("construction")`)
+- Maintenance priority: robots service maintenance first (also scaled by construction multiplier), remaining capacity goes to construction
 
 ### Maintenance
 
 - Per building per tick: `cost/30 * days_per_tick`
-- Robot throughput cap: sum maintenance demand mass vs robot capacity
+- **Life support multiplier**: Habitability-affected buildings (Habitat, Greenhouses) have maintenance costs divided by `1.11^tier("life_support")`. At tier 0 = 1.0× cost, at tier 15 ≈ 0.21× cost.
+- Robot throughput cap: sum maintenance demand mass vs robot capacity. Robot capacity scaled by `1.11^tier("construction")`.
 - `degradation_delta = max(resource_shortfall, robot_shortfall) * days / 30`
 - No self-repair: buildings hold at current degradation when fully maintained
-- **Degradation sync**: After per-building pass, average degradation across all buildings of the same type. Prevents same-type buildings from drifting to different degradation values.
+- **Independent tracking**: Each building's degradation is independent. Starved siblings do not drag down fully-maintained buildings of the same type.
 
 ### Science Labs
 
@@ -216,7 +216,9 @@ Only shows mineable resources from `body_mineable`. [+] tooltip "Produces 2,000 
 
 **Atmospheric Collectors** same pattern. [+] tooltip "Produces 10,000 kg/day".
 
-**Factories** same pattern. [+] tooltip shows recipe details (inputs → outputs, batch time, power).
+**Factories** same pattern. [+] tooltip shows recipe details (inputs → outputs, batch time, power). Recipes are filtered by `tech_tree.is_recipe_available(recipe.recipe_id())` — locked recipes are hidden unless already assigned (legacy/migration edge case). The [+] button is only shown for unlocked recipes. Assignment validation in `frames.rs` also guards against locked recipes via `is_recipe_available()`.
+
+`FactoryRecipe::recipe_id()` returns the string ID matching `recipe_gates` in `data/tech/tree.ron`. `FactoryRecipe::efficiency_line_id()` returns the tech line governing throughput multiplier.
 
 **4. Construction card** — `render_construction_card()`
 - Progress bars (green fill) per queue item
@@ -253,7 +255,7 @@ Uses egui `data_temp` for persistent ComboBox/DragValue state.
 - Egui pass with `render_colony_screen()`
 
 ### Entry Points
-- **Flight HUD**: "Open Colony" button (replaces old popup toggle) when landed on a body with a colony. Sets `open_colony_request` on RenderState. `main.rs` calls `game.enter_colony(bi, GameMode::Flight)`.
+- **Flight HUD**: "Open Colony" button (replaces old popup toggle) when landed on a body with a colony. Click pushes `RenderRequest::OpenColony { body_index }` onto `RenderState::render_requests`; `main.rs` drains the queue and calls `game.enter_colony(bi, GameMode::Flight)`.
 - **Tracking Station**: "Colonies" section in sidebar listing all colonies with "Open" buttons. `TrackingStationAction::OpenColony(body_index)`. `main.rs` calls `game.enter_colony(bi, GameMode::TrackingStation)`.
 - **Colony Overview**: "Open" buttons per colony. `ColonyOverviewAction::OpenColony(body_index)`. `main.rs` calls `game.enter_colony(bi, GameMode::ColonyOverview)`.
 
@@ -270,7 +272,7 @@ Uses egui `data_temp` for persistent ComboBox/DragValue state.
 ### Flight Frame (`render_flight_frame`)
 1. Before render: set `can_establish_colony`, `has_colonies`, `landed_body_index`
 2. In simulation block: `game.update_colonies(dt_sim)`
-3. After render: handle `establish_colony_request`, colony UI requests, notifications, toast cleanup
+3. After render: drain `RenderState::render_requests` (handles `EstablishColony`, `TransferCargo`, `OpenColony`, etc.), then process notifications and toast cleanup
 
 ### Main Menu Frame (`render_main_menu_frame`)
 1. In simulation block: `game.update_colonies(dt_sim)`

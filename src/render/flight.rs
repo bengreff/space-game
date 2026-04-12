@@ -28,7 +28,7 @@ impl RenderState {
 
         // Build egui UI for hovered body label and time warp controls
         let hovered = self.hovered_body;
-        let bodies_copy = self.bodies.clone();
+        let bodies_copy = &self.bodies;
         let size = self.size;
         let camera_pos = self.camera.position;
         let camera_zoom = self.camera.zoom;
@@ -38,11 +38,11 @@ impl RenderState {
         let aspect_ratio = self.camera.aspect_ratio;
         let scale_factor = self.window.scale_factor() as f32;
         let fps = self.fps;
-        let ship_orbit = self.ship_orbit_info.clone();
+        let ship_orbit = &self.ship_orbit_info;
         let ship_velocity = self.ship_velocity;
         let ship_altitude = self.ship_altitude;
         let ship_throttle = self.ship_throttle;
-        let ship_soi_name = self.ship_soi_name.clone();
+        let ship_soi_name = &self.ship_soi_name;
         let ship_time_to_intercept = self.ship_time_to_intercept;
         let vessel_total_mass = self.vessel_total_mass;
         let vessel_fuel_fraction = self.vessel_fuel_fraction;
@@ -70,20 +70,20 @@ impl RenderState {
         let ship_temperature = self.ship_temperature;
         let ship_heat_fraction = self.ship_heat_fraction;
         let selected_flight_part = self.selected_flight_part;
-        let flight_parts_cache = self.flight_parts_cache.clone();
-        let ap_markers = self.ap_markers.clone();
-        let pe_markers = self.pe_markers.clone();
-        let pending_orbit_click = self.pending_orbit_click.clone();
+        let flight_parts_cache = &self.flight_parts_cache;
+        let ap_markers = &self.ap_markers;
+        let pe_markers = &self.pe_markers;
+        let pending_orbit_click = &self.pending_orbit_click;
         let selected_maneuver_node = self.selected_maneuver_node;
-        let maneuver_nodes = self.maneuver_nodes.clone();
+        let maneuver_nodes = &self.maneuver_nodes;
         let time_to_node = self.time_to_node;
         let burn_time = self.burn_time;
         let warp_to_node_active = self.warp_to_node;
         let current_autopilot = self.autopilot_target;
         let has_control = self.ship_has_control;
-        let vessel_stages = self.vessel_stages.clone();
-        let vessel_stage_delta_vs = self.vessel_stage_delta_vs.clone();
-        let vessel_stage_burn_times = self.vessel_stage_burn_times.clone();
+        let vessel_stages = &self.vessel_stages;
+        let vessel_stage_delta_vs = &self.vessel_stage_delta_vs;
+        let vessel_stage_burn_times = &self.vessel_stage_burn_times;
 
         let mut new_warp_index = current_warp_index;
         let mut pause_action = PauseAction::None;
@@ -106,7 +106,7 @@ impl RenderState {
         let ship_is_landed = self.ship_is_landed;
         let mut staging_reorder_req: Option<Vec<Vec<usize>>> = None;
 
-        let active_toasts = self.active_toasts.clone();
+        let active_toasts = &self.active_toasts;
 
         // Procedural star hover state: capture name and screen pos for label
         let hovered_star_label: Option<(String, [f32; 2])> = self.hovered_star.and_then(|idx| {
@@ -118,7 +118,10 @@ impl RenderState {
         });
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
-        let full_output = self.egui_ctx.run(raw_input, |ctx| {
+        // Clone egui::Context (cheap Arc ref-count bump) so the closure
+        // can borrow self fields directly without conflicting with self.egui_ctx.
+        let egui_ctx = self.egui_ctx.clone();
+        let full_output = egui_ctx.run(raw_input, |ctx| {
             // Time warp panel at top of screen
             egui::TopBottomPanel::top("time_warp_panel").show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -468,7 +471,9 @@ impl RenderState {
                                 ).fill(egui::Color32::from_rgb(60, 130, 60));
                                 if ui.add(btn).clicked() {
                                     if let Some(bi) = self.landed_body_index {
-                                        self.establish_colony_request = Some(bi);
+                                        self.render_requests.push(
+                                            crate::render::types::RenderRequest::EstablishColony { body_index: bi },
+                                        );
                                     }
                                 }
                             }
@@ -478,7 +483,9 @@ impl RenderState {
                                 ).fill(egui::Color32::from_rgb(60, 100, 180));
                                 if ui.add(btn).clicked() {
                                     if let Some(bi) = self.landed_body_index {
-                                        self.transfer_cargo_request = Some(bi);
+                                        self.render_requests.push(
+                                            crate::render::types::RenderRequest::TransferCargo { body_index: bi },
+                                        );
                                     }
                                 }
                             }
@@ -488,7 +495,9 @@ impl RenderState {
                                 ).fill(egui::Color32::from_rgb(80, 120, 60));
                                 if ui.add(btn).clicked() {
                                     if let Some(bi) = self.landed_body_index {
-                                        self.open_colony_request = Some(bi);
+                                        self.render_requests.push(
+                                            crate::render::types::RenderRequest::OpenColony { body_index: bi },
+                                        );
                                     }
                                 }
                             }
@@ -596,7 +605,7 @@ impl RenderState {
             let hover_radius = 20.0; // pixels
 
             // Draw all apoapsis markers
-            for (pos, altitude) in &ap_markers {
+            for (pos, altitude) in ap_markers.iter() {
                 let (screen_x, screen_y) = world_to_screen(*pos);
                 let marker_screen_pos = egui::pos2(screen_x, screen_y);
 
@@ -626,7 +635,7 @@ impl RenderState {
             }
 
             // Draw all periapsis markers
-            for (pos, altitude) in &pe_markers {
+            for (pos, altitude) in pe_markers.iter() {
                 let (screen_x, screen_y) = world_to_screen(*pos);
                 let marker_screen_pos = egui::pos2(screen_x, screen_y);
 
@@ -740,7 +749,7 @@ impl RenderState {
                         .show(ctx, |ui| {
                             egui::Frame::popup(ui.style()).show(ui, |ui| {
                                 if ui.button("Create Maneuver Node").clicked() {
-                                    create_node_at = Some((ta, segment.clone()));
+                                    create_node_at = Some((*ta, segment.clone()));
                                 }
                             });
                         });
@@ -1640,7 +1649,7 @@ impl RenderState {
                 egui::Id::new("maneuver_node_markers"),
             ));
 
-            for node in &maneuver_nodes {
+            for node in maneuver_nodes.iter() {
                 // Two-step precision: (parent - body_center) + (orbit_offset - ship_offset)
                 if let Some(parent) = bodies_copy.get(node.parent_idx) {
                     let off = node.orbit_offset();
@@ -1983,12 +1992,14 @@ impl RenderState {
                                             egui::RichText::new("Create Node").size(12.0).color(egui::Color32::WHITE)
                                         ).fill(egui::Color32::from_rgb(60, 120, 60));
                                         if ui.add(create_btn).clicked() {
-                                            self.transfer_node_request = Some((
-                                                display.departure_position_angle,
-                                                display.prograde_dv,
-                                                display.radial_dv,
-                                                display.time_to_window,
-                                            ));
+                                            self.render_requests.push(
+                                                crate::render::types::RenderRequest::TransferNode {
+                                                    position_angle: display.departure_position_angle,
+                                                    prograde_dv: display.prograde_dv,
+                                                    radial_dv: display.radial_dv,
+                                                    time_to_window: display.time_to_window,
+                                                },
+                                            );
                                             close_planner = true;
                                         }
                                     } else {
@@ -2024,7 +2035,9 @@ impl RenderState {
 
                         // Teleport to LEO
                         if ui.add(egui::Button::new("Set Orbit (LEO)").min_size(egui::vec2(160.0, 24.0))).clicked() {
-                            self.debug_teleport_leo = true;
+                            self.render_requests.push(
+                                crate::render::types::RenderRequest::DebugTeleportLeo,
+                            );
                         }
 
                         ui.add_space(4.0);
@@ -2039,7 +2052,9 @@ impl RenderState {
                             .show_ui(ui, |ui| {
                                 for (i, name) in body_names.iter().enumerate() {
                                     if ui.selectable_label(false, name).clicked() {
-                                        self.debug_teleport_body = Some(i);
+                                        self.render_requests.push(
+                                            crate::render::types::RenderRequest::DebugTeleportBody { body_index: i },
+                                        );
                                     }
                                 }
                             });
@@ -2166,28 +2181,28 @@ impl RenderState {
         }
         // Update autopilot target
         self.autopilot_target = new_autopilot_target;
-        // Store engine toggle request for main.rs to process
-        if engine_toggle_req.is_some() {
-            self.engine_toggle_request = engine_toggle_req;
+        // Enqueue part-interaction requests for main.rs to process.
+        use crate::render::types::RenderRequest;
+        if let Some((part_index, enabled)) = engine_toggle_req {
+            self.render_requests.push(RenderRequest::EngineToggle { part_index, enabled });
         }
-        // Store crossfeed toggle and decouple requests for main.rs to process
-        if crossfeed_toggle_req.is_some() {
-            self.crossfeed_toggle_request = crossfeed_toggle_req;
+        if let Some((part_index, enabled)) = crossfeed_toggle_req {
+            self.render_requests.push(RenderRequest::CrossfeedToggle { part_index, enabled });
         }
-        if decouple_req.is_some() {
-            self.decouple_request = decouple_req;
+        if let Some(part_index) = decouple_req {
+            self.render_requests.push(RenderRequest::Decouple { part_index });
         }
-        if fairing_deploy_req.is_some() {
-            self.fairing_deploy_request = fairing_deploy_req;
+        if let Some(part_index) = fairing_deploy_req {
+            self.render_requests.push(RenderRequest::FairingDeploy { part_index });
         }
-        if solar_deploy_req.is_some() {
-            self.solar_deploy_request = solar_deploy_req;
+        if let Some((part_index, deploy)) = solar_deploy_req {
+            self.render_requests.push(RenderRequest::SolarDeploy { part_index, deploy });
         }
-        if parachute_deploy_req.is_some() {
-            self.parachute_deploy_request = parachute_deploy_req;
+        if let Some(part_index) = parachute_deploy_req {
+            self.render_requests.push(RenderRequest::ParachuteDeploy { part_index });
         }
-        if parachute_cut_req.is_some() {
-            self.parachute_cut_request = parachute_cut_req;
+        if let Some(part_index) = parachute_cut_req {
+            self.render_requests.push(RenderRequest::ParachuteCut { part_index });
         }
         // Store staging reorder request for main.rs to process
         if staging_reorder_req.is_some() {

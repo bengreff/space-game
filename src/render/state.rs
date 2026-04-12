@@ -96,13 +96,9 @@ pub struct RenderState {
     pub ship_rel_offset: [f64; 2],   // Ship offset from SOI body in render units (small, local)
     pub ship_render_rotation: f64,
     pub ship_render_scale: f64,     // SCALE * BODY_SCALE used for rendering
-    pub engine_toggle_request: Option<(usize, bool)>,  // (part_index, enabled)
-    pub crossfeed_toggle_request: Option<(usize, bool)>,  // (part_index, crossfeed_enabled)
-    pub decouple_request: Option<usize>,  // part_index to manually decouple
-    pub fairing_deploy_request: Option<usize>,  // part_index to deploy fairing
-    pub solar_deploy_request: Option<(usize, bool)>,  // (part_index, deploy)
-    pub parachute_deploy_request: Option<usize>,  // part_index to deploy parachute
-    pub parachute_cut_request: Option<usize>,     // part_index to cut deployed parachute
+    /// Queue of UI-emitted events to be applied to game state after each frame.
+    /// Writers push via `self.render_requests.push(...)`; `main.rs` drains in FIFO order.
+    pub render_requests: Vec<super::types::RenderRequest>,
     pub ship_has_control: bool,    // Whether the vessel has a functioning command pod
     pub ship_in_atmosphere: bool,  // Whether the active vessel is in atmosphere
     pub ship_is_landed: bool,      // Whether the active vessel is landed
@@ -152,14 +148,11 @@ pub struct RenderState {
     pub transfer_display: Option<crate::ship::transfer::TransferDisplay>,
     pub transfer_hohmann_targets: Vec<(usize, String)>,
     pub transfer_interplanetary_targets: Vec<(usize, String)>,
-    pub transfer_node_request: Option<(f64, f64, f64, f64)>, // (position_angle, prograde_dv, radial_dv, time_to_window)
     // Quicksave UI state
     pub show_quicksave_list: bool,
     // Debug menu
     pub debug_menu_open: bool,
     pub debug_infinite_fuel: bool,
-    pub debug_teleport_leo: bool,  // Request flag, consumed by main.rs
-    pub debug_teleport_body: Option<usize>,  // Request: teleport ship to landed on body
     // Body textures
     pub body_texture_bind_group: wgpu::BindGroup,
     pub body_texture_map: BodyTextureMap,
@@ -174,11 +167,8 @@ pub struct RenderState {
     pub can_establish_colony: bool,
     pub has_colonies: bool,
     pub landed_body_index: Option<usize>,
-    pub establish_colony_request: Option<usize>,
-    pub transfer_cargo_request: Option<usize>,  // body_index to transfer cargo to
     pub vessel_has_cargo: bool,  // Whether the vessel has non-empty cargo containers
     pub landed_body_has_colony: bool,  // Whether the body we're landed on has a colony
-    pub open_colony_request: Option<usize>,  // body_index to open colony screen for
     // Trade route creation wizard state
     pub route_creation: super::trade_ui::RouteCreationState,
     // Procedural star interaction state
@@ -513,13 +503,7 @@ impl RenderState {
             ship_rel_offset: [0.0, 0.0],
             ship_render_rotation: 0.0,
             ship_render_scale: 1.0,
-            engine_toggle_request: None,
-            crossfeed_toggle_request: None,
-            decouple_request: None,
-            fairing_deploy_request: None,
-            solar_deploy_request: None,
-            parachute_deploy_request: None,
-            parachute_cut_request: None,
+            render_requests: Vec::new(),
             ship_has_control: true,
             ship_in_atmosphere: false,
             ship_is_landed: false,
@@ -561,23 +545,17 @@ impl RenderState {
             transfer_display: None,
             transfer_hohmann_targets: Vec::new(),
             transfer_interplanetary_targets: Vec::new(),
-            transfer_node_request: None,
             show_quicksave_list: false,
             debug_menu_open: false,
             debug_infinite_fuel: false,
-            debug_teleport_leo: false,
-            debug_teleport_body: None,
             company_money: 0.0,
             science_available: 0.0,
             show_contracts: false,
             can_establish_colony: false,
             has_colonies: false,
             landed_body_index: None,
-            establish_colony_request: None,
-            transfer_cargo_request: None,
             vessel_has_cargo: false,
             landed_body_has_colony: false,
-            open_colony_request: None,
             route_creation: Default::default(),
             procedural_star_screen_positions: Vec::new(),
             hovered_star: None,

@@ -2,7 +2,7 @@
 //! route creation panel, and route detail panel.
 
 use crate::colony::{
-    trade::{CargoManifest, FleetManager, RouteLeg, TradeRoute, TradeRouteId, TradeShipState},
+    trade::{AutomationMode, CargoManifest, FleetManager, RouteLeg, TradeRoute, TradeRouteId, TradeShipState},
     transfer::RouteCategory,
     ColonyManager, ResourceType,
 };
@@ -84,6 +84,11 @@ pub struct RouteCreationState {
     pub ships_per_window: u32,
     pub build_new_ship: bool,
     pub auto_build_ships: bool,
+    pub automation: AutomationMode,
+    pub priority: i32,
+    pub min_stockpile: f64,
+    pub frequency_days_input: f64,
+    pub dv_threshold: f64,
     // Cache (recomputed when inputs change)
     pub cached_category: Option<RouteCategory>,
     pub cached_leg: Option<crate::colony::transfer::LegResult>,
@@ -109,6 +114,11 @@ impl RouteCreationState {
             ships_per_window: 1,
             build_new_ship: true,
             cargo_amount: 1000.0,
+            automation: AutomationMode::Manual,
+            priority: 0,
+            min_stockpile: 0.0,
+            frequency_days_input: 30.0,
+            dv_threshold: 10000.0,
             ..Default::default()
         }
     }
@@ -133,6 +143,11 @@ impl RouteCreationState {
             ships_per_window: route.ships_per_window,
             build_new_ship: false, // Don't build when editing
             auto_build_ships: route.auto_build_ships,
+            automation: route.automation.clone(),
+            priority: route.priority,
+            min_stockpile: route.min_stockpile,
+            frequency_days_input: route.frequency_days,
+            dv_threshold: if route.dv_threshold > 0.0 { route.dv_threshold } else { 10000.0 },
             cached_category: Some(route.route_category),
             cargo_amount: 1000.0,
             ..Default::default()
@@ -1099,6 +1114,88 @@ pub fn render_route_creation_panel(
                         }
                     }
 
+                    // Automation mode
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Automation:");
+                        let mode_label = match state.automation {
+                            AutomationMode::Manual => "Manual",
+                            AutomationMode::WindowBased => "Window-Based",
+                            AutomationMode::FrequencyBased => "Frequency-Based",
+                            AutomationMode::DvThreshold => "Delta-V Threshold",
+                        };
+                        egui::ComboBox::from_id_source("rcp_automation_mode")
+                            .selected_text(mode_label)
+                            .width(160.0)
+                            .show_ui(ui, |ui| {
+                                if ui.selectable_label(state.automation == AutomationMode::Manual, "Manual").clicked() {
+                                    state.automation = AutomationMode::Manual;
+                                }
+                                if ui.selectable_label(state.automation == AutomationMode::WindowBased, "Window-Based").clicked() {
+                                    state.automation = AutomationMode::WindowBased;
+                                }
+                                if ui.selectable_label(state.automation == AutomationMode::FrequencyBased, "Frequency-Based").clicked() {
+                                    state.automation = AutomationMode::FrequencyBased;
+                                }
+                                if ui.selectable_label(state.automation == AutomationMode::DvThreshold, "Delta-V Threshold").clicked() {
+                                    state.automation = AutomationMode::DvThreshold;
+                                }
+                            });
+                    });
+
+                    // Conditional inputs based on automation mode
+                    match state.automation {
+                        AutomationMode::FrequencyBased => {
+                            ui.horizontal(|ui| {
+                                ui.label("Every");
+                                ui.add(
+                                    egui::DragValue::new(&mut state.frequency_days_input)
+                                        .clamp_range(1.0..=36500.0)
+                                        .speed(1.0),
+                                );
+                                ui.label("days");
+                            });
+                        }
+                        AutomationMode::DvThreshold => {
+                            ui.horizontal(|ui| {
+                                ui.label("Max \u{0394}v:");
+                                ui.add(
+                                    egui::DragValue::new(&mut state.dv_threshold)
+                                        .clamp_range(100.0..=1_000_000.0)
+                                        .speed(100.0)
+                                        .suffix(" m/s"),
+                                );
+                            });
+                        }
+                        _ => {}
+                    }
+
+                    // Priority
+                    ui.horizontal(|ui| {
+                        ui.label("Priority:");
+                        ui.add(
+                            egui::DragValue::new(&mut state.priority)
+                                .clamp_range(-100..=100)
+                                .speed(1.0),
+                        );
+                        ui.label(
+                            egui::RichText::new("(higher = processed first)")
+                                .size(11.0)
+                                .color(COLOR_GRAY),
+                        );
+                    });
+
+                    // Min stockpile
+                    ui.horizontal(|ui| {
+                        ui.label("Min stockpile:");
+                        ui.add(
+                            egui::DragValue::new(&mut state.min_stockpile)
+                                .clamp_range(0.0..=1_000_000.0)
+                                .speed(100.0)
+                                .suffix(" kg"),
+                        );
+                    });
+
                     // Auto-build ships checkbox (colony sources only)
                     if state.source_body.is_some() && state.source_body != Some(earth_index) {
                         ui.checkbox(&mut state.auto_build_ships, "Auto-build replacement ships");
@@ -1153,11 +1250,11 @@ pub fn render_route_creation_panel(
                                     },
                                     return_cargo: CargoManifest::default(),
                                     crew: state.crew,
-                                    automation: crate::colony::trade::AutomationMode::Manual,
-                                    frequency_days: state.interval_days,
-                                    dv_threshold: 0.0,
-                                    priority: 0,
-                                    min_stockpile: 0.0,
+                                    automation: state.automation.clone(),
+                                    frequency_days: state.frequency_days_input,
+                                    dv_threshold: state.dv_threshold,
+                                    priority: state.priority,
+                                    min_stockpile: state.min_stockpile,
                                     paused: false,
                                     last_launch_time: 0.0,
                                     assigned_ship_id: None,

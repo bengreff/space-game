@@ -287,21 +287,26 @@ pub fn parts_to_blueprint(
     name: String,
     stages: &[Vec<PlacedPartId>],
 ) -> VesselBlueprint {
-    // Build index mapping from PlacedPartId to blueprint index
+    // Build index mapping from PlacedPartId to blueprint index.
+    // Sort by PlacedPartId first so blueprint output is deterministic
+    // (HashMap iteration order is arbitrary and differs per run).
+    let mut sorted_parts: Vec<(&PlacedPartId, &PlacedPart)> = parts.iter().collect();
+    sorted_parts.sort_by_key(|(id, _)| **id);
+
     let mut id_to_index: HashMap<PlacedPartId, usize> = HashMap::new();
     let mut blueprint_parts: Vec<BlueprintPart> = Vec::new();
     let mut root_index = 0;
 
     // First pass: assign indices
-    for (idx, (id, _)) in parts.iter().enumerate() {
-        id_to_index.insert(*id, idx);
-        if *id == root_id {
+    for (idx, (id, _)) in sorted_parts.iter().enumerate() {
+        id_to_index.insert(**id, idx);
+        if **id == root_id {
             root_index = idx;
         }
     }
 
     // Second pass: convert parts
-    for (_id, part) in parts.iter() {
+    for (_id, part) in sorted_parts.iter() {
         let parent_index = part.parent_id.and_then(|pid| id_to_index.get(&pid).copied());
 
         let mirror_partner_index = part.mirror_partner.and_then(|pid| id_to_index.get(&pid).copied());

@@ -571,6 +571,7 @@ fn render_buildings_card(
     body_mineable: &[Vec<ResourceType>],
     body_atmospheric: &[Vec<ResourceType>],
     action: &mut ColonyScreenAction,
+    tech_tree: &crate::colony::TechTree,
 ) {
     card_frame().show(ui, |ui| {
         section_heading(ui, "Buildings");
@@ -888,14 +889,22 @@ fn render_buildings_card(
 
             for &recipe in ALL_RECIPES {
                 let count = recipe_counts.get(&recipe).copied().unwrap_or(0);
-                if count == 0 && unassigned_factories == 0 {
+                let recipe_unlocked = tech_tree.is_recipe_available(recipe.recipe_id());
+                // Skip recipes that are locked and have no factories assigned
+                if count == 0 && (!recipe_unlocked || unassigned_factories == 0) {
                     continue;
                 }
                 ui.horizontal(|ui| {
                     ui.add_space(16.0);
+                    let label_color = if recipe_unlocked {
+                        egui::Color32::WHITE
+                    } else {
+                        COLOR_GRAY
+                    };
                     ui.label(
                         egui::RichText::new(format!("{}: {}", recipe.display_name(), count))
-                            .size(11.0),
+                            .size(11.0)
+                            .color(label_color),
                     );
                     if count > 0 {
                         if ui.small_button("\u{2212}").clicked() {
@@ -909,7 +918,7 @@ fn render_buildings_card(
                             );
                         }
                     }
-                    if unassigned_factories > 0 {
+                    if unassigned_factories > 0 && recipe_unlocked {
                         // Build tooltip
                         let inputs = recipe.inputs();
                         let outputs = recipe.outputs();
@@ -969,6 +978,7 @@ fn render_construction_card(
     colony: &Colony,
     body_index: usize,
     hab_score: u32,
+    body_radius_m: f64,
     tech_tree: &crate::colony::TechTree,
     action: &mut ColonyScreenAction,
 ) {
@@ -1032,12 +1042,26 @@ fn render_construction_card(
                             );
                             continue;
                         }
-                        let can_build = colony.can_queue_building(bt, hab_score);
+                        let can_build = colony.can_queue_building(bt, hab_score, body_radius_m);
                         let costs = bt.build_cost();
+                        // Display actual scaled cost: habitability for Habitat/Greenhouse,
+                        // circumference for Mk IV accelerator.
+                        let display_mult = {
+                            let hab = if bt.affected_by_habitability() {
+                                (200.0 - hab_score as f64) / 100.0
+                            } else {
+                                1.0
+                            };
+                            hab * bt.size_multiplier(body_radius_m)
+                        };
                         let cost_str: String = costs
                             .iter()
                             .map(|(r, amt)| {
-                                format!("{} {}", format_colony_mass(*amt), r.display_name())
+                                format!(
+                                    "{} {}",
+                                    format_colony_mass(*amt * display_mult),
+                                    r.display_name()
+                                )
                             })
                             .collect::<Vec<_>>()
                             .join(", ");
@@ -1431,6 +1455,7 @@ pub fn render_colony_screen(
     colony_manager: &ColonyManager,
     body_names: &[String],
     body_habitability: &[u32],
+    body_radii: &[f64],
     body_mineable: &[Vec<ResourceType>],
     body_atmospheric: &[Vec<ResourceType>],
     warp_levels: &[f64],
@@ -1454,6 +1479,7 @@ pub fn render_colony_screen(
     };
 
     let hab_score = body_habitability.get(body_index).copied().unwrap_or(0);
+    let body_radius_m = body_radii.get(body_index).copied().unwrap_or(0.0);
     let hab_mult = (200.0 - hab_score as f64) / 100.0;
 
     // Pre-compute resource rates
@@ -1598,6 +1624,7 @@ pub fn render_colony_screen(
                     body_mineable,
                     body_atmospheric,
                     &mut action,
+                    tech_tree,
                 );
 
                 // 4. Construction card
@@ -1606,6 +1633,7 @@ pub fn render_colony_screen(
                     colony,
                     body_index,
                     hab_score,
+                    body_radius_m,
                     tech_tree,
                     &mut action,
                 );

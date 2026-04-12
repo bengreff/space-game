@@ -24,8 +24,8 @@ pub use colony_ui::ColonyScreenAction;
 pub use types::{
     BodyData, BodyInfoData, CatalogPlanetInfo, CatalogStarInfo, ColonyOverviewAction, MainMenuAction,
     ManagementAction, ManeuverDeltaV, ManeuverNode, OrbitRenderData,
-    OrbitSegmentData, PauseAction, PorkchopGrid, PorkchopPoint, RcsNozzleState, SelectedTarget,
-    ShipOrbitData, ShipPartRenderData, ShipRenderData, StagedPartInfo, TargetPopup,
+    OrbitSegmentData, PauseAction, PorkchopGrid, PorkchopPoint, RcsNozzleState, RenderRequest,
+    SelectedTarget, ShipOrbitData, ShipPartRenderData, ShipRenderData, StagedPartInfo, TargetPopup,
     TechTreeScreenAction, TitleScreenAction, TrackingStationAction, TrackingVesselData,
     TradeAction, Vertex, HYPERBOLIC_RENDER_MARGIN,
 };

@@ -58,7 +58,7 @@ Fairing shells SHALL be rendered in a third pass after decoupler adapters. For e
 
 ### Requirement: Fairing deploy button
 
-The flight part info popup SHALL show a "Deploy" button for fairing parts (`is_fairing == true`). Clicking deploy SHALL set `fairing_deploy_request` on `RenderState`, which main.rs processes by marking the fairing as decoupled and calling `handle_post_decouple()`.
+The flight part info popup SHALL show a "Deploy" button for fairing parts (`is_fairing == true`). Clicking deploy SHALL push `RenderRequest::FairingDeploy { part_index }` onto `RenderState::render_requests`, which main.rs drains each frame; the handler marks the fairing as decoupled and calls `handle_post_decouple()`.
 
 ### Requirement: Two-half fairing debris
 

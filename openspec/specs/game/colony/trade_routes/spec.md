@@ -126,14 +126,11 @@ Called from `update_fleet()` once per tick, after transit updates.
 3. If launch is due: auto-build a new ship at source via `build_ship()`, assign it to route, then `launch_ship()` it
 4. On arrival, ship stays at destination and is unassigned — next interval builds a fresh ship
 
-New scheduling (all new routes, `automation == Manual` with `route_category`):
-- **SameSOI / Interstellar**: Launch when `sim_time - last_launch_time >= interval_days * 86400`
-- **Interplanetary**: Launch when `next_launch_window()` departure is within current tick window, up to `ships_per_window` times per window
-
-Legacy scheduling (old saves with `automation != Manual`):
-- **WindowBased**: Launch when `next_launch_window()` departure is within current tick window
+Scheduling by `AutomationMode`:
+- **Manual**: Never auto-launches. Launch only via manual UI action.
+- **WindowBased**: Interplanetary routes launch when `next_launch_window()` departure is within 1 day. SameSOI/Interstellar routes use `interval_days` (no transfer windows).
 - **FrequencyBased**: Launch when `sim_time - last_launch_time >= frequency_days * 86400`
-- **DvThreshold**: Launch when current Lambert delta-v < threshold
+- **DvThreshold**: Launch when current Lambert delta-v < `dv_threshold`
 
 Pre-launch validation: funds/resources available for ship build + fuel + cargo + food. On failure: set `alert_reason` on route, push RoutePaused notification only on first failure (stops warp). Routes **continue retrying** every cycle — if resources become available, the launch succeeds and alert clears automatically. Only one notification per failure (via `had_alert` guard). Alert clears on: successful launch, route edit, or route resume.
 
@@ -156,7 +153,7 @@ Note: `ShipArrived` and `ShipDeparted` notification kinds exist in the enum but 
 **TradeAction** enum (in `types.rs`): None, CreateRoute, PauseRoute, ResumeRoute, DeleteRoute, DeleteShip, EditRoute, OpenEditor.
 
 **RouteCreationState** — Single-panel route creation/editing state (replaces old 7-step wizard):
-- User selections: route_name, blueprint_name, source_body, dest_body, cargo_items, crew, dv_budget, interval_days, ships_per_window
+- User selections: route_name, blueprint_name, source_body, dest_body, cargo_items, crew, dv_budget, interval_days, ships_per_window, automation (AutomationMode), priority (i32), min_stockpile (f64), frequency_days_input (f64), dv_threshold (f64)
 - Cache fields (recomputed via hash key): cached_category, cached_leg, cached_min_dv, cached_ship_dv_empty/with_cargo, cached_cargo_capacity, cached_container_capacity, cached_synodic_period, cached_flight_time, cached_fuel_reqs, cached_crew_capacity, cached_has_probe_core
 - `editing_route_id: Option<TradeRouteId>` — Some when editing, None when creating
 - `start()` — new route with defaults
@@ -176,7 +173,7 @@ Note: `ShipArrived` and `ShipDeparted` notification kinds exist in the enum but 
 7. **Crew** — DragValue clamped to blueprint pod capacity. Min crew = 0 if probe core present, else 1. Shows "/ N seats" and probe core info.
 8. **Departure Inventory** — Fuel (full blueprint load), Cargo (manifest items), Food (crew x 0.5 kg/day x flight_days), Crew count. For Earth-source routes: itemized cost breakdown (Rocket + Fuel + Cargo + Food) and total launch cost.
 8b. **Destination Inventory** — Ship (blueprint name), Remaining fuel (estimated: fuel_loaded x max(0, 1 - route_dv/ship_dv)), Cargo (delivered intact), Food remaining (0 kg, consumed in transit), Crew arriving.
-9. **Scheduling** — SameSOI/Interstellar: "Every N days" DragValue; Interplanetary: "N ships per window" DragValue (auto-selected by route category)
+9. **Scheduling** — SameSOI/Interstellar: "Every N days" DragValue; Interplanetary: "N ships per window" DragValue (auto-selected by route category). Automation mode ComboBox (Manual / Window-Based / Frequency-Based / Delta-V Threshold). Conditional inputs: frequency_days for FrequencyBased, dv_threshold for DvThreshold. Priority DragValue (-100 to 100, higher = processed first). Min stockpile DragValue (0 to 1,000,000 kg). Auto-build ships checkbox (colony sources only). All values wired into TradeRoute on create/update.
 10. **Create/Update Route** + Cancel buttons
 
 Create button disabled when: no blueprint, no source, no dest, source==dest, route name empty, ship dv < budget.

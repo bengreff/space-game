@@ -34,6 +34,15 @@ The `fuel_type`, `tank_filled`, `crossfeed_enabled`, and `mirror_partner_index` 
 
 Blueprints SHALL be serialized to RON format using `ron::ser::to_string_pretty` with default pretty config, and deserialized using `ron::from_str`.
 
+### Requirement: Deterministic part ordering
+
+When converting editor state to a blueprint, parts SHALL be sorted by `PlacedPartId` before assigning blueprint indices. This ensures that saving the same editor state twice produces byte-identical RON output, so diffs remain meaningful and stage indices do not drift across runs.
+
+#### Scenario: Save produces deterministic output
+
+- **WHEN** the same vessel state is saved multiple times (including across process restarts)
+- **THEN** the resulting blueprint RON file SHALL be byte-identical each time
+
 ## Save Flow
 
 ### Requirement: Save dialog

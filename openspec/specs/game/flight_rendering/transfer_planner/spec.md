@@ -59,8 +59,8 @@ Automated transfer planning: calculates delta-v and timing for orbital transfers
 2. Navigation target and planner target are kept in bidirectional sync
 3. Results stored as `TransferDisplay` on `RenderState` (pre-formatted for UI)
 4. UI reads `TransferDisplay` and shows results
-5. "Create Node" sets `transfer_node_request` on `RenderState`
-6. `main.rs` processes the request: converts inertial position angle to true anomaly using the trajectory segment's arg_peri, then calls `create_maneuver_node_with_dv()`
+5. "Create Node" pushes `RenderRequest::TransferNode { position_angle, prograde_dv, radial_dv, time_to_window }` onto `RenderState::render_requests`
+6. `main.rs` drains the queue and handles the variant: converts the inertial position angle to true anomaly using the trajectory segment's arg_peri, then calls `create_maneuver_node_with_epoch()`
 
 ## Phase Angle and Time-to-Window
 

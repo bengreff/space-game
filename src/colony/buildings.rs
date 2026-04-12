@@ -397,6 +397,22 @@ impl BuildingType {
             Self::Habitat | Self::BasicGreenhouse | Self::AdvancedGreenhouse
         )
     }
+
+    /// Scale factor applied to `build_cost`, `total_build_mass`, `power_draw_kw`,
+    /// and `maintenance_cost_per_30d` for buildings whose footprint scales with
+    /// the host body's size. The Mk IV Particle Accelerator wraps the entire
+    /// equator, so its base values are stored per kilometer and the simulation
+    /// multiplies them by the body's circumference in km.
+    /// Returns 1.0 for all other buildings.
+    pub fn size_multiplier(&self, body_radius_m: f64) -> f64 {
+        match self {
+            Self::ParticleAcceleratorMk4 => {
+                let radius_km = body_radius_m / 1000.0;
+                radius_km * 2.0 * std::f64::consts::PI
+            }
+            _ => 1.0,
+        }
+    }
 }
 
 /// Factory recipes that can be assigned to a Factory building.
@@ -563,6 +579,40 @@ impl FactoryRecipe {
             Self::NpuAssembly => 240.0,
             Self::RegolithHe3Extraction => 24.0,
             Self::GasGiantHe3Separation => 24.0,
+        }
+    }
+
+    /// The tech efficiency line ID that governs this recipe's throughput multiplier.
+    pub fn efficiency_line_id(&self) -> &'static str {
+        match self {
+            Self::MetalSmelting | Self::AlloyForging => "metallurgy",
+            Self::ElectronicsManufacturing | Self::SuperconductorFabrication => "electronics_mfg",
+            Self::PrecisionInstrumentsManufacturing => "precision_mfg",
+            Self::Electrolysis | Self::DeuteriumExtraction | Self::SabatierReaction
+            | Self::MethanePurification | Self::KeroseneRefining => "chemical_processing",
+            Self::UraniumEnrichment | Self::TritiumBreeding | Self::NpuAssembly => "nuclear_engineering",
+            Self::RegolithHe3Extraction | Self::GasGiantHe3Separation => "isotope_extraction",
+        }
+    }
+
+    /// Recipe ID string matching recipe_gates in tree.ron.
+    pub fn recipe_id(&self) -> &'static str {
+        match self {
+            Self::MetalSmelting => "MetalSmelting",
+            Self::AlloyForging => "AlloyForging",
+            Self::ElectronicsManufacturing => "ElectronicsManufacturing",
+            Self::SuperconductorFabrication => "SuperconductorFabrication",
+            Self::PrecisionInstrumentsManufacturing => "PrecisionInstrumentsManufacturing",
+            Self::Electrolysis => "Electrolysis",
+            Self::DeuteriumExtraction => "DeuteriumExtraction",
+            Self::SabatierReaction => "SabatierReaction",
+            Self::MethanePurification => "MethanePurification",
+            Self::KeroseneRefining => "KeroseneRefining",
+            Self::UraniumEnrichment => "UraniumEnrichment",
+            Self::TritiumBreeding => "TritiumBreeding",
+            Self::NpuAssembly => "NpuAssembly",
+            Self::RegolithHe3Extraction => "RegolithHe3Extraction",
+            Self::GasGiantHe3Separation => "GasGiantHe3Separation",
         }
     }
 
@@ -773,26 +823,30 @@ impl Colony {
     }
 
     /// Check whether the colony can queue a building (has enough resources).
-    pub fn can_queue_building(&self, bt: BuildingType, hab_score: u32) -> bool {
+    /// `body_radius_m` is used to scale size-dependent buildings (Mk IV accelerator).
+    pub fn can_queue_building(&self, bt: BuildingType, hab_score: u32, body_radius_m: f64) -> bool {
         let costs = bt.build_cost();
-        let mult = if bt.affected_by_habitability() {
+        let hab = if bt.affected_by_habitability() {
             crate::colony::simulation::habitability_multiplier(hab_score)
         } else {
             1.0
         };
+        let mult = hab * bt.size_multiplier(body_radius_m);
         costs.iter().all(|&(res, amount)| {
             self.resources.get(res) >= amount * mult
         })
     }
 
     /// Queue a building for construction, consuming resources from inventory.
-    pub fn queue_building(&mut self, bt: BuildingType, hab_score: u32) -> Result<(), String> {
+    /// `body_radius_m` is used to scale size-dependent buildings (Mk IV accelerator).
+    pub fn queue_building(&mut self, bt: BuildingType, hab_score: u32, body_radius_m: f64) -> Result<(), String> {
         let costs = bt.build_cost();
-        let mult = if bt.affected_by_habitability() {
+        let hab = if bt.affected_by_habitability() {
             crate::colony::simulation::habitability_multiplier(hab_score)
         } else {
             1.0
         };
+        let mult = hab * bt.size_multiplier(body_radius_m);
 
         // Check resources
         for &(res, amount) in &costs {

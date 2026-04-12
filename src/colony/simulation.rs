@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::bodies::SolarSystem;
 use crate::colony::notification::{Notification, NotificationKind};
 use crate::colony::tech::TechTree;
@@ -86,16 +84,20 @@ pub fn simulate_colony_tick(
     solar_system: &SolarSystem,
     notifications: &mut Vec<Notification>,
     sim_time: f64,
-    _tech_tree: &TechTree,
+    tech_tree: &TechTree,
 ) {
     let hab_score = solar_system.bodies[colony.body_index].habitability_score;
     let hab_mult = habitability_multiplier(hab_score);
+    let body_radius_m = solar_system.bodies[colony.body_index].radius;
     let dist = sun_distance(colony.body_index, solar_system);
 
     // === 0. Reactor fuel consumption ===
     // Consume fuel before power calculation. Reactors without fuel don't generate.
-    // Track which building indices have fuel available.
-    let mut reactor_has_fuel = vec![true; colony.buildings.len()];
+    // Track which building indices have fuel available, and atomically consume
+    // fuel as we go so reactors sharing the same fuel pool compete correctly.
+    // Each check-and-remove is atomic via `remove()` / `remove_all()`, so when
+    // the pool runs dry subsequent reactors simply fail to fuel.
+    let mut reactor_has_fuel = vec![false; colony.buildings.len()];
     for (i, b) in colony.buildings.iter().enumerate() {
         if !b.operational {
             continue;
@@ -103,41 +105,17 @@ pub fn simulate_colony_tick(
         match b.building_type {
             BuildingType::FissionReactor => {
                 // 0.5 kg Enriched Uranium per day
-                let needed = 0.5 * days;
-                let available = colony.resources.get(super::resources::ResourceType::EnrichedUranium);
-                if available >= needed {
-                    reactor_has_fuel[i] = true;
-                } else {
-                    reactor_has_fuel[i] = false;
-                }
+                reactor_has_fuel[i] = colony.resources.remove(
+                    super::resources::ResourceType::EnrichedUranium,
+                    0.5 * days,
+                );
             }
             BuildingType::FusionReactor => {
-                // 3 kg He-3 + 2 kg Deuterium per day
-                let he3_needed = 3.0 * days;
-                let d_needed = 2.0 * days;
-                let he3_avail = colony.resources.get(super::resources::ResourceType::Helium3);
-                let d_avail = colony.resources.get(super::resources::ResourceType::Deuterium);
-                if he3_avail >= he3_needed && d_avail >= d_needed {
-                    reactor_has_fuel[i] = true;
-                } else {
-                    reactor_has_fuel[i] = false;
-                }
-            }
-            _ => {}
-        }
-    }
-    // Actually consume fuel for fueled reactors
-    for (i, b) in colony.buildings.iter().enumerate() {
-        if !b.operational || !reactor_has_fuel[i] {
-            continue;
-        }
-        match b.building_type {
-            BuildingType::FissionReactor => {
-                colony.resources.remove(super::resources::ResourceType::EnrichedUranium, 0.5 * days);
-            }
-            BuildingType::FusionReactor => {
-                colony.resources.remove(super::resources::ResourceType::Helium3, 3.0 * days);
-                colony.resources.remove(super::resources::ResourceType::Deuterium, 2.0 * days);
+                // 3 kg He-3 + 2 kg Deuterium per day — atomic multi-resource removal
+                reactor_has_fuel[i] = colony.resources.remove_all(&[
+                    (super::resources::ResourceType::Helium3, 3.0 * days),
+                    (super::resources::ResourceType::Deuterium, 2.0 * days),
+                ]);
             }
             _ => {}
         }
@@ -168,8 +146,9 @@ pub fn simulate_colony_tick(
             }
             // If reactor has no fuel, it contributes 0 power
         }
-        // Demand — split habitat vs other
-        let draw = b.building_type.power_draw_kw();
+        // Demand — split habitat vs other. Size-scaled buildings (Mk IV)
+        // multiply by body circumference.
+        let draw = b.building_type.power_draw_kw() * b.building_type.size_multiplier(body_radius_m);
         if b.building_type == BuildingType::Habitat {
             habitat_demand += draw;
         } else {
@@ -216,10 +195,10 @@ pub fn simulate_colony_tick(
     }
 
     // === 2. Maintenance ===
-    process_maintenance(colony, days, hab_mult);
+    process_maintenance(colony, days, hab_mult, body_radius_m, tech_tree);
 
     // === 3. Construction ===
-    process_construction(colony, days, hab_mult, notifications, sim_time);
+    process_construction(colony, days, hab_mult, notifications, sim_time, tech_tree);
 
     // === 4. Mines ===
     let storage_cap = colony.storage_capacity();
@@ -231,7 +210,8 @@ pub fn simulate_colony_tick(
             continue;
         }
         if let Some(resource) = b.assigned_resource {
-            let production = 2000.0 * days * (1.0 - b.degradation) * colony.other_power_fraction;
+            let mining_mult = TechTree::tier_multiplier(tech_tree.line_tier("mining"));
+            let production = 2000.0 * days * (1.0 - b.degradation) * colony.other_power_fraction * mining_mult;
             let capped = production.min(available_storage);
             if capped > 0.0 {
                 colony.resources.add(resource, capped);
@@ -246,8 +226,9 @@ pub fn simulate_colony_tick(
             continue;
         }
         if let Some(resource) = b.assigned_resource {
+            let atmo_mult = TechTree::tier_multiplier(tech_tree.line_tier("atmospheric_science"));
             let production =
-                10_000.0 * days * (1.0 - b.degradation) * colony.other_power_fraction;
+                10_000.0 * days * (1.0 - b.degradation) * colony.other_power_fraction * atmo_mult;
             let capped = production.min(available_storage);
             if capped > 0.0 {
                 colony.resources.add(resource, capped);
@@ -281,7 +262,8 @@ pub fn simulate_colony_tick(
 
         // Throughput: how many batches worth of output per day
         let batches_per_day = 24.0 / batch_hours;
-        let throughput_factor = batches_per_day * days * (1.0 - degradation) * colony.other_power_fraction;
+        let factory_mult = TechTree::tier_multiplier(tech_tree.line_tier(recipe.efficiency_line_id()));
+        let throughput_factor = batches_per_day * days * (1.0 - degradation) * colony.other_power_fraction * factory_mult;
 
         // Check if we have enough inputs
         let mut can_produce = true;
@@ -320,15 +302,16 @@ pub fn simulate_colony_tick(
         if !b.operational {
             continue;
         }
+        let agri_mult = TechTree::tier_multiplier(tech_tree.line_tier("agriculture"));
         match b.building_type {
             BuildingType::BasicGreenhouse => {
                 let max_water = 2_000.0; // kg
-                let rate = 0.5 * days * (b.water_fill / max_water).min(1.0) * (1.0 - b.degradation) * colony.other_power_fraction;
+                let rate = 0.5 * days * (b.water_fill / max_water).min(1.0) * (1.0 - b.degradation) * colony.other_power_fraction * agri_mult;
                 colony.food_stored += rate;
             }
             BuildingType::AdvancedGreenhouse => {
                 let max_water = 5_000.0; // kg
-                let rate = 2.5 * days * (b.water_fill / max_water).min(1.0) * (1.0 - b.degradation) * colony.other_power_fraction;
+                let rate = 2.5 * days * (b.water_fill / max_water).min(1.0) * (1.0 - b.degradation) * colony.other_power_fraction * agri_mult;
                 colony.food_stored += rate;
             }
             _ => {}
@@ -386,7 +369,10 @@ pub fn simulate_colony_tick(
 }
 
 /// Process maintenance for all buildings.
-fn process_maintenance(colony: &mut Colony, days: f64, hab_mult: f64) {
+fn process_maintenance(colony: &mut Colony, days: f64, hab_mult: f64, body_radius_m: f64, tech_tree: &TechTree) {
+    let construction_mult = TechTree::tier_multiplier(tech_tree.line_tier("construction"));
+    let life_support_mult = TechTree::tier_multiplier(tech_tree.line_tier("life_support"));
+
     // Calculate robot maintenance capacity
     let mut robot_maintenance_capacity = 0.0_f64;
     for b in &colony.buildings {
@@ -394,21 +380,24 @@ fn process_maintenance(colony: &mut Colony, days: f64, hab_mult: f64) {
             continue;
         }
         match b.building_type {
-            BuildingType::ConstructionRobot => robot_maintenance_capacity += 60_000.0 * days,
-            BuildingType::LightConstructionRobot => robot_maintenance_capacity += 15_000.0 * days,
+            BuildingType::ConstructionRobot => robot_maintenance_capacity += 60_000.0 * days * construction_mult,
+            BuildingType::LightConstructionRobot => robot_maintenance_capacity += 15_000.0 * days * construction_mult,
             _ => {}
         }
     }
 
-    // Calculate total maintenance demand
+    // Calculate total maintenance demand.
+    // `mult` combines habitability scaling (Habitat/Greenhouse), size scaling
+    // (Mk IV Particle Accelerator), and life_support cost reduction for hab buildings.
     let mut total_maintenance_mass = 0.0_f64;
     for b in &colony.buildings {
         let costs = b.building_type.maintenance_cost_per_30d();
-        let mult = if b.building_type.affected_by_habitability() {
-            hab_mult
+        let hab = if b.building_type.affected_by_habitability() {
+            hab_mult / life_support_mult
         } else {
             1.0
         };
+        let mult = hab * b.building_type.size_multiplier(body_radius_m);
         let mass: f64 = costs.iter().map(|(_, amt)| amt * mult).sum();
         total_maintenance_mass += mass / 30.0 * days;
     }
@@ -426,11 +415,12 @@ fn process_maintenance(colony: &mut Colony, days: f64, hab_mult: f64) {
             continue;
         }
 
-        let mult = if b.building_type.affected_by_habitability() {
-            hab_mult
+        let hab = if b.building_type.affected_by_habitability() {
+            hab_mult / life_support_mult
         } else {
             1.0
         };
+        let mult = hab * b.building_type.size_multiplier(body_radius_m);
 
         let mut resource_shortfall = 0.0_f64;
         for &(ref res, amount) in &costs {
@@ -449,21 +439,6 @@ fn process_maintenance(colony: &mut Colony, days: f64, hab_mult: f64) {
             b.degradation = (b.degradation + shortfall * days / 30.0).min(1.0);
         }
     }
-
-    // Sync degradation within each building type to their average
-    let mut type_deg: HashMap<BuildingType, (f64, u32)> = HashMap::new();
-    for b in colony.buildings.iter() {
-        let entry = type_deg.entry(b.building_type).or_insert((0.0, 0));
-        entry.0 += b.degradation;
-        entry.1 += 1;
-    }
-    for b in colony.buildings.iter_mut() {
-        if let Some(&(sum, count)) = type_deg.get(&b.building_type) {
-            if count > 1 {
-                b.degradation = sum / count as f64;
-            }
-        }
-    }
 }
 
 /// Process construction queue.
@@ -473,7 +448,10 @@ fn process_construction(
     hab_mult: f64,
     notifications: &mut Vec<Notification>,
     sim_time: f64,
+    tech_tree: &TechTree,
 ) {
+    let construction_mult = TechTree::tier_multiplier(tech_tree.line_tier("construction"));
+
     // Calculate robot construction capacity (after maintenance)
     let mut robot_construction_capacity = 0.0_f64;
     for b in &colony.buildings {
@@ -481,8 +459,8 @@ fn process_construction(
             continue;
         }
         match b.building_type {
-            BuildingType::ConstructionRobot => robot_construction_capacity += 20_000.0 * days,
-            BuildingType::LightConstructionRobot => robot_construction_capacity += 5_000.0 * days,
+            BuildingType::ConstructionRobot => robot_construction_capacity += 20_000.0 * days * construction_mult,
+            BuildingType::LightConstructionRobot => robot_construction_capacity += 5_000.0 * days * construction_mult,
             _ => {}
         }
     }

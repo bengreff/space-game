@@ -41,10 +41,11 @@ Player's financial state: `money: f64` (starting $25M), `rd_budget: f64` (starti
 - `maintenance_cost_per_30d()` — resources consumed per 30 days
 - `total_build_mass()` — sum of build cost; Habitat adds 1,000 kg for pre-stocked food
 - `affected_by_habitability()` — true for Habitat, BasicGreenhouse, AdvancedGreenhouse only
+- `size_multiplier(body_radius_m)` — returns `2π · radius_km` for `ParticleAcceleratorMk4`, `1.0` otherwise
 - `all()` — all variants as static slice
 - `from_display_name(name)` — reverse lookup by display name
 
-Particle Accelerator Mk IV stores per-km values; simulation multiplies by body circumference.
+Particle Accelerator Mk IV stores per-km values; simulation multiplies by body circumference via `size_multiplier`. This multiplier SHALL be applied to `build_cost`, `total_build_mass`, `power_draw_kw`, and `maintenance_cost_per_30d` at every consumption site (construction queueing, construction display, power balance, maintenance processing). `Colony::queue_building` and `Colony::can_queue_building` SHALL accept `body_radius_m` so the multiplier can be applied at the call site.
 
 ### FactoryRecipe
 15-variant enum. Each provides:

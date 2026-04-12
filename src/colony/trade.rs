@@ -1022,68 +1022,55 @@ impl FleetManager {
 
             let route_source = route.legs.first().and_then(|l| l.from_body);
 
-            // Check if it's time to launch
-            let should_launch = if route.automation == AutomationMode::Manual {
-                match route.route_category {
-                    super::transfer::RouteCategory::SameSOI | super::transfer::RouteCategory::Interstellar => {
-                        let interval_seconds = route.interval_days * 86400.0;
-                        if interval_seconds <= 0.0 {
-                            false
-                        } else {
-                            sim_time - route.last_launch_time >= interval_seconds
+            // Check if it's time to launch based on automation mode
+            let should_launch = match route.automation {
+                AutomationMode::Manual => false,
+                AutomationMode::WindowBased => {
+                    match route.route_category {
+                        super::transfer::RouteCategory::Interplanetary => {
+                            let dest = route.legs.last().and_then(|l| l.to_body);
+                            if let Some((window_time, _dv)) = super::transfer::next_launch_window(
+                                route_source,
+                                dest,
+                                sim_time,
+                                solar_system,
+                            ) {
+                                (window_time - sim_time).abs() < 86400.0
+                            } else {
+                                false
+                            }
                         }
-                    }
-                    super::transfer::RouteCategory::Interplanetary => {
-                        let dest = route.legs.last().and_then(|l| l.to_body);
-                        if let Some((window_time, _dv)) = super::transfer::next_launch_window(
-                            route_source,
-                            dest,
-                            sim_time,
-                            solar_system,
-                        ) {
-                            (window_time - sim_time).abs() < 86400.0
-                        } else {
-                            false
+                        super::transfer::RouteCategory::SameSOI | super::transfer::RouteCategory::Interstellar => {
+                            // No transfer windows for same-SOI/interstellar — use interval_days
+                            let interval_seconds = route.interval_days * 86400.0;
+                            if interval_seconds <= 0.0 {
+                                false
+                            } else {
+                                sim_time - route.last_launch_time >= interval_seconds
+                            }
                         }
                     }
                 }
-            } else {
-                match route.automation {
-                    AutomationMode::Manual => false,
-                    AutomationMode::WindowBased => {
-                        let dest = route.legs.last().and_then(|l| l.to_body);
-                        if let Some((window_time, _dv)) = super::transfer::next_launch_window(
-                            route_source,
-                            dest,
-                            sim_time,
-                            solar_system,
-                        ) {
-                            (window_time - sim_time).abs() < 86400.0
-                        } else {
-                            false
-                        }
+                AutomationMode::FrequencyBased => {
+                    let frequency_seconds = route.frequency_days * 86400.0;
+                    if frequency_seconds <= 0.0 {
+                        false
+                    } else {
+                        sim_time - route.last_launch_time >= frequency_seconds
                     }
-                    AutomationMode::FrequencyBased => {
-                        let frequency_seconds = route.frequency_days * 86400.0;
-                        if frequency_seconds <= 0.0 {
-                            false
-                        } else {
-                            sim_time - route.last_launch_time >= frequency_seconds
-                        }
-                    }
-                    AutomationMode::DvThreshold => {
-                        let dest = route.legs.last().and_then(|l| l.to_body);
-                        if let Some(leg) = super::transfer::compute_leg_delta_v(
-                            route_source,
-                            dest,
-                            sim_time,
-                            0.0,
-                            solar_system,
-                        ) {
-                            leg.total_dv <= route.dv_threshold
-                        } else {
-                            false
-                        }
+                }
+                AutomationMode::DvThreshold => {
+                    let dest = route.legs.last().and_then(|l| l.to_body);
+                    if let Some(leg) = super::transfer::compute_leg_delta_v(
+                        route_source,
+                        dest,
+                        sim_time,
+                        0.0,
+                        solar_system,
+                    ) {
+                        leg.total_dv <= route.dv_threshold
+                    } else {
+                        false
                     }
                 }
             };
