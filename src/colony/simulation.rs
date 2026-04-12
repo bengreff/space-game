@@ -198,7 +198,7 @@ pub fn simulate_colony_tick(
     process_maintenance(colony, days, hab_mult, body_radius_m, tech_tree);
 
     // === 3. Construction ===
-    process_construction(colony, days, hab_mult, notifications, sim_time, tech_tree);
+    process_construction(colony, days, hab_mult, body_radius_m, notifications, sim_time, tech_tree);
 
     // === 4. Mines ===
     let storage_cap = colony.storage_capacity();
@@ -446,6 +446,7 @@ fn process_construction(
     colony: &mut Colony,
     days: f64,
     hab_mult: f64,
+    body_radius_m: f64,
     notifications: &mut Vec<Notification>,
     sim_time: f64,
     tech_tree: &TechTree,
@@ -469,11 +470,12 @@ fn process_construction(
     let mut maintenance_demand = 0.0_f64;
     for b in &colony.buildings {
         let costs = b.building_type.maintenance_cost_per_30d();
-        let mult = if b.building_type.affected_by_habitability() {
+        let hab = if b.building_type.affected_by_habitability() {
             hab_mult
         } else {
             1.0
         };
+        let mult = hab * b.building_type.size_multiplier(body_radius_m);
         let mass: f64 = costs.iter().map(|(_, amt)| amt * mult).sum();
         maintenance_demand += mass / 30.0 * days;
     }
