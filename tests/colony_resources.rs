@@ -1,6 +1,6 @@
 mod common;
 
-use sunscatter::colony::{ResourceType, ResourceInventory};
+use sunscatter_app::colony::{ResourceType, ResourceInventory};
 
 #[test]
 fn empty_inventory_returns_zero() {

@@ -1,8 +1,8 @@
 mod common;
 
 use std::f64::consts::{PI, TAU};
-use sunscatter::bodies::G;
-use sunscatter::ship::transfer::{solve_lambert_2d, normalize_angle, compute_hohmann};
+use sunscatter_app::bodies::G;
+use sunscatter_app::ship::transfer::{solve_lambert_2d, normalize_angle, compute_hohmann};
 
 // ============================================================
 // Lambert solver

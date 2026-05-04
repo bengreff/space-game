@@ -26,3 +26,6 @@ Thumbs.db
 
 # Editor backups
 *.bak
+
+# Trunk wasm output
+/dist/

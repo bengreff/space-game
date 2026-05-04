@@ -1,4 +1,4 @@
-use sunscatter::render::formatting::*;
+use sunscatter_app::render::formatting::*;
 
 #[test]
 fn format_duration_zero() {

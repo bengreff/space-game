@@ -143,7 +143,9 @@ pub struct RenderState {
     pub porkchop_selected: Option<usize>,   // locked selection (click)
     pub porkchop_hovered: Option<usize>,    // transient hover
     pub porkchop_last_target: Option<usize>, // to detect target changes
-    pub porkchop_receiver: Option<std::sync::mpsc::Receiver<super::types::PorkchopGrid>>,
+    /// In-flight chunked Lambert sweep for the porkchop plot. Driven a few
+    /// rows per frame from the run loop.
+    pub porkchop_job: Option<crate::ship::transfer::PorkchopJob>,
     pub porkchop_computing: bool,
     pub transfer_display: Option<crate::ship::transfer::TransferDisplay>,
     pub transfer_hohmann_targets: Vec<(usize, String)>,
@@ -158,7 +160,7 @@ pub struct RenderState {
     pub body_texture_map: BodyTextureMap,
     // Sprite atlas
     pub sprite_atlas: super::sprites::SpriteAtlas,
-    pub plume_start_time: std::time::Instant,
+    pub plume_start_time: web_time::Instant,
     // Economy/science HUD state
     pub company_money: f64,
     pub science_available: f64,
@@ -185,7 +187,7 @@ pub struct RenderState {
     // Info data for catalog planets (keyed by synthetic body index)
     pub catalog_body_info: std::collections::HashMap<usize, super::types::BodyInfoData>,
     // Toast notifications
-    pub active_toasts: Vec<(String, std::time::Instant)>,
+    pub active_toasts: Vec<(String, web_time::Instant)>,
     // Egui state
     pub egui_ctx: egui::Context,
     pub egui_state: egui_winit::State,
@@ -197,9 +199,19 @@ impl RenderState {
     pub async fn new(window: Arc<Window>, body_names: &[String]) -> Self {
         let size = window.inner_size();
 
-        // Create wgpu instance
+        // Create wgpu instance.
+        //
+        // On wasm we restrict to the GL (WebGL2) backend. Letting wgpu auto-pick
+        // WebGPU on Chrome causes a `requestDevice` rejection because wgpu 0.19's
+        // WebGPU limits descriptor includes `maxInterStageShaderComponents`,
+        // which current Chromium WebGPU doesn't recognize. Forcing WebGL avoids
+        // this version-drift; Phase 7 can re-add WebGPU once we upgrade wgpu.
+        #[cfg(target_arch = "wasm32")]
+        let backends = wgpu::Backends::GL;
+        #[cfg(not(target_arch = "wasm32"))]
+        let backends = wgpu::Backends::all();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends,
             ..Default::default()
         });
 
@@ -216,14 +228,20 @@ impl RenderState {
             .await
             .unwrap();
 
-        // Request device with adapter's actual limits (unlocks full GPU capabilities,
-        // e.g. texture array layers beyond the WebGPU default of 256)
-        let adapter_limits = adapter.limits();
+        // Request device. On native we use the adapter's actual limits to
+        // unlock e.g. >256 texture array layers. On wasm we use WebGL2 down-
+        // level defaults — anything more aggressive trips on missing WebGL
+        // features and request_device rejects.
+        #[cfg(target_arch = "wasm32")]
+        let required_limits = wgpu::Limits::downlevel_webgl2_defaults()
+            .using_resolution(adapter.limits());
+        #[cfg(not(target_arch = "wasm32"))]
+        let required_limits = adapter.limits();
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     required_features: wgpu::Features::empty(),
-                    required_limits: adapter_limits.clone(),
+                    required_limits,
                     label: None,
                 },
                 None,
@@ -240,17 +258,22 @@ impl RenderState {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
+        // Guard against 0-sized initial inner_size on web (canvas not laid out
+        // yet). Configuring a surface at 0×0 panics in wgpu's WebGL backend.
+        let initial_w = size.width.max(1);
+        let initial_h = size.height.max(1);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: size.width,
-            height: size.height,
+            width: initial_w,
+            height: initial_h,
             present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
+        log::info!("Surface configured: {}x{}, format={:?}", initial_w, initial_h, surface_format);
 
         // Create camera
         let aspect_ratio = size.width as f32 / size.height as f32;
@@ -288,7 +311,7 @@ impl RenderState {
         });
 
         // Load body textures
-        let t_tex = std::time::Instant::now();
+        let t_tex = web_time::Instant::now();
         let (body_texture_view, body_sampler, body_texture_map) =
             super::textures::load_body_textures(&device, &queue, body_names);
         println!("    Body textures: {:.0?}", t_tex.elapsed());
@@ -332,11 +355,11 @@ impl RenderState {
         });
 
         // Load sprite atlas
-        let t_spr = std::time::Instant::now();
+        let t_spr = web_time::Instant::now();
         let sprite_atlas = super::sprites::load_sprite_atlas(&device, &queue);
         println!("    Sprite atlas: {:.0?}", t_spr.elapsed());
         let sprite_bind_group_layout = super::sprites::create_sprite_bind_group_layout(&device);
-        let plume_start_time = std::time::Instant::now();
+        let plume_start_time = web_time::Instant::now();
 
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -540,7 +563,7 @@ impl RenderState {
             porkchop_selected: None,
             porkchop_hovered: None,
             porkchop_last_target: None,
-            porkchop_receiver: None,
+            porkchop_job: None,
             porkchop_computing: false,
             transfer_display: None,
             transfer_hohmann_targets: Vec::new(),

@@ -1,6 +1,6 @@
 mod common;
 
-use sunscatter::bodies::SolarSystem;
+use sunscatter_app::bodies::SolarSystem;
 
 #[test]
 fn earth_surface_gravity() {
@@ -51,11 +51,11 @@ fn all_bodies_nonneg_landing_science() {
 
 #[test]
 fn position_to_sector_sun() {
-    use sunscatter::bodies::position_to_sector;
+    use sunscatter_app::bodies::position_to_sector;
 
     // Compute the Sun's galactic position from its orbital elements
     let (a, e, m0) = (1.996e20_f64, 0.07_f64, 4.8534_f64);
-    let big_e = sunscatter::galaxy::solve_kepler_nr(m0, e);
+    let big_e = sunscatter_app::galaxy::solve_kepler_nr(m0, e);
     let nu = 2.0
         * ((1.0 + e).sqrt() * (big_e / 2.0).sin())
             .atan2((1.0 - e).sqrt() * (big_e / 2.0).cos());
@@ -77,7 +77,7 @@ fn position_to_sector_sun() {
 
 #[test]
 fn position_to_sector_out_of_bounds() {
-    use sunscatter::bodies::position_to_sector;
+    use sunscatter_app::bodies::position_to_sector;
 
     let result = position_to_sector([1e25, 1e25]);
     assert!(

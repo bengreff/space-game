@@ -2335,8 +2335,8 @@ impl RenderState {
 }
 
 /// Render toast notifications as fading overlays at the top-center of the screen.
-pub(super) fn render_toasts(ctx: &egui::Context, toasts: &[(String, std::time::Instant)]) {
-    let now = std::time::Instant::now();
+pub(super) fn render_toasts(ctx: &egui::Context, toasts: &[(String, web_time::Instant)]) {
+    let now = web_time::Instant::now();
     for (i, (msg, created)) in toasts.iter().enumerate() {
         let elapsed = now.duration_since(*created).as_secs_f32();
         if elapsed > 5.0 {

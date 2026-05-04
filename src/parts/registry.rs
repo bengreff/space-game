@@ -1,3 +1,7 @@
+// On wasm the filesystem-backed save path is unused (Phase 5 swaps to IDB);
+// silence the resulting dead-code/unused-import warnings.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 use super::VesselBlueprint;
 use std::collections::HashMap;
 use std::fs;
@@ -18,37 +22,77 @@ impl BlueprintRegistry {
         }
     }
 
-    /// Load all blueprints from the registry directory
+    /// Load all blueprints from the registry directory.
+    /// On wasm this loads user-saved blueprints from the IndexedDB cache
+    /// (`init_storage` must have run); use `load_embedded_defaults` separately
+    /// to seed the four canonical sample blueprints.
     pub fn load_all(&mut self) -> Result<(), String> {
-        if !self.directory.exists() {
-            fs::create_dir_all(&self.directory)
-                .map_err(|e| format!("Failed to create blueprints directory: {}", e))?;
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.blueprints.clear();
+            for (name, content) in crate::save::wasm_storage::user_blueprints() {
+                match ron::from_str::<VesselBlueprint>(&content) {
+                    Ok(bp) => {
+                        self.blueprints.insert(bp.name.clone(), bp);
+                    }
+                    Err(e) => log::warn!("Failed to parse user blueprint {}: {}", name, e),
+                }
+            }
+            log::info!("Loaded {} user blueprints from IndexedDB", self.blueprints.len());
             return Ok(());
         }
-
-        self.blueprints.clear();
-
-        for entry in fs::read_dir(&self.directory)
-            .map_err(|e| format!("Failed to read blueprints directory: {}", e))?
+        #[cfg(not(target_arch = "wasm32"))]
         {
-            let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
-            let path = entry.path();
+            if !self.directory.exists() {
+                fs::create_dir_all(&self.directory)
+                    .map_err(|e| format!("Failed to create blueprints directory: {}", e))?;
+                return Ok(());
+            }
 
-            if path.extension().map_or(false, |ext| ext == "ron") {
-                match self.load_blueprint_file(&path) {
-                    Ok(blueprint) => {
-                        log::info!("Loaded blueprint: {}", blueprint.name);
-                        self.blueprints.insert(blueprint.name.clone(), blueprint);
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to load blueprint {:?}: {}", path, e);
+            self.blueprints.clear();
+
+            for entry in fs::read_dir(&self.directory)
+                .map_err(|e| format!("Failed to read blueprints directory: {}", e))?
+            {
+                let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+                let path = entry.path();
+
+                if path.extension().map_or(false, |ext| ext == "ron") {
+                    match self.load_blueprint_file(&path) {
+                        Ok(blueprint) => {
+                            log::info!("Loaded blueprint: {}", blueprint.name);
+                            self.blueprints.insert(blueprint.name.clone(), blueprint);
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to load blueprint {:?}: {}", path, e);
+                        }
                     }
                 }
             }
-        }
 
-        log::info!("Loaded {} blueprints", self.blueprints.len());
-        Ok(())
+            log::info!("Loaded {} blueprints", self.blueprints.len());
+            Ok(())
+        }
+    }
+
+    /// Seed the registry with the four bundled sample blueprints. Used on wasm
+    /// where there's no filesystem to scan, and as a starter set on first run.
+    pub fn load_embedded_defaults(&mut self) {
+        const DEFAULT_BLUEPRINTS: &[(&str, &str)] = &[
+            ("Moon_Rocket",          include_str!("../../data/blueprints/Moon_Rocket.ron")),
+            ("Orbital_Crew_Rocket",  include_str!("../../data/blueprints/Orbital_Crew_Rocket.ron")),
+            ("Relativity_test",      include_str!("../../data/blueprints/Relativity_test.ron")),
+            ("Suborbital_Probe",     include_str!("../../data/blueprints/Suborbital_Probe.ron")),
+        ];
+        for (name, content) in DEFAULT_BLUEPRINTS {
+            match ron::from_str::<VesselBlueprint>(content) {
+                Ok(bp) => {
+                    self.blueprints.insert(bp.name.clone(), bp);
+                }
+                Err(e) => log::warn!("Failed to parse embedded blueprint {}: {}", name, e),
+            }
+        }
+        log::info!("Seeded {} default blueprints", self.blueprints.len());
     }
 
     /// Load a single blueprint file
@@ -60,34 +104,44 @@ impl BlueprintRegistry {
             .map_err(|e| format!("Failed to parse RON: {}", e))
     }
 
-    /// Save a blueprint to disk
+    /// Save a blueprint. Desktop persists to disk; wasm persists to IndexedDB.
     pub fn save(&mut self, blueprint: VesselBlueprint) -> Result<(), String> {
-        // Validate the blueprint
         blueprint.validate()?;
-
-        let filename = sanitize_filename(&blueprint.name);
-        let path = self.directory.join(format!("{}.ron", filename));
 
         let content = ron::ser::to_string_pretty(&blueprint, ron::ser::PrettyConfig::default())
             .map_err(|e| format!("Failed to serialize blueprint: {}", e))?;
 
-        fs::write(&path, content)
-            .map_err(|e| format!("Failed to write file: {}", e))?;
+        #[cfg(target_arch = "wasm32")]
+        {
+            crate::save::wasm_storage::write_blueprint(&blueprint.name, content);
+            log::info!("Saved blueprint '{}' to IndexedDB", blueprint.name);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let filename = sanitize_filename(&blueprint.name);
+            let path = self.directory.join(format!("{}.ron", filename));
+            fs::write(&path, &content)
+                .map_err(|e| format!("Failed to write file: {}", e))?;
+            log::info!("Saved blueprint '{}' to {:?}", blueprint.name, path);
+        }
 
-        log::info!("Saved blueprint '{}' to {:?}", blueprint.name, path);
         self.blueprints.insert(blueprint.name.clone(), blueprint);
-
         Ok(())
     }
 
-    /// Delete a blueprint
+    /// Delete a blueprint. Desktop removes the file; wasm clears the IDB record.
     pub fn delete(&mut self, name: &str) -> Result<(), String> {
-        let filename = sanitize_filename(name);
-        let path = self.directory.join(format!("{}.ron", filename));
+        #[cfg(target_arch = "wasm32")]
+        crate::save::wasm_storage::delete_blueprint(name);
 
-        if path.exists() {
-            fs::remove_file(&path)
-                .map_err(|e| format!("Failed to delete file: {}", e))?;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let filename = sanitize_filename(name);
+            let path = self.directory.join(format!("{}.ron", filename));
+            if path.exists() {
+                fs::remove_file(&path)
+                    .map_err(|e| format!("Failed to delete file: {}", e))?;
+            }
         }
 
         self.blueprints.remove(name);

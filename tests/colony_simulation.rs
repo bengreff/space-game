@@ -6,12 +6,12 @@
 //! - Independent per-building degradation (C6)
 
 use std::collections::HashMap;
-use sunscatter::bodies::SolarSystem;
-use sunscatter::colony::{
+use sunscatter_app::bodies::SolarSystem;
+use sunscatter_app::colony::{
     BuildingInstance, BuildingType, Colony, ResourceType, TechTree,
 };
-use sunscatter::colony::simulation::simulate_colony_tick;
-use sunscatter::parts::{
+use sunscatter_app::colony::simulation::simulate_colony_tick;
+use sunscatter_app::parts::{
     parts_to_blueprint, AttachmentType, FuelType, PlacedPart, PlacedPartId,
 };
 

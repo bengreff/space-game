@@ -433,17 +433,17 @@ pub struct Game {
 
 impl Game {
     pub fn new() -> Self {
-        // Load part definitions
-        let part_definitions = PartDefinitions::load_from_directory("data/parts")
-            .unwrap_or_else(|e| {
-                log::error!("Failed to load parts: {}", e);
-                PartDefinitions::new()
-            });
+        // Load part definitions (embedded on wasm, filesystem on desktop).
+        let part_definitions = PartDefinitions::load_default();
 
-        // Load blueprints
+        // Load blueprints. Desktop scans data/blueprints/; wasm starts empty
+        // and seeds defaults below.
         let mut blueprints = BlueprintRegistry::new("data/blueprints");
         if let Err(e) = blueprints.load_all() {
             log::error!("Failed to load blueprints: {}", e);
+        }
+        if blueprints.is_empty() {
+            blueprints.load_embedded_defaults();
         }
 
         // Initialize solar system
@@ -456,8 +456,8 @@ impl Game {
         // Create editor state
         let editor = EditorState::new();
 
-        // Load tech tree
-        let tech_tree = TechTree::load("data/tech/tree.ron")
+        // Load tech tree (embedded on wasm, filesystem on desktop).
+        let tech_tree = TechTree::load_default()
             .unwrap_or_else(|e| {
                 log::error!("Failed to load tech tree: {}", e);
                 TechTree::default()
@@ -522,7 +522,7 @@ impl Game {
         self.colony_view_body_index = None;
         self.colony_return_mode = None;
         self.tech_tree_return_mode = None;
-        self.tech_tree = TechTree::load("data/tech/tree.ron")
+        self.tech_tree = TechTree::load_default()
             .unwrap_or_else(|e| {
                 log::error!("Failed to load tech tree: {}", e);
                 TechTree::default()

@@ -1,10 +1,10 @@
 mod common;
 
-use sunscatter::galaxy::generation::generate_sector;
-use sunscatter::galaxy::density::sector_star_count;
-use sunscatter::galaxy::prng::Rng64;
-use sunscatter::galaxy::star_color::stellar_color;
-use sunscatter::galaxy::solve_kepler_nr;
+use sunscatter_app::galaxy::generation::generate_sector;
+use sunscatter_app::galaxy::density::sector_star_count;
+use sunscatter_app::galaxy::prng::Rng64;
+use sunscatter_app::galaxy::star_color::stellar_color;
+use sunscatter_app::galaxy::solve_kepler_nr;
 
 const GALAXY_SEED: u64 = 0xDEAD_BEEF_CAFE_1234;
 
@@ -36,7 +36,7 @@ fn no_procedural_stars_near_sun() {
     // We use the same calculation as in generation.rs to find the Sun's position
     let sun_pos = {
         let (a, e, m0) = (1.996e20_f64, 0.07_f64, 4.8534_f64);
-        let big_e = sunscatter::galaxy::solve_kepler_nr(m0, e);
+        let big_e = sunscatter_app::galaxy::solve_kepler_nr(m0, e);
         let nu = 2.0 * ((1.0 + e).sqrt() * (big_e / 2.0).sin())
             .atan2((1.0 - e).sqrt() * (big_e / 2.0).cos());
         let r = a * (1.0 - e * big_e.cos());
@@ -48,7 +48,7 @@ fn no_procedural_stars_near_sun() {
     let exclusion_r = exclusion_ly * ly;
 
     // Get Sun's sector
-    let sun_sector = sunscatter::bodies::position_to_sector(sun_pos)
+    let sun_sector = sunscatter_app::bodies::position_to_sector(sun_pos)
         .expect("Sun should be in a valid sector");
 
     // Check Sun's sector + all 8 neighbors
@@ -81,13 +81,13 @@ fn solar_neighborhood_reasonable_count() {
     // Use the Sun's actual sector
     let sun_pos = {
         let (a, e, m0) = (1.996e20_f64, 0.07_f64, 4.8534_f64);
-        let big_e = sunscatter::galaxy::solve_kepler_nr(m0, e);
+        let big_e = sunscatter_app::galaxy::solve_kepler_nr(m0, e);
         let nu = 2.0 * ((1.0 + e).sqrt() * (big_e / 2.0).sin())
             .atan2((1.0 - e).sqrt() * (big_e / 2.0).cos());
         let r = a * (1.0 - e * big_e.cos());
         [r * nu.cos(), r * nu.sin()]
     };
-    let sun_sector = sunscatter::bodies::position_to_sector(sun_pos).unwrap();
+    let sun_sector = sunscatter_app::bodies::position_to_sector(sun_pos).unwrap();
 
     let count = sector_star_count(sun_sector.x, sun_sector.y, GALAXY_SEED);
     assert!(count >= 100 && count <= 2000,

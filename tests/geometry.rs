@@ -1,6 +1,6 @@
 mod common;
 
-use sunscatter::render::{create_ship_triangle, create_circle, create_ring};
+use sunscatter_app::render::{create_ship_triangle, create_circle, create_ring};
 
 #[test]
 fn ship_triangle_3_vertices() {

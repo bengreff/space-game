@@ -1,6 +1,6 @@
 mod common;
 
-use sunscatter::ship::{lorentz_gamma, gravitational_time_factor, relativistic_cruise_velocity, SPEED_OF_LIGHT};
+use sunscatter_app::ship::{lorentz_gamma, gravitational_time_factor, relativistic_cruise_velocity, SPEED_OF_LIGHT};
 
 #[test]
 fn lorentz_gamma_zero_speed() {

@@ -1,6 +1,6 @@
 mod common;
 
-use sunscatter::save::SaveGame;
+use sunscatter_app::save::SaveGame;
 
 #[test]
 fn default_save_loads() {

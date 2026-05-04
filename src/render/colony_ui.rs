@@ -1463,7 +1463,7 @@ pub fn render_colony_screen(
     date_str: &str,
     paused: bool,
     can_return_to_flight: bool,
-    active_toasts: &[(String, std::time::Instant)],
+    active_toasts: &[(String, web_time::Instant)],
     solar_power_factor: f64,
     tech_tree: &crate::colony::TechTree,
     fleet: &FleetManager,

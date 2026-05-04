@@ -1,8 +1,14 @@
 //! Body texture loading — loads pre-baked polar projection PNGs from data/textures/bodies/,
 //! builds a texture_2d_array + sampler, and provides a mapping from body index → layer index.
 
+// On wasm we ship without bundled body textures (Phase 6 lazy-fetches them); the
+// disc-bleed / average-color helpers and `load_body_textures_native` are dead
+// code there. Silence the warnings to keep the wasm build output clean.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 use std::collections::HashMap;
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 
 const TEXTURE_SIZE: u32 = 1024;
@@ -131,6 +137,27 @@ pub fn load_body_textures(
     queue: &wgpu::Queue,
     body_names: &[String],
 ) -> (wgpu::TextureView, wgpu::Sampler, BodyTextureMap) {
+    // On wasm we ship without bundled body textures (~186 MB on disk). Phase 6
+    // will lazily fetch them per-body. For now every body renders as a
+    // pre-baked flat-color disc, so we hand back an empty layer map paired
+    // with a 1-layer dummy texture to keep the bind group valid.
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = body_names;
+        create_empty_body_textures(device, queue)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        load_body_textures_native(device, queue, body_names)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_body_textures_native(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    body_names: &[String],
+) -> (wgpu::TextureView, wgpu::Sampler, BodyTextureMap) {
     let texture_dir = Path::new("data/textures/bodies");
 
     // Build a set of real body name stems so we can identify extras
@@ -191,34 +218,38 @@ pub fn load_body_textures(
         extra_start.min(body_paths.len()),
         body_paths.len().saturating_sub(extra_start).saturating_sub(if galaxy_path.exists() { 1 } else { 0 }));
 
-    // Decode, resize, bleed, and compute average color — all in parallel
-    let decoded: Vec<(usize, image::RgbaImage, String, [f32; 4])> = body_paths.into_par_iter()
-        .filter_map(|(body_idx, path, stem)| {
-            match image::open(&path) {
-                Ok(img) => {
-                    let rgba = img.to_rgba8();
-                    let (w, h) = rgba.dimensions();
-                    let mut final_img = if w != TEXTURE_SIZE || h != TEXTURE_SIZE {
-                        image::imageops::resize(&rgba, TEXTURE_SIZE, TEXTURE_SIZE, image::imageops::FilterType::Triangle)
-                    } else {
-                        rgba
-                    };
-                    let avg_color = if body_idx != usize::MAX {
-                        bleed_disc_edges(&mut final_img);
-                        compute_average_disc_color(&final_img)
-                    } else {
-                        [0.0; 4]
-                    };
-                    log::info!("Loaded texture: {}", path.display());
-                    Some((body_idx, final_img, stem, avg_color))
-                }
-                Err(e) => {
-                    log::warn!("Failed to load texture {}: {}", path.display(), e);
-                    None
-                }
+    // Decode, resize, bleed, and compute average color — parallel on native, serial on wasm.
+    let decode_one = |(body_idx, path, stem): (usize, std::path::PathBuf, String)| -> Option<(usize, image::RgbaImage, String, [f32; 4])> {
+        match image::open(&path) {
+            Ok(img) => {
+                let rgba = img.to_rgba8();
+                let (w, h) = rgba.dimensions();
+                let mut final_img = if w != TEXTURE_SIZE || h != TEXTURE_SIZE {
+                    image::imageops::resize(&rgba, TEXTURE_SIZE, TEXTURE_SIZE, image::imageops::FilterType::Triangle)
+                } else {
+                    rgba
+                };
+                let avg_color = if body_idx != usize::MAX {
+                    bleed_disc_edges(&mut final_img);
+                    compute_average_disc_color(&final_img)
+                } else {
+                    [0.0; 4]
+                };
+                log::info!("Loaded texture: {}", path.display());
+                Some((body_idx, final_img, stem, avg_color))
             }
-        })
-        .collect();
+            Err(e) => {
+                log::warn!("Failed to load texture {}: {}", path.display(), e);
+                None
+            }
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let decoded: Vec<(usize, image::RgbaImage, String, [f32; 4])> =
+        body_paths.into_par_iter().filter_map(decode_one).collect();
+    #[cfg(target_arch = "wasm32")]
+    let decoded: Vec<(usize, image::RgbaImage, String, [f32; 4])> =
+        body_paths.into_iter().filter_map(decode_one).collect();
 
     // Sort to get deterministic layer ordering (real bodies first by index, extras, galaxy last)
     let mut images = decoded;
@@ -308,4 +339,76 @@ pub fn load_body_textures(
     });
 
     (view, sampler, BodyTextureMap { layers, name_layers, name_colors, galaxy_layer: galaxy_layer_idx })
+}
+
+/// Create a 1-layer 1×1 transparent texture array + a `BodyTextureMap` whose
+/// `layer_for_body` always returns `None`. Used on wasm in Phase 3 (and as a
+/// placeholder before lazy fetches resolve in Phase 6).
+pub fn create_empty_body_textures(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> (wgpu::TextureView, wgpu::Sampler, BodyTextureMap) {
+    // Use 2 layers (not 1) so the GLES backend's heuristic correctly infers a
+    // D2Array view dimension for binding. A 1-layer D2 texture with a D2Array
+    // view triggers a wgpu-hal warning and may break sampling on WebGL2.
+    const LAYERS: u32 = 2;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Body Texture Array (empty)"),
+        size: wgpu::Extent3d {
+            width: TEXTURE_SIZE,
+            height: TEXTURE_SIZE,
+            depth_or_array_layers: LAYERS,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    // Fill all layers with transparent black so the bind group is valid.
+    let blank = vec![0u8; (TEXTURE_SIZE * TEXTURE_SIZE * 4) as usize];
+    for layer in 0..LAYERS {
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: 0, y: 0, z: layer },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &blank,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * TEXTURE_SIZE),
+                rows_per_image: Some(TEXTURE_SIZE),
+            },
+            wgpu::Extent3d {
+                width: TEXTURE_SIZE,
+                height: TEXTURE_SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("Body Texture Sampler (empty)"),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+
+    (view, sampler, BodyTextureMap {
+        layers: HashMap::new(),
+        name_layers: HashMap::new(),
+        name_colors: HashMap::new(),
+        galaxy_layer: None,
+    })
 }
