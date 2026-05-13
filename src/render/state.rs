@@ -156,8 +156,13 @@ pub struct RenderState {
     pub debug_menu_open: bool,
     pub debug_infinite_fuel: bool,
     // Body textures
+    pub body_texture: wgpu::Texture,
     pub body_texture_bind_group: wgpu::BindGroup,
     pub body_texture_map: BodyTextureMap,
+    /// Lazy fetcher used on wasm to populate `body_texture` layers from
+    /// `/textures/bodies/<name>.png` as the user zooms in. None on native.
+    #[cfg(target_arch = "wasm32")]
+    pub body_texture_fetcher: super::body_fetcher::BodyTextureFetcher,
     // Sprite atlas
     pub sprite_atlas: super::sprites::SpriteAtlas,
     pub plume_start_time: web_time::Instant,
@@ -312,9 +317,9 @@ impl RenderState {
 
         // Load body textures
         let t_tex = web_time::Instant::now();
-        let (body_texture_view, body_sampler, body_texture_map) =
+        let (body_texture, body_texture_view, body_sampler, body_texture_map) =
             super::textures::load_body_textures(&device, &queue, body_names);
-        println!("    Body textures: {:.0?}", t_tex.elapsed());
+        log::info!("    Body textures: {:.0?}", t_tex.elapsed());
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -591,8 +596,13 @@ impl RenderState {
             num_real_bodies: 0,
             catalog_body_info: std::collections::HashMap::new(),
             active_toasts: Vec::new(),
+            body_texture,
             body_texture_bind_group,
             body_texture_map,
+            #[cfg(target_arch = "wasm32")]
+            body_texture_fetcher: super::body_fetcher::BodyTextureFetcher::new(
+                super::textures::WASM_BODY_TEXTURE_CAPACITY,
+            ),
             sprite_atlas,
             plume_start_time,
             egui_ctx,

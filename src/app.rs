@@ -2025,6 +2025,44 @@ fn render_flight_frame(
     render_state.num_real_bodies = num_real_bodies;
     render_state.track_catalog_body(&bodies, SCALE);
 
+    // Phase 6: on wasm, lazy-fetch body PNGs as the user zooms in. Fetches
+    // are deduped inside the fetcher; uploads land in free layers of the
+    // pre-allocated array and immediately update `body_texture_map`.
+    #[cfg(target_arch = "wasm32")]
+    {
+        const FETCH_THRESHOLD_PX: f32 = 16.0;
+        let pixels_per_world_unit = render_state.camera.zoom * render_state.size.height as f32 / 2.0;
+        for (_array_idx, &(_, _, radius_m, _, _, _, body_idx)) in bodies.iter().enumerate() {
+            if radius_m <= 0.0 { continue; }
+            let pixel_radius = (radius_m * SCALE * BODY_SCALE) as f32 * pixels_per_world_unit;
+            if pixel_radius < FETCH_THRESHOLD_PX { continue; }
+            let Some(name) = body_names.get(body_idx) else { continue };
+            if name.is_empty() { continue; }
+            let tex_name = name.to_lowercase().replace(' ', "_");
+            render_state.body_texture_fetcher.request_fetch(&tex_name);
+        }
+
+        // Apply any decoded textures to GPU layers, populating name_layers.
+        // Borrow disjoint fields directly so the borrow checker can split them.
+        let RenderState {
+            body_texture_fetcher,
+            device,
+            queue,
+            body_texture,
+            body_texture_map,
+            ..
+        } = &mut *render_state;
+        body_texture_fetcher.drain_uploads(device, queue, body_texture, body_texture_map);
+
+        // Backfill body_idx → layer mappings for any bodies whose texture has
+        // arrived since last frame. Idempotent; cheap (few hundred map ops).
+        for (body_idx, name) in body_names.iter().enumerate() {
+            if !name.is_empty() {
+                render_state.body_texture_map.register_body_index(body_idx, name);
+            }
+        }
+    }
+
     render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, Some(&ship_render), SCALE, Some(&game.part_definitions), &background_vessels, &accretion_discs, in_galaxy_view, &procedural_stars);
 
     // Compute target angle for navigation target

@@ -20,6 +20,7 @@ const PADDING: u32 = 1;
 
 fn main() {
     println!("cargo:rerun-if-changed=data/sprites");
+    println!("cargo:rerun-if-changed=data/textures/bodies");
     println!("cargo:rerun-if-changed=build.rs");
 
     let target = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
@@ -28,13 +29,103 @@ fn main() {
     }
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR set by cargo"));
+
     let sprite_dir = Path::new("data/sprites");
-    if !sprite_dir.exists() {
+    if sprite_dir.exists() {
+        pack_atlas(sprite_dir, &out_dir);
+    } else {
         eprintln!("data/sprites missing; skipping wasm atlas pack");
-        return;
     }
 
-    pack_atlas(sprite_dir, &out_dir);
+    let bodies_dir = Path::new("data/textures/bodies");
+    if bodies_dir.exists() {
+        bake_body_colors(bodies_dir, &out_dir);
+    } else {
+        eprintln!("data/textures/bodies missing; skipping body color bake");
+    }
+}
+
+/// Walk every body texture PNG, compute its average disc color (mirrors the
+/// runtime logic in `src/render/textures.rs::compute_average_disc_color`),
+/// and emit a `body_colors.ron` map. The wasm runtime embeds this so that
+/// pre-fetch flat-color rendering matches what the desktop's `BodyTextureMap`
+/// would have produced from the actual PNG.
+fn bake_body_colors(bodies_dir: &Path, out_dir: &Path) {
+    let Ok(rd) = fs::read_dir(bodies_dir) else { return };
+
+    let mut entries: Vec<(String, [f32; 4])> = Vec::new();
+    for entry in rd.flatten() {
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if !matches!(ext, "png" | "jpg" | "jpeg") { continue; }
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_lowercase(),
+            None => continue,
+        };
+        match image::open(&path) {
+            Ok(img) => {
+                let rgba = img.to_rgba8();
+                entries.push((stem, average_disc_color(&rgba)));
+            }
+            Err(e) => eprintln!("bake_body_colors decode {}: {}", path.display(), e),
+        }
+    }
+
+    // Stable ordering for reproducible builds.
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut out = String::new();
+    let _ = writeln!(out, "{{");
+    for (name, [r, g, b, a]) in &entries {
+        let _ = writeln!(
+            out, "    \"{}\": ({}, {}, {}, {}),", name, r, g, b, a,
+        );
+    }
+    let _ = writeln!(out, "}}");
+
+    let path = out_dir.join("body_colors.ron");
+    fs::write(&path, out).unwrap_or_else(|e| panic!("write {}: {}", path.display(), e));
+    eprintln!("baked {} body disc colors -> {}", entries.len(), path.display());
+}
+
+fn average_disc_color(img: &image::RgbaImage) -> [f32; 4] {
+    let (w, h) = img.dimensions();
+    let cx = w as f64 / 2.0;
+    let cy = h as f64 / 2.0;
+    let disc_r = (w as f64 / 2.0) - 4.0;
+
+    let mut r_sum = 0.0f64;
+    let mut g_sum = 0.0f64;
+    let mut b_sum = 0.0f64;
+    let mut count = 0u64;
+
+    for y in (0..h).step_by(4) {
+        for x in (0..w).step_by(4) {
+            let dx = x as f64 - cx;
+            let dy = y as f64 - cy;
+            if dx * dx + dy * dy <= disc_r * disc_r {
+                let p = img.get_pixel(x, y);
+                r_sum += p[0] as f64;
+                g_sum += p[1] as f64;
+                b_sum += p[2] as f64;
+                count += 1;
+            }
+        }
+    }
+    if count == 0 { return [0.5, 0.5, 0.5, 1.0]; }
+
+    let mut r = (r_sum / count as f64 / 255.0) as f32;
+    let mut g = (g_sum / count as f64 / 255.0) as f32;
+    let mut b = (b_sum / count as f64 / 255.0) as f32;
+
+    let max_ch = r.max(g).max(b);
+    if max_ch > 0.0 && max_ch < 0.45 {
+        let scale = 0.45 / max_ch;
+        r *= scale;
+        g *= scale;
+        b *= scale;
+    }
+    [r, g, b, 1.0]
 }
 
 struct SpriteEntry {
