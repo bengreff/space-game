@@ -61,6 +61,10 @@ pub enum EditorAction {
     SaveBlueprint(String),
     LoadBlueprint(String),
     DeleteBlueprint(String),
+    /// Pick a blueprint `.ron` from disk and install it into the registry.
+    ImportBlueprint,
+    /// Save the blueprint with this stored name to a user-chosen file location.
+    ExportBlueprint(String),
     NewVessel,
     OpenContracts,
 }
@@ -1298,6 +1302,15 @@ pub fn render_editor_ui(
             .collapsible(false)
             .resizable(false)
             .show(ctx, |ui| {
+                let import_btn = ui.button("Import Blueprint File\u{2026}");
+                if import_btn.clicked() {
+                    action = EditorAction::ImportBlueprint;
+                }
+                import_btn.on_hover_text(
+                    "Pick a .ron blueprint from disk (e.g. one downloaded from a community share)",
+                );
+                ui.add_space(8.0);
+
                 if blueprint_names.is_empty() {
                     ui.label("No saved blueprints");
                 } else {
@@ -1312,6 +1325,9 @@ pub fn render_editor_ui(
                                 } else if ui.button(*name).clicked() {
                                     action = EditorAction::LoadBlueprint(name.to_string());
                                     editor.show_load_dialog = false;
+                                }
+                                if ui.small_button("\u{2913}").on_hover_text("Export as .ron").clicked() {
+                                    action = EditorAction::ExportBlueprint(name.to_string());
                                 }
                                 if ui.small_button("🗑").on_hover_text("Delete").clicked() {
                                     action = EditorAction::DeleteBlueprint(name.to_string());

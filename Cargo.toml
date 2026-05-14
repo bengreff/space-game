@@ -51,6 +51,11 @@ env_logger = "0.11"
 rayon = "1.10"
 # Re-enable arboard-backed clipboard on desktop (native windowing only).
 egui-winit = { version = "0.27", default-features = false, features = ["clipboard", "links"] }
+# Resolves platform-appropriate user-data directories for saves and blueprints.
+directories = "5"
+# Native file dialogs for save/blueprint import + export. Sync API only;
+# uses AppKit on macOS, GTK3 on Linux, Win32 on Windows.
+rfd = "0.14"
 
 # Wasm-only deps. Loaded by Trunk + browser; not used on native targets.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

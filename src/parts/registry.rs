@@ -24,8 +24,9 @@ impl BlueprintRegistry {
 
     /// Load all blueprints from the registry directory.
     /// On wasm this loads user-saved blueprints from the IndexedDB cache
-    /// (`init_storage` must have run); use `load_embedded_defaults` separately
-    /// to seed the four canonical sample blueprints.
+    /// (`init_storage` must have run); on desktop it scans the platform
+    /// blueprints dir. A fresh install has no blueprints — the player adds
+    /// them via Save Blueprint in the editor or Import in the UI.
     pub fn load_all(&mut self) -> Result<(), String> {
         #[cfg(target_arch = "wasm32")]
         {
@@ -73,26 +74,6 @@ impl BlueprintRegistry {
             log::info!("Loaded {} blueprints", self.blueprints.len());
             Ok(())
         }
-    }
-
-    /// Seed the registry with the four bundled sample blueprints. Used on wasm
-    /// where there's no filesystem to scan, and as a starter set on first run.
-    pub fn load_embedded_defaults(&mut self) {
-        const DEFAULT_BLUEPRINTS: &[(&str, &str)] = &[
-            ("Moon_Rocket",          include_str!("../../data/blueprints/Moon_Rocket.ron")),
-            ("Orbital_Crew_Rocket",  include_str!("../../data/blueprints/Orbital_Crew_Rocket.ron")),
-            ("Relativity_test",      include_str!("../../data/blueprints/Relativity_test.ron")),
-            ("Suborbital_Probe",     include_str!("../../data/blueprints/Suborbital_Probe.ron")),
-        ];
-        for (name, content) in DEFAULT_BLUEPRINTS {
-            match ron::from_str::<VesselBlueprint>(content) {
-                Ok(bp) => {
-                    self.blueprints.insert(bp.name.clone(), bp);
-                }
-                Err(e) => log::warn!("Failed to parse embedded blueprint {}: {}", name, e),
-            }
-        }
-        log::info!("Seeded {} default blueprints", self.blueprints.len());
     }
 
     /// Load a single blueprint file
@@ -190,7 +171,7 @@ impl BlueprintRegistry {
 }
 
 /// Sanitize a string to be safe for use as a filename
-fn sanitize_filename(name: &str) -> String {
+pub(crate) fn sanitize_filename(name: &str) -> String {
     name.chars()
         .map(|c| {
             if c.is_alphanumeric() || c == '-' || c == '_' {

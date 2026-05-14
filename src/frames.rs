@@ -335,20 +335,17 @@ pub fn render_title_screen_frame(
                                 ui.heading(egui::RichText::new("Load Game").size(28.0).color(egui::Color32::WHITE));
                                 ui.add_space(20.0);
 
-                                #[cfg(target_arch = "wasm32")]
-                                {
-                                    let import_btn = ui.button(egui::RichText::new("Import Save File\u{2026}").size(15.0));
-                                    if import_btn.clicked() {
-                                        action = TitleScreenAction::ImportSave;
-                                    }
-                                    import_btn.on_hover_text(
-                                        "Pick a .ron save (e.g. from data/saves/<name>/save.ron on the desktop build)",
-                                    );
-                                    ui.add_space(10.0);
+                                let import_btn = ui.button(egui::RichText::new("Import Save File\u{2026}").size(15.0));
+                                if import_btn.clicked() {
+                                    action = TitleScreenAction::ImportSave;
                                 }
+                                import_btn.on_hover_text(
+                                    "Pick a .ron save file from disk",
+                                );
+                                ui.add_space(10.0);
 
                                 if save_list.is_empty() {
-                                    ui.label(egui::RichText::new("No saves found").color(egui::Color32::GRAY));
+                                    ui.label(egui::RichText::new("No saves yet — start a New Game or Import\u{2026}").color(egui::Color32::GRAY));
                                 } else {
                                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                                         for save in save_list {
@@ -360,10 +357,7 @@ pub fn render_title_screen_frame(
                                             );
                                             ui.horizontal(|ui| {
                                                 let total_width = ui.available_width();
-                                                #[cfg(target_arch = "wasm32")]
                                                 let row_button_width = total_width - 56.0;
-                                                #[cfg(not(target_arch = "wasm32"))]
-                                                let row_button_width = total_width - 30.0;
                                                 let button_resp = ui.add_sized(
                                                     [row_button_width, 0.0],
                                                     egui::Button::new(egui::RichText::new(&label).size(16.0)),
@@ -371,18 +365,15 @@ pub fn render_title_screen_frame(
                                                 if button_resp.clicked() {
                                                     action = TitleScreenAction::LoadGame(save.save_id.clone());
                                                 }
-                                                #[cfg(target_arch = "wasm32")]
-                                                {
-                                                    let export_btn = ui.small_button(
-                                                        egui::RichText::new("\u{2913}") // ⤓ download
-                                                            .size(16.0)
-                                                            .color(egui::Color32::from_rgb(120, 180, 220)),
-                                                    );
-                                                    if export_btn.clicked() {
-                                                        action = TitleScreenAction::ExportSave(save.save_id.clone());
-                                                    }
-                                                    export_btn.on_hover_text("Download save as .ron");
+                                                let export_btn = ui.small_button(
+                                                    egui::RichText::new("\u{2913}")
+                                                        .size(16.0)
+                                                        .color(egui::Color32::from_rgb(120, 180, 220)),
+                                                );
+                                                if export_btn.clicked() {
+                                                    action = TitleScreenAction::ExportSave(save.save_id.clone());
                                                 }
+                                                export_btn.on_hover_text("Export save as .ron");
                                                 let delete_btn = ui.small_button(
                                                     egui::RichText::new("\u{00d7}")
                                                         .size(16.0)
@@ -503,20 +494,10 @@ pub fn render_title_screen_frame(
                     return;
                 }
                 TitleScreenAction::ImportSave => {
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        crate::save::wasm_io::import_save();
-                    }
+                    crate::save::io::import_save();
                 }
                 TitleScreenAction::ExportSave(save_id) => {
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        crate::save::wasm_io::export_save(save_id);
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        let _ = save_id;
-                    }
+                    crate::save::io::export_save(save_id);
                 }
                 TitleScreenAction::QuitGame => {
                     elwt.exit();
@@ -1631,6 +1612,19 @@ pub fn render_editor_frame(
                 Ok(()) => log::info!("Blueprint deleted: {}", name),
                 Err(e) => log::error!("Failed to delete blueprint: {}", e),
             }
+        }
+        EditorAction::ImportBlueprint => {
+            crate::save::io::import_blueprint();
+            // Refresh the in-memory registry so the imported blueprint appears
+            // in the palette. Native: blocks on rfd, registry is up-to-date.
+            // Wasm: spawn_local writes to IDB async; load_all reads from the
+            // synchronous IDB cache that write_blueprint updates immediately.
+            if let Err(e) = game.blueprints.load_all() {
+                log::warn!("Refresh after import: {}", e);
+            }
+        }
+        EditorAction::ExportBlueprint(name) => {
+            crate::save::io::export_blueprint(&name);
         }
         EditorAction::NewVessel => {
             game.new_vessel();

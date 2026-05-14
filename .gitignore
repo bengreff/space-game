@@ -14,9 +14,14 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
-# Game saves and user data
-/saves/
-/blueprints/user/
+# Game saves and user data — live in the platform user-data dir on desktop
+# (~/Library/Application Support/sunscatter/ on macOS) and IndexedDB on wasm.
+# Never tracked in the repo.
+/data/saves/
+/data/blueprints/
+
+# Test fixture output (e.g. tests/generate_mass_driver_save.rs).
+/target/test_artifacts/
 
 # Build artifacts
 *.log

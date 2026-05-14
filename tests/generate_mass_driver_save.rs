@@ -386,6 +386,10 @@ fn generate_mass_driver_test_save() {
         editor_blueprint: None,
     };
 
-    save.write_to_file().expect("Failed to write test save file");
-    println!("Save written to data/saves/Mass_Driver_Test/save.ron");
+    let out_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target/test_artifacts");
+    let written = save
+        .write_to_path(&out_dir)
+        .expect("Failed to write test save file");
+    println!("Save written to {}", written.display());
 }

@@ -5,7 +5,7 @@
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::colony::{ColonyManager, Company, ContractManager, DysonSwarm, FleetManager, Notification, ScienceState};
 use crate::game::{Game, VesselId, TrackedVessel};
@@ -19,7 +19,19 @@ pub mod wasm_storage;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_io;
 
-const SAVE_DIR: &str = "data/saves";
+#[cfg(not(target_arch = "wasm32"))]
+pub mod paths;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native_io;
+
+/// Platform-agnostic re-export of the file import/export helpers. Both
+/// platforms expose `import_save()`, `export_save(save_id)`,
+/// `import_blueprint()`, `export_blueprint(name)`.
+#[cfg(target_arch = "wasm32")]
+pub use wasm_io as io;
+#[cfg(not(target_arch = "wasm32"))]
+pub use native_io as io;
 
 /// Deserialize ContractManager with fallback to default for old save formats.
 /// Old saves have Contract { contract_type, objective_met } which is incompatible
@@ -39,6 +51,11 @@ where
     }
 }
 const SAVE_VERSION: u32 = 1;
+
+/// How many quicksaves to keep per save game. After every quicksave, older
+/// ones beyond this cap are deleted (oldest by index first). Mirrored on
+/// desktop (filesystem) and wasm (IndexedDB).
+pub const MAX_QUICKSAVES_PER_SAVE: usize = 10;
 
 /// Write a file atomically: write to a temp file in the same directory, then rename.
 /// Rename is atomic on all platforms, so a crash mid-write can never corrupt the target.
@@ -221,7 +238,30 @@ impl SaveGame {
         }
     }
 
-    /// Write this save game. On desktop, writes `data/saves/{name}/save.ron`;
+    /// Serialize this save game as a pretty-printed RON string.
+    /// Shared by the production write paths and by tests that need to write
+    /// to an explicit directory.
+    pub fn to_ron(&self) -> Result<String, String> {
+        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
+            .map_err(|e| format!("Failed to serialize save game: {}", e))
+    }
+
+    /// Test-only escape hatch: write `<dir>/<sanitized_name>/save.ron` to
+    /// an explicit directory. Used by fixture-generating tests so they
+    /// don't pollute the player's real save dir.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn write_to_path(&self, dir: &Path) -> Result<std::path::PathBuf, String> {
+        let save_id = sanitize_save_name(&self.name);
+        let content = self.to_ron()?;
+        let target_dir = dir.join(&save_id);
+        fs::create_dir_all(&target_dir)
+            .map_err(|e| format!("create {:?}: {}", target_dir, e))?;
+        let path = target_dir.join("save.ron");
+        atomic_write(&path, &content)?;
+        Ok(path)
+    }
+
+    /// Write this save game. On desktop, writes `<saves_dir>/{name}/save.ron`;
     /// on wasm, writes to the IndexedDB-backed `save:{id}` key.
     pub fn write_to_file(&self) -> Result<(), String> {
         let save_id = sanitize_save_name(&self.name);
@@ -236,7 +276,7 @@ impl SaveGame {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let dir = PathBuf::from(SAVE_DIR).join(&save_id);
+            let dir = paths::saves_dir().join(&save_id);
             if !dir.exists() {
                 fs::create_dir_all(&dir)
                     .map_err(|e| format!("Failed to create save directory: {}", e))?;
@@ -263,7 +303,7 @@ impl SaveGame {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let dir = PathBuf::from(SAVE_DIR).join(&save_id);
+            let dir = paths::saves_dir().join(&save_id);
             if !dir.exists() {
                 fs::create_dir_all(&dir)
                     .map_err(|e| format!("Failed to create save directory: {}", e))?;
@@ -271,6 +311,7 @@ impl SaveGame {
             let next_index = next_quicksave_index(&dir);
             let path = dir.join(format!("quicksave_{}.ron", next_index));
             atomic_write(&path, &content)?;
+            prune_old_quicksaves(&dir);
             log::info!("Quicksaved '{}' as quicksave_{}", self.name, next_index);
             Ok(next_index)
         }
@@ -290,7 +331,7 @@ impl SaveGame {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let dir = PathBuf::from(SAVE_DIR).join(&save_id);
+            let dir = paths::saves_dir().join(&save_id);
             if !dir.exists() {
                 fs::create_dir_all(&dir)
                     .map_err(|e| format!("Failed to create save directory: {}", e))?;
@@ -312,7 +353,7 @@ impl SaveGame {
 
         #[cfg(not(target_arch = "wasm32"))]
         let content = {
-            let path = PathBuf::from(SAVE_DIR).join(&save_id).join("launch.ron");
+            let path = paths::saves_dir().join(&save_id).join("launch.ron");
             fs::read_to_string(&path)
                 .map_err(|e| format!("Failed to read launch save: {}", e))?
         };
@@ -340,11 +381,11 @@ impl SaveGame {
 
         #[cfg(not(target_arch = "wasm32"))]
         let content = {
-            let folder_path = PathBuf::from(SAVE_DIR).join(save_id).join("save.ron");
+            let folder_path = paths::saves_dir().join(save_id).join("save.ron");
             let path = if folder_path.exists() {
                 folder_path
             } else {
-                let legacy_path = PathBuf::from(SAVE_DIR).join(format!("{}.ron", save_id));
+                let legacy_path = paths::saves_dir().join(format!("{}.ron", save_id));
                 if legacy_path.exists() {
                     legacy_path
                 } else {
@@ -379,7 +420,7 @@ impl SaveGame {
 
         #[cfg(not(target_arch = "wasm32"))]
         let content = {
-            let path = PathBuf::from(SAVE_DIR).join(&save_id).join(qs_filename);
+            let path = paths::saves_dir().join(&save_id).join(qs_filename);
             fs::read_to_string(&path)
                 .map_err(|e| format!("Failed to read quicksave: {}", e))?
         };
@@ -406,7 +447,7 @@ impl SaveGame {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-        let dir = Path::new(SAVE_DIR);
+        let dir = &paths::saves_dir();
         if !dir.exists() {
             return Vec::new();
         }
@@ -519,7 +560,7 @@ impl SaveGame {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let folder_path = PathBuf::from(SAVE_DIR).join(save_id);
+            let folder_path = paths::saves_dir().join(save_id);
             if folder_path.is_dir() {
                 fs::remove_dir_all(&folder_path)
                     .map_err(|e| format!("Failed to delete save folder: {}", e))?;
@@ -527,7 +568,7 @@ impl SaveGame {
                 return Ok(());
             }
 
-            let legacy_path = PathBuf::from(SAVE_DIR).join(format!("{}.ron", save_id));
+            let legacy_path = paths::saves_dir().join(format!("{}.ron", save_id));
             if legacy_path.is_file() {
                 fs::remove_file(&legacy_path)
                     .map_err(|e| format!("Failed to delete save file: {}", e))?;
@@ -549,7 +590,7 @@ impl SaveGame {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-        let dir = PathBuf::from(SAVE_DIR).join(&save_id);
+        let dir = paths::saves_dir().join(&save_id);
         if !dir.exists() {
             return Vec::new();
         }
@@ -767,6 +808,29 @@ fn next_quicksave_index(dir: &Path) -> u32 {
     }
 
     max_index + 1
+}
+
+/// Delete oldest quicksaves in `dir` until at most `MAX_QUICKSAVES_PER_SAVE`
+/// remain. Best-effort: failures are logged, not surfaced to the caller —
+/// the new quicksave has already landed and pruning is housekeeping.
+fn prune_old_quicksaves(dir: &Path) {
+    let mut indexed: Vec<(u32, std::path::PathBuf)> = Vec::new();
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else { continue };
+        if let Some(idx) = parse_quicksave_index(name) {
+            indexed.push((idx, path));
+        }
+    }
+    if indexed.len() <= MAX_QUICKSAVES_PER_SAVE { return; }
+    indexed.sort_by_key(|(i, _)| *i);
+    let drop_count = indexed.len() - MAX_QUICKSAVES_PER_SAVE;
+    for (_, path) in indexed.into_iter().take(drop_count) {
+        if let Err(e) = fs::remove_file(&path) {
+            log::warn!("Failed to prune old quicksave {:?}: {}", path, e);
+        }
+    }
 }
 
 pub(crate) fn sanitize_save_name(name: &str) -> String {

@@ -12,6 +12,8 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 
 use super::{sanitize_save_name, wasm_storage, SaveGame};
+use crate::parts::VesselBlueprint;
+use crate::parts::registry::sanitize_filename as blueprint_filename;
 
 /// Trigger a browser download of the save with id `save_id` as
 /// `<save_id>.ron`. Pulls content from the in-memory cache populated by
@@ -63,6 +65,45 @@ fn ingest(content: &str) -> Result<(), String> {
         parsed.vessels.len(),
         save_id,
     );
+    Ok(())
+}
+
+/// Trigger a browser download of the blueprint with this stored `name` as
+/// `<sanitized_name>.ron`. Pulls content from the in-memory IndexedDB cache.
+pub fn export_blueprint(name: &str) {
+    let Some(content) = wasm_storage::load_blueprint_content(name) else {
+        log::warn!("export_blueprint: no blueprint named '{}'", name);
+        return;
+    };
+    let filename = format!("{}.ron", blueprint_filename(name));
+    if let Err(e) = trigger_download(&filename, &content) {
+        log::error!("export_blueprint: {:?}", e);
+    } else {
+        log::info!("Exported blueprint '{}' to download", name);
+    }
+}
+
+/// File picker → parse → write to IndexedDB. The blueprint registry's
+/// `load_all()` reads from the IDB cache, so the next refresh (driven by
+/// the editor's blueprint palette) picks up the new entry.
+pub fn import_blueprint() {
+    spawn_local(async move {
+        match pick_and_read().await {
+            Ok(content) => {
+                if let Err(e) = ingest_blueprint(&content) {
+                    log::error!("Blueprint import failed: {}", e);
+                }
+            }
+            Err(e) => log::info!("Blueprint import cancelled: {}", e),
+        }
+    });
+}
+
+fn ingest_blueprint(content: &str) -> Result<(), String> {
+    let parsed: VesselBlueprint =
+        ron::from_str(content).map_err(|e| format!("parse: {}", e))?;
+    wasm_storage::write_blueprint(&parsed.name, content.to_string());
+    log::info!("Imported blueprint '{}'", parsed.name);
     Ok(())
 }
 

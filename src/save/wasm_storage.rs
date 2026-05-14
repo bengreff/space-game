@@ -365,6 +365,26 @@ pub fn write_quicksave(
         modified_ms,
         content,
     });
+
+    // Enforce the per-save quicksave cap: drop oldest entries (by index)
+    // until the count is at most MAX_QUICKSAVES_PER_SAVE. Mirrors the
+    // desktop pruning in save::prune_old_quicksaves.
+    let to_delete: Vec<String> = STORE.with(|s| {
+        let mut s = s.borrow_mut();
+        let Some(list) = s.quicksaves.get_mut(save_id) else { return Vec::new() };
+        if list.len() <= crate::save::MAX_QUICKSAVES_PER_SAVE { return Vec::new() };
+        list.sort_by_key(|q| q.index);
+        let drop_n = list.len() - crate::save::MAX_QUICKSAVES_PER_SAVE;
+        let dropped: Vec<String> = list
+            .drain(..drop_n)
+            .map(|q| format!("{KEY_QUICKSAVE}{save_id}:{}", q.index))
+            .collect();
+        dropped
+    });
+    for key in to_delete {
+        delete_kv(key);
+    }
+
     next_index
 }
 
@@ -473,4 +493,10 @@ pub fn user_blueprints() -> Vec<(String, String)> {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
     })
+}
+
+/// Look up a single blueprint's RON content by stored name. Used by the
+/// export-blueprint UI.
+pub fn load_blueprint_content(name: &str) -> Option<String> {
+    STORE.with(|s| s.borrow().blueprints.get(name).cloned())
 }

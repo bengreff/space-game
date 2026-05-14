@@ -438,14 +438,15 @@ impl Game {
         // Load part definitions (embedded on wasm, filesystem on desktop).
         let part_definitions = PartDefinitions::load_default();
 
-        // Load blueprints. Desktop scans data/blueprints/; wasm starts empty
-        // and seeds defaults below.
-        let mut blueprints = BlueprintRegistry::new("data/blueprints");
+        // Load blueprints from the platform user-data dir (desktop) or
+        // IndexedDB (wasm). Both start empty on first run; the player
+        // populates them via Save Blueprint / Import.
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut blueprints = BlueprintRegistry::new(crate::save::paths::blueprints_dir());
+        #[cfg(target_arch = "wasm32")]
+        let mut blueprints = BlueprintRegistry::new("");
         if let Err(e) = blueprints.load_all() {
             log::error!("Failed to load blueprints: {}", e);
-        }
-        if blueprints.is_empty() {
-            blueprints.load_embedded_defaults();
         }
 
         // Initialize solar system
