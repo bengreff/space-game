@@ -430,7 +430,7 @@ pub fn create_empty_body_textures(
         ..Default::default()
     });
 
-    let mut map = BodyTextureMap {
+    let map = BodyTextureMap {
         layers: HashMap::new(),
         name_layers: HashMap::new(),
         name_colors: HashMap::new(),
@@ -440,7 +440,8 @@ pub fn create_empty_body_textures(
     // Seed the name → average-color table from the build-time bake so that
     // bodies render in their actual disc color before any texture has loaded.
     #[cfg(target_arch = "wasm32")]
-    {
+    let map = {
+        let mut map = map;
         const BODY_COLORS_RON: &str = include_str!(concat!(env!("OUT_DIR"), "/body_colors.ron"));
         match ron::from_str::<HashMap<String, [f32; 4]>>(BODY_COLORS_RON) {
             Ok(colors) => {
@@ -451,7 +452,8 @@ pub fn create_empty_body_textures(
             }
             Err(e) => log::warn!("Failed to parse embedded body_colors.ron: {}", e),
         }
-    }
+        map
+    };
 
     (texture, view, sampler, map)
 }

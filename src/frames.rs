@@ -332,6 +332,19 @@ pub fn render_title_screen_frame(
                             ui.vertical_centered(|ui| {
                                 ui.heading(egui::RichText::new("Load Game").size(28.0).color(egui::Color32::WHITE));
                                 ui.add_space(20.0);
+
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    let import_btn = ui.button(egui::RichText::new("Import Save File\u{2026}").size(15.0));
+                                    if import_btn.clicked() {
+                                        action = TitleScreenAction::ImportSave;
+                                    }
+                                    import_btn.on_hover_text(
+                                        "Pick a .ron save (e.g. from data/saves/<name>/save.ron on the desktop build)",
+                                    );
+                                    ui.add_space(10.0);
+                                }
+
                                 if save_list.is_empty() {
                                     ui.label(egui::RichText::new("No saves found").color(egui::Color32::GRAY));
                                 } else {
@@ -345,12 +358,28 @@ pub fn render_title_screen_frame(
                                             );
                                             ui.horizontal(|ui| {
                                                 let total_width = ui.available_width();
+                                                #[cfg(target_arch = "wasm32")]
+                                                let row_button_width = total_width - 56.0;
+                                                #[cfg(not(target_arch = "wasm32"))]
+                                                let row_button_width = total_width - 30.0;
                                                 let button_resp = ui.add_sized(
-                                                    [total_width - 30.0, 0.0],
+                                                    [row_button_width, 0.0],
                                                     egui::Button::new(egui::RichText::new(&label).size(16.0)),
                                                 );
                                                 if button_resp.clicked() {
                                                     action = TitleScreenAction::LoadGame(save.save_id.clone());
+                                                }
+                                                #[cfg(target_arch = "wasm32")]
+                                                {
+                                                    let export_btn = ui.small_button(
+                                                        egui::RichText::new("\u{2913}") // ⤓ download
+                                                            .size(16.0)
+                                                            .color(egui::Color32::from_rgb(120, 180, 220)),
+                                                    );
+                                                    if export_btn.clicked() {
+                                                        action = TitleScreenAction::ExportSave(save.save_id.clone());
+                                                    }
+                                                    export_btn.on_hover_text("Download save as .ron");
                                                 }
                                                 let delete_btn = ui.small_button(
                                                     egui::RichText::new("\u{00d7}")
@@ -471,6 +500,22 @@ pub fn render_title_screen_frame(
                     game.title_screen.confirm_delete = None;
                     return;
                 }
+                TitleScreenAction::ImportSave => {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        crate::save::wasm_io::import_save();
+                    }
+                }
+                TitleScreenAction::ExportSave(save_id) => {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        crate::save::wasm_io::export_save(save_id);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let _ = save_id;
+                    }
+                }
                 TitleScreenAction::QuitGame => {
                     elwt.exit();
                 }
@@ -479,11 +524,12 @@ pub fn render_title_screen_frame(
 
             // Sync title_screen UI state back
             game.title_screen.show_new_game = show_new_game;
-            // Populate save list once when load dialog opens
-            if show_load_game && !game.title_screen.show_load_game {
+            // Refresh save list every frame while the load dialog is open
+            // so async imports become visible without the user reopening it.
+            // Reads from an in-memory HashMap, trivially cheap.
+            if show_load_game {
                 game.title_screen.save_list = SaveGame::list_saves();
-            }
-            if !show_load_game {
+            } else {
                 game.title_screen.save_list.clear();
             }
             game.title_screen.show_load_game = show_load_game;

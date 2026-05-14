@@ -260,6 +260,20 @@ pub async fn run() -> Result<(), String> {
                                 render_state.fps = render_state.fps * 0.95 + instant_fps * 0.05;
                             }
 
+                            // Drain any completed body-texture fetches and
+                            // refresh body_idx → layer mappings so menus,
+                            // tracking station, colony, etc. pick up newly
+                            // arrived textures (not just flight mode).
+                            // No-op on native. Catalog planets are still
+                            // registered inside render_flight_frame.
+                            let real_body_names: Vec<String> = game
+                                .solar_system
+                                .bodies
+                                .iter()
+                                .map(|b| b.name.clone())
+                                .collect();
+                            render_state.tick_body_textures(&real_body_names);
+
                             match game.mode {
                                 GameMode::TitleScreen => {
                                     frames::render_title_screen_frame(

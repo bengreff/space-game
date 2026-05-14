@@ -16,6 +16,9 @@ use crate::ship::Ship;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_storage;
 
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_io;
+
 const SAVE_DIR: &str = "data/saves";
 
 /// Deserialize ContractManager with fallback to default for old save formats.
@@ -747,7 +750,7 @@ fn next_quicksave_index(dir: &Path) -> u32 {
     max_index + 1
 }
 
-fn sanitize_save_name(name: &str) -> String {
+pub(crate) fn sanitize_save_name(name: &str) -> String {
     name.chars()
         .map(|c| {
             if c.is_alphanumeric() || c == '-' || c == '_' {

@@ -59,6 +59,18 @@ impl BodyTextureFetcher {
         }
     }
 
+    /// Kick off fetches for every name in `body_names`, lowercased + underscored
+    /// (e.g. "Earth" → "earth"). Used at startup to eagerly load the real
+    /// solar-system bodies so they appear textured immediately in every game
+    /// mode, not just flight mode above the zoom threshold.
+    pub fn prefetch(&mut self, body_names: &[String]) {
+        for name in body_names {
+            if name.is_empty() { continue; }
+            let key = name.to_lowercase().replace(' ', "_");
+            self.request_fetch(&key);
+        }
+    }
+
     /// Kick off a fetch for `texture_name` if we haven't already attempted it
     /// and we still have a free layer. `texture_name` must already be the
     /// canonical lowercase, underscored stem (e.g. "earth", "milky_way").

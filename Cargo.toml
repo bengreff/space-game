@@ -63,7 +63,11 @@ web-sys = { version = "0.3", features = [
     "Window",
     "Document",
     "Element",
+    "HtmlElement",
     "HtmlCanvasElement",
+    "HtmlAnchorElement",
+    "HtmlInputElement",
+    "Node",
     "Storage",
     "Performance",
     "Location",
@@ -74,6 +78,10 @@ web-sys = { version = "0.3", features = [
     "Response",
     "Headers",
     "Blob",
+    "Url",
+    "File",
+    "FileList",
+    "FileReader",
 ] }
 gloo-net = "0.5"
 # IndexedDB-backed save storage — saves/quicksaves/launch saves/user blueprints

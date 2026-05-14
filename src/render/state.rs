@@ -600,9 +600,18 @@ impl RenderState {
             body_texture_bind_group,
             body_texture_map,
             #[cfg(target_arch = "wasm32")]
-            body_texture_fetcher: super::body_fetcher::BodyTextureFetcher::new(
-                super::textures::WASM_BODY_TEXTURE_CAPACITY,
-            ),
+            body_texture_fetcher: {
+                let mut f = super::body_fetcher::BodyTextureFetcher::new(
+                    super::textures::WASM_BODY_TEXTURE_CAPACITY,
+                );
+                // Eagerly fetch the real solar-system bodies + galaxy backdrop
+                // so they appear textured in every game mode at any zoom level.
+                // Catalog/procedural planets continue to be lazy-fetched per
+                // zoom threshold in render_flight_frame.
+                f.prefetch(body_names);
+                f.request_fetch("milky_way");
+                f
+            },
             sprite_atlas,
             plume_start_time,
             egui_ctx,
@@ -612,6 +621,31 @@ impl RenderState {
     }
 
     // Note: create_circle and create_ship_triangle are in geometry.rs
+
+    /// Once-per-frame body-texture maintenance for the wasm build: upload any
+    /// fetched PNGs that have finished decoding to free GPU layers, then
+    /// refresh body_idx → layer mappings so newly arrived textures are picked
+    /// up by the renderer regardless of game mode. No-op on native.
+    #[cfg(target_arch = "wasm32")]
+    pub fn tick_body_textures(&mut self, body_names: &[String]) {
+        let Self {
+            body_texture_fetcher,
+            device,
+            queue,
+            body_texture,
+            body_texture_map,
+            ..
+        } = self;
+        body_texture_fetcher.drain_uploads(device, queue, body_texture, body_texture_map);
+        for (body_idx, name) in body_names.iter().enumerate() {
+            if !name.is_empty() {
+                body_texture_map.register_body_index(body_idx, name);
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn tick_body_textures(&mut self, _body_names: &[String]) {}
 
     /// Handle window resize
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
