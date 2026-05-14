@@ -1,8 +1,8 @@
 mod common;
 
 use std::f64::consts::{PI, TAU};
-use sunscatter::bodies::{self, G};
-use sunscatter::ship::Ship;
+use sunscatter_app::bodies::{self, G};
+use sunscatter_app::ship::Ship;
 
 // ============================================================
 // Kepler solver roundtrip tests

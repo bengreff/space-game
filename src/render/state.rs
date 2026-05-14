@@ -143,7 +143,9 @@ pub struct RenderState {
     pub porkchop_selected: Option<usize>,   // locked selection (click)
     pub porkchop_hovered: Option<usize>,    // transient hover
     pub porkchop_last_target: Option<usize>, // to detect target changes
-    pub porkchop_receiver: Option<std::sync::mpsc::Receiver<super::types::PorkchopGrid>>,
+    /// In-flight chunked Lambert sweep for the porkchop plot. Driven a few
+    /// rows per frame from the run loop.
+    pub porkchop_job: Option<crate::ship::transfer::PorkchopJob>,
     pub porkchop_computing: bool,
     pub transfer_display: Option<crate::ship::transfer::TransferDisplay>,
     pub transfer_hohmann_targets: Vec<(usize, String)>,
@@ -154,11 +156,16 @@ pub struct RenderState {
     pub debug_menu_open: bool,
     pub debug_infinite_fuel: bool,
     // Body textures
+    pub body_texture: wgpu::Texture,
     pub body_texture_bind_group: wgpu::BindGroup,
     pub body_texture_map: BodyTextureMap,
+    /// Lazy fetcher used on wasm to populate `body_texture` layers from
+    /// `/textures/bodies/<name>.png` as the user zooms in. None on native.
+    #[cfg(target_arch = "wasm32")]
+    pub body_texture_fetcher: super::body_fetcher::BodyTextureFetcher,
     // Sprite atlas
     pub sprite_atlas: super::sprites::SpriteAtlas,
-    pub plume_start_time: std::time::Instant,
+    pub plume_start_time: web_time::Instant,
     // Economy/science HUD state
     pub company_money: f64,
     pub science_available: f64,
@@ -185,7 +192,7 @@ pub struct RenderState {
     // Info data for catalog planets (keyed by synthetic body index)
     pub catalog_body_info: std::collections::HashMap<usize, super::types::BodyInfoData>,
     // Toast notifications
-    pub active_toasts: Vec<(String, std::time::Instant)>,
+    pub active_toasts: Vec<(String, web_time::Instant)>,
     // Egui state
     pub egui_ctx: egui::Context,
     pub egui_state: egui_winit::State,
@@ -197,9 +204,19 @@ impl RenderState {
     pub async fn new(window: Arc<Window>, body_names: &[String]) -> Self {
         let size = window.inner_size();
 
-        // Create wgpu instance
+        // Create wgpu instance.
+        //
+        // On wasm we restrict to the GL (WebGL2) backend. Letting wgpu auto-pick
+        // WebGPU on Chrome causes a `requestDevice` rejection because wgpu 0.19's
+        // WebGPU limits descriptor includes `maxInterStageShaderComponents`,
+        // which current Chromium WebGPU doesn't recognize. Forcing WebGL avoids
+        // this version-drift; Phase 7 can re-add WebGPU once we upgrade wgpu.
+        #[cfg(target_arch = "wasm32")]
+        let backends = wgpu::Backends::GL;
+        #[cfg(not(target_arch = "wasm32"))]
+        let backends = wgpu::Backends::all();
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends,
             ..Default::default()
         });
 
@@ -216,14 +233,20 @@ impl RenderState {
             .await
             .unwrap();
 
-        // Request device with adapter's actual limits (unlocks full GPU capabilities,
-        // e.g. texture array layers beyond the WebGPU default of 256)
-        let adapter_limits = adapter.limits();
+        // Request device. On native we use the adapter's actual limits to
+        // unlock e.g. >256 texture array layers. On wasm we use WebGL2 down-
+        // level defaults — anything more aggressive trips on missing WebGL
+        // features and request_device rejects.
+        #[cfg(target_arch = "wasm32")]
+        let required_limits = wgpu::Limits::downlevel_webgl2_defaults()
+            .using_resolution(adapter.limits());
+        #[cfg(not(target_arch = "wasm32"))]
+        let required_limits = adapter.limits();
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     required_features: wgpu::Features::empty(),
-                    required_limits: adapter_limits.clone(),
+                    required_limits,
                     label: None,
                 },
                 None,
@@ -240,17 +263,22 @@ impl RenderState {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
+        // Guard against 0-sized initial inner_size on web (canvas not laid out
+        // yet). Configuring a surface at 0×0 panics in wgpu's WebGL backend.
+        let initial_w = size.width.max(1);
+        let initial_h = size.height.max(1);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: size.width,
-            height: size.height,
+            width: initial_w,
+            height: initial_h,
             present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
+        log::info!("Surface configured: {}x{}, format={:?}", initial_w, initial_h, surface_format);
 
         // Create camera
         let aspect_ratio = size.width as f32 / size.height as f32;
@@ -288,10 +316,10 @@ impl RenderState {
         });
 
         // Load body textures
-        let t_tex = std::time::Instant::now();
-        let (body_texture_view, body_sampler, body_texture_map) =
+        let t_tex = web_time::Instant::now();
+        let (body_texture, body_texture_view, body_sampler, body_texture_map) =
             super::textures::load_body_textures(&device, &queue, body_names);
-        println!("    Body textures: {:.0?}", t_tex.elapsed());
+        log::info!("    Body textures: {:.0?}", t_tex.elapsed());
 
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -332,11 +360,11 @@ impl RenderState {
         });
 
         // Load sprite atlas
-        let t_spr = std::time::Instant::now();
+        let t_spr = web_time::Instant::now();
         let sprite_atlas = super::sprites::load_sprite_atlas(&device, &queue);
         println!("    Sprite atlas: {:.0?}", t_spr.elapsed());
         let sprite_bind_group_layout = super::sprites::create_sprite_bind_group_layout(&device);
-        let plume_start_time = std::time::Instant::now();
+        let plume_start_time = web_time::Instant::now();
 
         // Create shader module
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -540,7 +568,7 @@ impl RenderState {
             porkchop_selected: None,
             porkchop_hovered: None,
             porkchop_last_target: None,
-            porkchop_receiver: None,
+            porkchop_job: None,
             porkchop_computing: false,
             transfer_display: None,
             transfer_hohmann_targets: Vec::new(),
@@ -568,8 +596,22 @@ impl RenderState {
             num_real_bodies: 0,
             catalog_body_info: std::collections::HashMap::new(),
             active_toasts: Vec::new(),
+            body_texture,
             body_texture_bind_group,
             body_texture_map,
+            #[cfg(target_arch = "wasm32")]
+            body_texture_fetcher: {
+                let mut f = super::body_fetcher::BodyTextureFetcher::new(
+                    super::textures::WASM_BODY_TEXTURE_CAPACITY,
+                );
+                // Eagerly fetch the real solar-system bodies + galaxy backdrop
+                // so they appear textured in every game mode at any zoom level.
+                // Catalog/procedural planets continue to be lazy-fetched per
+                // zoom threshold in render_flight_frame.
+                f.prefetch(body_names);
+                f.request_fetch("milky_way");
+                f
+            },
             sprite_atlas,
             plume_start_time,
             egui_ctx,
@@ -579,6 +621,31 @@ impl RenderState {
     }
 
     // Note: create_circle and create_ship_triangle are in geometry.rs
+
+    /// Once-per-frame body-texture maintenance for the wasm build: upload any
+    /// fetched PNGs that have finished decoding to free GPU layers, then
+    /// refresh body_idx → layer mappings so newly arrived textures are picked
+    /// up by the renderer regardless of game mode. No-op on native.
+    #[cfg(target_arch = "wasm32")]
+    pub fn tick_body_textures(&mut self, body_names: &[String]) {
+        let Self {
+            body_texture_fetcher,
+            device,
+            queue,
+            body_texture,
+            body_texture_map,
+            ..
+        } = self;
+        body_texture_fetcher.drain_uploads(device, queue, body_texture, body_texture_map);
+        for (body_idx, name) in body_names.iter().enumerate() {
+            if !name.is_empty() {
+                body_texture_map.register_body_index(body_idx, name);
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn tick_body_textures(&mut self, _body_names: &[String]) {}
 
     /// Handle window resize
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {

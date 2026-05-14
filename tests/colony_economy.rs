@@ -1,10 +1,10 @@
 mod common;
 
-use sunscatter::colony::economy::{format_money, fuel_price_per_kg, orbit_science_reward, landing_science_reward, MaterialBreakdown};
-use sunscatter::colony::contracts::Destination;
-use sunscatter::colony::trade::CargoManifest;
-use sunscatter::colony::ResourceType;
-use sunscatter::parts::FuelType;
+use sunscatter_app::colony::economy::{format_money, fuel_price_per_kg, orbit_science_reward, landing_science_reward, MaterialBreakdown};
+use sunscatter_app::colony::contracts::Destination;
+use sunscatter_app::colony::trade::CargoManifest;
+use sunscatter_app::colony::ResourceType;
+use sunscatter_app::parts::FuelType;
 
 #[test]
 fn format_money_zero() {

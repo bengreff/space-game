@@ -687,155 +687,196 @@ pub fn hohmann_optimal_times(
     Some((departure_time, arrival_time))
 }
 
-/// Compute a porkchop plot grid of Lambert transfer delta-v values.
-/// Horizontal axis: departure time over one synodic period (full transfer window cycle).
-/// Vertical axis: transfer time from tof_min to tof_max (log scale).
-/// Takes Copy params so it can be called from a background thread.
-pub fn compute_porkchop_grid(
-    departure_orbit: Orbit,
+/// Incremental porkchop computation. Holds precomputed per-column state and
+/// processes Lambert solves a chunk of rows at a time so the main thread (the
+/// only thread on wasm) stays responsive. On both targets we now drive this
+/// from the frame loop instead of spawning a worker.
+pub struct PorkchopJob {
+    target_idx: usize,
     target_orbit: Orbit,
     grandparent_mass: f64,
     planet_mass: f64,
-    sim_time: f64,
-    ship_orbit: Orbit,
-    ship_mean_anomaly: f64,
-    target_idx: usize,
-) -> Option<crate::render::PorkchopGrid> {
-    use crate::render::{PorkchopGrid, PorkchopPoint};
 
-    let mu_sun = G * grandparent_mass;
-    let mu_planet = G * planet_mass;
+    cols: usize,
+    rows: usize,
+    dep_start: f64,
+    dep_end: f64,
+    tof_min: f64,
+    tof_max: f64,
+    log_ratio: f64,
 
-    // Departure axis: one full synodic period (cycle of transfer windows).
-    // The synodic period is the time between successive identical phase angles,
-    // which is longer than either orbital period when the orbits are close.
-    let omega_dep = departure_orbit.mean_motion(grandparent_mass);
-    let omega_tgt = target_orbit.mean_motion(grandparent_mass);
-    let synodic_rate = (omega_dep - omega_tgt).abs();
-    let synodic_period = if synodic_rate > 1e-15 {
-        TAU / synodic_rate
-    } else {
-        // Degenerate case: same orbital period, fall back to departure period
-        TAU / omega_dep
-    };
-    let dep_start = sim_time;
-    let dep_end = sim_time + synodic_period;
+    dep_positions: Vec<[f64; 2]>,
+    dep_velocities: Vec<[f64; 2]>,
+    dep_times: Vec<f64>,
+    ship_radii: Vec<f64>,
+    ship_speeds: Vec<f64>,
 
-    // Hohmann TOF for transfer between the two orbits
-    let a_t = (departure_orbit.semi_major_axis + target_orbit.semi_major_axis) / 2.0;
-    let hohmann_tof = PI * (a_t.powi(3) / mu_sun).sqrt();
+    next_row: usize,
+    points: Vec<Option<crate::render::PorkchopPoint>>,
+    min_dv: f64,
+    max_dv: f64,
+    best_idx: Option<usize>,
+}
 
-    // Transfer time axis (log scale): hohmann_tof/100 to hohmann_tof*2
-    let tof_min = hohmann_tof / 100.0;
-    let tof_max = hohmann_tof * 2.0;
+impl PorkchopJob {
+    /// Set up precomputes; returns None if inputs are degenerate.
+    pub fn new(
+        departure_orbit: Orbit,
+        target_orbit: Orbit,
+        grandparent_mass: f64,
+        planet_mass: f64,
+        sim_time: f64,
+        ship_orbit: Orbit,
+        ship_mean_anomaly: f64,
+        target_idx: usize,
+    ) -> Option<Self> {
+        let mu_sun = G * grandparent_mass;
+        let mu_planet = G * planet_mass;
 
-    let cols: usize = 60;
-    let rows: usize = 50;
+        // Departure axis: one full synodic period (cycle of transfer windows).
+        let omega_dep = departure_orbit.mean_motion(grandparent_mass);
+        let omega_tgt = target_orbit.mean_motion(grandparent_mass);
+        let synodic_rate = (omega_dep - omega_tgt).abs();
+        let synodic_period = if synodic_rate > 1e-15 {
+            TAU / synodic_rate
+        } else {
+            TAU / omega_dep
+        };
+        let dep_start = sim_time;
+        let dep_end = sim_time + synodic_period;
 
-    // Precompute per-column departure positions, velocities, and ship parking orbit state
-    // (same departure time for every row, avoids redundant Kepler solves)
-    let mut dep_positions: Vec<[f64; 2]> = Vec::with_capacity(cols);
-    let mut dep_velocities: Vec<[f64; 2]> = Vec::with_capacity(cols);
-    let mut dep_times: Vec<f64> = Vec::with_capacity(cols);
-    // Per-column: ship's actual radius and speed at each departure time
-    let mut ship_radii: Vec<f64> = Vec::with_capacity(cols);
-    let mut ship_speeds: Vec<f64> = Vec::with_capacity(cols);
+        let a_t = (departure_orbit.semi_major_axis + target_orbit.semi_major_axis) / 2.0;
+        let hohmann_tof = PI * (a_t.powi(3) / mu_sun).sqrt();
 
-    let a_ship = ship_orbit.semi_major_axis;
-    let e_ship = ship_orbit.eccentricity;
-    let omega_ship = ship_orbit.mean_motion(planet_mass);
+        let tof_min = hohmann_tof / 100.0;
+        let tof_max = hohmann_tof * 2.0;
 
-    for col in 0..cols {
-        let dep_time = dep_start + (col as f64 / cols as f64) * (dep_end - dep_start);
-        dep_times.push(dep_time);
-        dep_positions.push(departure_orbit.position_at(dep_time, grandparent_mass));
-        let dep_ma = departure_orbit.mean_anomaly_at(dep_time, grandparent_mass);
-        dep_velocities.push(departure_orbit.velocity_from_mean_anomaly(dep_ma, grandparent_mass));
+        let cols: usize = 60;
+        let rows: usize = 50;
 
-        // Ship's parking orbit state at this departure time
-        let dt = dep_time - sim_time;
-        let ma_at_dep = ship_mean_anomaly + omega_ship * dt;
-        let ea_at_dep = ship_orbit.solve_kepler(ma_at_dep);
-        let r_at_dep = a_ship * (1.0 - e_ship * ea_at_dep.cos());
-        let v_at_dep = (mu_planet * (2.0 / r_at_dep - 1.0 / a_ship)).sqrt();
-        ship_radii.push(r_at_dep);
-        ship_speeds.push(v_at_dep);
-    }
+        let mut dep_positions: Vec<[f64; 2]> = Vec::with_capacity(cols);
+        let mut dep_velocities: Vec<[f64; 2]> = Vec::with_capacity(cols);
+        let mut dep_times: Vec<f64> = Vec::with_capacity(cols);
+        let mut ship_radii: Vec<f64> = Vec::with_capacity(cols);
+        let mut ship_speeds: Vec<f64> = Vec::with_capacity(cols);
 
-    let mut points: Vec<Option<PorkchopPoint>> = Vec::with_capacity(cols * rows);
-    let mut min_dv = f64::MAX;
-    let mut max_dv = 0.0_f64;
-    let mut best_idx: Option<usize> = None;
-
-    let log_ratio = (tof_max / tof_min).ln();
-
-    for row in 0..rows {
-        // Log-spaced TOF: tof = tof_min * exp(row/rows * ln(tof_max/tof_min))
-        let t = row as f64 / rows as f64;
-        let tof = tof_min * (t * log_ratio).exp();
+        let a_ship = ship_orbit.semi_major_axis;
+        let e_ship = ship_orbit.eccentricity;
+        let omega_ship = ship_orbit.mean_motion(planet_mass);
 
         for col in 0..cols {
-            let idx = row * cols + col;
+            let dep_time = dep_start + (col as f64 / cols as f64) * (dep_end - dep_start);
+            dep_times.push(dep_time);
+            dep_positions.push(departure_orbit.position_at(dep_time, grandparent_mass));
+            let dep_ma = departure_orbit.mean_anomaly_at(dep_time, grandparent_mass);
+            dep_velocities.push(departure_orbit.velocity_from_mean_anomaly(dep_ma, grandparent_mass));
 
-            // Use precomputed departure position; only target position needs Kepler solve
-            let r1 = dep_positions[col];
-            let r2 = target_orbit.position_at(dep_times[col] + tof, grandparent_mass);
-
-            // Solve Lambert
-            let point = solve_lambert_2d(r1, r2, tof, mu_sun, true).and_then(|lambert| {
-                let planet_vel = dep_velocities[col];
-
-                // V-infinity = Lambert departure velocity - planet velocity
-                let v_inf_x = lambert.v1[0] - planet_vel[0];
-                let v_inf_y = lambert.v1[1] - planet_vel[1];
-                let v_inf_sq = v_inf_x * v_inf_x + v_inf_y * v_inf_y;
-
-                // Ejection delta-v from parking orbit using vis-viva at actual radius
-                let r_col = ship_radii[col];
-                let v_col = ship_speeds[col];
-                let v_ejection = (v_inf_sq + 2.0 * mu_planet / r_col).sqrt();
-                let ejection_dv = v_ejection - v_col;
-
-                if !ejection_dv.is_finite() || ejection_dv < 0.0 {
-                    return None;
-                }
-
-                Some(PorkchopPoint {
-                    ejection_dv,
-                    dep_time: dep_times[col],
-                    tof,
-                })
-            });
-
-            if let Some(ref p) = point {
-                if p.ejection_dv < min_dv {
-                    min_dv = p.ejection_dv;
-                    best_idx = Some(idx);
-                }
-                if p.ejection_dv > max_dv {
-                    max_dv = p.ejection_dv;
-                }
-            }
-
-            points.push(point);
+            let dt = dep_time - sim_time;
+            let ma_at_dep = ship_mean_anomaly + omega_ship * dt;
+            let ea_at_dep = ship_orbit.solve_kepler(ma_at_dep);
+            let r_at_dep = a_ship * (1.0 - e_ship * ea_at_dep.cos());
+            let v_at_dep = (mu_planet * (2.0 / r_at_dep - 1.0 / a_ship)).sqrt();
+            ship_radii.push(r_at_dep);
+            ship_speeds.push(v_at_dep);
         }
+
+        Some(Self {
+            target_idx,
+            target_orbit,
+            grandparent_mass,
+            planet_mass,
+            cols,
+            rows,
+            dep_start,
+            dep_end,
+            tof_min,
+            tof_max,
+            log_ratio: (tof_max / tof_min).ln(),
+            dep_positions,
+            dep_velocities,
+            dep_times,
+            ship_radii,
+            ship_speeds,
+            next_row: 0,
+            points: Vec::with_capacity(cols * rows),
+            min_dv: f64::MAX,
+            max_dv: 0.0_f64,
+            best_idx: None,
+        })
     }
 
-    // No clamping — log-scale coloring handles the full range
+    pub fn target_idx(&self) -> usize { self.target_idx }
+    pub fn done(&self) -> bool { self.next_row >= self.rows }
 
-    Some(PorkchopGrid {
-        points,
-        cols,
-        rows,
-        dep_start,
-        dep_end,
-        tof_min,
-        tof_max,
-        min_dv,
-        max_dv,
-        best_idx,
-        target_idx,
-    })
+    /// Compute up to `rows_to_run` more rows of Lambert solves.
+    pub fn run_chunk(&mut self, rows_to_run: usize) {
+        let mu_sun = G * self.grandparent_mass;
+        let mu_planet = G * self.planet_mass;
+        let end_row = (self.next_row + rows_to_run).min(self.rows);
+
+        for row in self.next_row..end_row {
+            let t = row as f64 / self.rows as f64;
+            let tof = self.tof_min * (t * self.log_ratio).exp();
+
+            for col in 0..self.cols {
+                let idx = row * self.cols + col;
+                let r1 = self.dep_positions[col];
+                let r2 = self.target_orbit.position_at(self.dep_times[col] + tof, self.grandparent_mass);
+
+                let point = solve_lambert_2d(r1, r2, tof, mu_sun, true).and_then(|lambert| {
+                    let planet_vel = self.dep_velocities[col];
+                    let v_inf_x = lambert.v1[0] - planet_vel[0];
+                    let v_inf_y = lambert.v1[1] - planet_vel[1];
+                    let v_inf_sq = v_inf_x * v_inf_x + v_inf_y * v_inf_y;
+
+                    let r_col = self.ship_radii[col];
+                    let v_col = self.ship_speeds[col];
+                    let v_ejection = (v_inf_sq + 2.0 * mu_planet / r_col).sqrt();
+                    let ejection_dv = v_ejection - v_col;
+
+                    if !ejection_dv.is_finite() || ejection_dv < 0.0 {
+                        return None;
+                    }
+
+                    Some(crate::render::PorkchopPoint {
+                        ejection_dv,
+                        dep_time: self.dep_times[col],
+                        tof,
+                    })
+                });
+
+                if let Some(ref p) = point {
+                    if p.ejection_dv < self.min_dv {
+                        self.min_dv = p.ejection_dv;
+                        self.best_idx = Some(idx);
+                    }
+                    if p.ejection_dv > self.max_dv {
+                        self.max_dv = p.ejection_dv;
+                    }
+                }
+                self.points.push(point);
+            }
+        }
+
+        self.next_row = end_row;
+    }
+
+    /// Consume the job and return the completed grid.
+    pub fn take_grid(self) -> crate::render::PorkchopGrid {
+        crate::render::PorkchopGrid {
+            points: self.points,
+            cols: self.cols,
+            rows: self.rows,
+            dep_start: self.dep_start,
+            dep_end: self.dep_end,
+            tof_min: self.tof_min,
+            tof_max: self.tof_max,
+            min_dv: self.min_dv,
+            max_dv: self.max_dv,
+            best_idx: self.best_idx,
+            target_idx: self.target_idx,
+        }
+    }
 }
 
 /// Normalize angle to [-PI, PI]

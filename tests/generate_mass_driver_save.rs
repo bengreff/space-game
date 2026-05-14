@@ -8,13 +8,13 @@ mod common;
 
 use std::collections::{HashMap, HashSet};
 
-use sunscatter::colony::{
+use sunscatter_app::colony::{
     BuildingInstance, BuildingType, Colony, ColonyManager,
     DeployingMirror, FactoryRecipe, Company, ResourceInventory, ResourceType,
     ScienceState, DysonSwarm, FleetManager, ContractManager,
 };
-use sunscatter::save::{SaveGame, SavedVessel};
-use sunscatter::ship::Ship;
+use sunscatter_app::save::{SaveGame, SavedVessel};
+use sunscatter_app::ship::Ship;
 
 fn make_building(bt: BuildingType) -> BuildingInstance {
     BuildingInstance {

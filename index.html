@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Sunscatter</title>
+  <link data-trunk rel="rust" data-target-name="sunscatter_app" data-type="main" />
+  <!-- Body textures (~186 MB) are served alongside the wasm and lazy-fetched.
+       data-target-path keeps the URL `/textures/bodies/<name>.png` mirroring
+       the on-disk path the fetcher requests. -->
+  <link data-trunk rel="copy-dir" href="data/textures/bodies" data-target-path="textures/bodies" />
+  <link data-trunk rel="copy-file" href="data/textures/milky_way.png" data-target-path="textures" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      color: #ddd;
+      font-family: system-ui, sans-serif;
+    }
+    #sunscatter {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      touch-action: none;
+      outline: none;
+    }
+    #loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 14px;
+      letter-spacing: 0.1em;
+      opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="sunscatter"></canvas>
+  <div id="loading">loading…</div>
+  <script>
+    // Hide loader once wasm has had a chance to attach. The wasm module's
+    // #[wasm_bindgen(start)] runs once the JS glue has instantiated it.
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const el = document.getElementById('loading');
+        if (el) el.style.display = 'none';
+      }, 1500);
+    });
+  </script>
+</body>
+</html>

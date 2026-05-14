@@ -12,7 +12,7 @@ pub fn render_management_screen(
     current_warp_index: usize,
     date_str: &str,
     paused: bool,
-    active_toasts: &[(String, std::time::Instant)],
+    active_toasts: &[(String, web_time::Instant)],
 ) -> (ManagementAction, f64) {
     let mut action = ManagementAction::None;
     let mut budget = rd_budget;

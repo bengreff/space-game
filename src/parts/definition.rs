@@ -647,9 +647,13 @@ impl PartDefinitions {
     pub fn load_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), String> {
         let content = fs::read_to_string(&path)
             .map_err(|e| format!("Failed to read {:?}: {}", path.as_ref(), e))?;
+        self.load_str(&format!("{:?}", path.as_ref()), &content)
+    }
 
-        let file: PartDefinitionFile = ron::from_str(&content)
-            .map_err(|e| format!("Failed to parse {:?}: {}", path.as_ref(), e))?;
+    /// Parse a RON document already in memory and merge its parts in.
+    pub fn load_str(&mut self, source: &str, content: &str) -> Result<(), String> {
+        let file: PartDefinitionFile = ron::from_str(content)
+            .map_err(|e| format!("Failed to parse {}: {}", source, e))?;
 
         for part in file.parts {
             log::debug!("  Loaded part: {} ({})", part.name, part.id);
@@ -657,6 +661,30 @@ impl PartDefinitions {
         }
 
         Ok(())
+    }
+
+    /// Load the canonical part catalog. On wasm this uses RON files embedded
+    /// at compile time (the filesystem is unavailable in the browser); on
+    /// desktop it reads from `data/parts/` for fast iteration.
+    pub fn load_default() -> Self {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut defs = Self::new();
+            for (name, content) in super::embedded::PARTS_RON {
+                if let Err(e) = defs.load_str(name, content) {
+                    log::error!("Failed to parse embedded {}: {}", name, e);
+                }
+            }
+            log::info!("Loaded {} part definitions (embedded)", defs.parts.len());
+            defs
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::load_from_directory("data/parts").unwrap_or_else(|e| {
+                log::error!("Failed to load parts: {}", e);
+                Self::new()
+            })
+        }
     }
 
     /// Get a part definition by ID
@@ -711,6 +739,11 @@ impl PartDefinitions {
     /// Check if any parts are loaded
     pub fn is_empty(&self) -> bool {
         self.parts.is_empty()
+    }
+
+    /// Number of parts loaded.
+    pub fn len(&self) -> usize {
+        self.parts.len()
     }
 }
 

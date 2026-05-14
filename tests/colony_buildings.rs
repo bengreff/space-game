@@ -1,7 +1,7 @@
 mod common;
 
-use sunscatter::colony::{BuildingType, FactoryRecipe};
-use sunscatter::colony::simulation::habitability_multiplier;
+use sunscatter_app::colony::{BuildingType, FactoryRecipe};
+use sunscatter_app::colony::simulation::habitability_multiplier;
 
 #[test]
 fn building_type_all_count() {

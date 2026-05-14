@@ -14,7 +14,7 @@ pub fn render_colony_overview_screen(
     paused: bool,
     company_money: f64,
     science_available: f64,
-    active_toasts: &[(String, std::time::Instant)],
+    active_toasts: &[(String, web_time::Instant)],
     fleet: &FleetManager,
     earth_index: usize,
     route_creation: &mut super::trade_ui::RouteCreationState,

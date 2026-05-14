@@ -81,8 +81,13 @@ impl TechTree {
     pub fn load(path: &str) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read tech tree file {}: {}", path, e))?;
-        let file: TechTreeFile = ron::from_str(&content)
-            .map_err(|e| format!("Failed to parse tech tree file {}: {}", path, e))?;
+        Self::load_str(path, &content)
+    }
+
+    /// Parse a tech tree RON document already in memory.
+    pub fn load_str(source: &str, content: &str) -> Result<Self, String> {
+        let file: TechTreeFile = ron::from_str(content)
+            .map_err(|e| format!("Failed to parse tech tree {}: {}", source, e))?;
         let mut unlocked = HashSet::new();
         unlocked.insert("basic_rocketry".to_string());
         Ok(Self {
@@ -92,6 +97,20 @@ impl TechTree {
             line_tiers: HashMap::new(),
             default_unlocked_parts: file.default_unlocked_parts,
         })
+    }
+
+    /// Load the canonical tech tree. On wasm this uses an embedded RON; on
+    /// desktop it reads `data/tech/tree.ron` for fast iteration.
+    pub fn load_default() -> Result<Self, String> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            const TREE_RON: &str = include_str!("../../data/tech/tree.ron");
+            Self::load_str("embedded:tech/tree.ron", TREE_RON)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::load("data/tech/tree.ron")
+        }
     }
 
     pub fn is_unlocked(&self, node_id: &str) -> bool {

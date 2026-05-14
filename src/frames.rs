@@ -7,14 +7,14 @@
 //! `render_flight_frame` stays in main.rs — it's the hot path and tightly
 //! coupled to input dispatch.
 
-use sunscatter::bodies::G;
-use sunscatter::editor::{
+use crate::bodies::G;
+use crate::editor::{
     render_editor_ui, EditorAction, generate_grid_vertices, generate_part_vertices,
     generate_ghost_vertices, BodyInfo,
 };
-use sunscatter::game::{Game, GameMode};
-use sunscatter::render::{BodyInfoData, MainMenuAction, PauseAction, RenderState, TitleScreenAction, Vertex};
-use sunscatter::save::SaveGame;
+use crate::game::{Game, GameMode};
+use crate::render::{BodyInfoData, MainMenuAction, PauseAction, RenderState, TitleScreenAction, Vertex};
+use crate::save::SaveGame;
 
 /// Render the all-colonies summary screen.
 pub fn render_colony_overview_frame(
@@ -62,7 +62,7 @@ pub fn render_colony_overview_frame(
 
     render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, super::SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view, &procedural_stars);
 
-    let date_str = sunscatter::game::format_date(game.time());
+    let date_str = crate::game::format_date(game.time());
 
     let sim_time = game.time();
     match render_state.render_colony_overview(
@@ -86,21 +86,21 @@ pub fn render_colony_overview_frame(
         Ok((new_warp_index, action)) => {
             game.warp_index = new_warp_index;
             match action {
-                sunscatter::render::ColonyOverviewAction::OpenColony(bi) => {
+                crate::render::ColonyOverviewAction::OpenColony(bi) => {
                     game.enter_colony(bi, GameMode::ColonyOverview);
                 }
-                sunscatter::render::ColonyOverviewAction::GoToMainMenu => {
+                crate::render::ColonyOverviewAction::GoToMainMenu => {
                     game.enter_main_menu();
                 }
-                sunscatter::render::ColonyOverviewAction::ChangeWarp(idx) => {
+                crate::render::ColonyOverviewAction::ChangeWarp(idx) => {
                     game.warp_index = idx;
                 }
-                sunscatter::render::ColonyOverviewAction::Trade(trade_action) => {
+                crate::render::ColonyOverviewAction::Trade(trade_action) => {
                     // Intercept OpenEditor — populate route_creation state instead of forwarding
-                    if let sunscatter::render::TradeAction::OpenEditor(route_id) = &trade_action {
+                    if let crate::render::TradeAction::OpenEditor(route_id) = &trade_action {
                         if let Some(route) = game.fleet.get_route(*route_id) {
                             render_state.route_creation =
-                                sunscatter::render::RouteCreationState::start_from_route(
+                                crate::render::RouteCreationState::start_from_route(
                                     route,
                                     &game.fleet,
                                 );
@@ -109,11 +109,11 @@ pub fn render_colony_overview_frame(
                         super::handle_trade_action(trade_action, game);
                     }
                 }
-                sunscatter::render::ColonyOverviewAction::None => {}
+                crate::render::ColonyOverviewAction::None => {}
             }
         }
         Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
-        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(wgpu::SurfaceError::OutOfMemory) => panic!("OutOfMemory"),
         Err(e) => eprintln!("Colony overview render error: {:?}", e),
     }
 
@@ -121,10 +121,10 @@ pub fn render_colony_overview_frame(
     for notif in &mut game.notifications {
         if !notif.read && notif.kind.stops_warp() {
             game.warp_index = 0;
-            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            render_state.active_toasts.push((notif.kind.message(), web_time::Instant::now()));
             notif.read = true;
         } else if !notif.read {
-            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            render_state.active_toasts.push((notif.kind.message(), web_time::Instant::now()));
             notif.read = true;
         }
     }
@@ -177,7 +177,7 @@ pub fn render_management_frame(
 
     render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, super::SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view, &procedural_stars);
 
-    let date_str = sunscatter::game::format_date(game.time());
+    let date_str = crate::game::format_date(game.time());
 
     match render_state.render_management(
         &game.company,
@@ -193,19 +193,19 @@ pub fn render_management_frame(
             game.warp_index = new_warp_index;
             game.company.rd_budget = new_budget;
             match action {
-                sunscatter::render::ManagementAction::OpenTechTree => {
+                crate::render::ManagementAction::OpenTechTree => {
                     game.enter_tech_tree(GameMode::Management);
                 }
-                sunscatter::render::ManagementAction::GoToMainMenu => {
+                crate::render::ManagementAction::GoToMainMenu => {
                     game.enter_main_menu();
                 }
-                sunscatter::render::ManagementAction::ChangeWarp(idx) => {
+                crate::render::ManagementAction::ChangeWarp(idx) => {
                     game.warp_index = idx;
                 }
-                sunscatter::render::ManagementAction::AcceptContract(id) => {
+                crate::render::ManagementAction::AcceptContract(id) => {
                     game.contracts.accept(id);
                 }
-                sunscatter::render::ManagementAction::CancelContract(id) => {
+                crate::render::ManagementAction::CancelContract(id) => {
                     game.contracts.cancel(id);
                     game.contracts.refill_one(
                         &game.science.discoveries,
@@ -213,14 +213,14 @@ pub fn render_management_frame(
                         game.solar_system.time,
                     );
                 }
-                sunscatter::render::ManagementAction::SetRdBudget(budget) => {
+                crate::render::ManagementAction::SetRdBudget(budget) => {
                     game.company.rd_budget = budget;
                 }
-                sunscatter::render::ManagementAction::None => {}
+                crate::render::ManagementAction::None => {}
             }
         }
         Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
-        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(wgpu::SurfaceError::OutOfMemory) => panic!("OutOfMemory"),
         Err(e) => eprintln!("Management render error: {:?}", e),
     }
 
@@ -228,10 +228,10 @@ pub fn render_management_frame(
     for notif in &mut game.notifications {
         if !notif.read && notif.kind.stops_warp() {
             game.warp_index = 0;
-            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            render_state.active_toasts.push((notif.kind.message(), web_time::Instant::now()));
             notif.read = true;
         } else if !notif.read {
-            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            render_state.active_toasts.push((notif.kind.message(), web_time::Instant::now()));
             notif.read = true;
         }
     }
@@ -334,6 +334,19 @@ pub fn render_title_screen_frame(
                             ui.vertical_centered(|ui| {
                                 ui.heading(egui::RichText::new("Load Game").size(28.0).color(egui::Color32::WHITE));
                                 ui.add_space(20.0);
+
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    let import_btn = ui.button(egui::RichText::new("Import Save File\u{2026}").size(15.0));
+                                    if import_btn.clicked() {
+                                        action = TitleScreenAction::ImportSave;
+                                    }
+                                    import_btn.on_hover_text(
+                                        "Pick a .ron save (e.g. from data/saves/<name>/save.ron on the desktop build)",
+                                    );
+                                    ui.add_space(10.0);
+                                }
+
                                 if save_list.is_empty() {
                                     ui.label(egui::RichText::new("No saves found").color(egui::Color32::GRAY));
                                 } else {
@@ -343,16 +356,32 @@ pub fn render_title_screen_frame(
                                                 "{} \u{2014} {} vessels \u{2014} {}",
                                                 save.name,
                                                 save.vessel_count,
-                                                sunscatter::game::format_date(save.simulation_time),
+                                                crate::game::format_date(save.simulation_time),
                                             );
                                             ui.horizontal(|ui| {
                                                 let total_width = ui.available_width();
+                                                #[cfg(target_arch = "wasm32")]
+                                                let row_button_width = total_width - 56.0;
+                                                #[cfg(not(target_arch = "wasm32"))]
+                                                let row_button_width = total_width - 30.0;
                                                 let button_resp = ui.add_sized(
-                                                    [total_width - 30.0, 0.0],
+                                                    [row_button_width, 0.0],
                                                     egui::Button::new(egui::RichText::new(&label).size(16.0)),
                                                 );
                                                 if button_resp.clicked() {
                                                     action = TitleScreenAction::LoadGame(save.save_id.clone());
+                                                }
+                                                #[cfg(target_arch = "wasm32")]
+                                                {
+                                                    let export_btn = ui.small_button(
+                                                        egui::RichText::new("\u{2913}") // ⤓ download
+                                                            .size(16.0)
+                                                            .color(egui::Color32::from_rgb(120, 180, 220)),
+                                                    );
+                                                    if export_btn.clicked() {
+                                                        action = TitleScreenAction::ExportSave(save.save_id.clone());
+                                                    }
+                                                    export_btn.on_hover_text("Download save as .ron");
                                                 }
                                                 let delete_btn = ui.small_button(
                                                     egui::RichText::new("\u{00d7}")
@@ -473,6 +502,22 @@ pub fn render_title_screen_frame(
                     game.title_screen.confirm_delete = None;
                     return;
                 }
+                TitleScreenAction::ImportSave => {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        crate::save::wasm_io::import_save();
+                    }
+                }
+                TitleScreenAction::ExportSave(save_id) => {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        crate::save::wasm_io::export_save(save_id);
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let _ = save_id;
+                    }
+                }
                 TitleScreenAction::QuitGame => {
                     elwt.exit();
                 }
@@ -481,11 +526,12 @@ pub fn render_title_screen_frame(
 
             // Sync title_screen UI state back
             game.title_screen.show_new_game = show_new_game;
-            // Populate save list once when load dialog opens
-            if show_load_game && !game.title_screen.show_load_game {
+            // Refresh save list every frame while the load dialog is open
+            // so async imports become visible without the user reopening it.
+            // Reads from an in-memory HashMap, trivially cheap.
+            if show_load_game {
                 game.title_screen.save_list = SaveGame::list_saves();
-            }
-            if !show_load_game {
+            } else {
                 game.title_screen.save_list.clear();
             }
             game.title_screen.show_load_game = show_load_game;
@@ -493,7 +539,7 @@ pub fn render_title_screen_frame(
             game.title_screen.confirm_delete = confirm_delete;
         }
         Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
-        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(wgpu::SurfaceError::OutOfMemory) => panic!("OutOfMemory"),
         Err(e) => eprintln!("Title screen render error: {:?}", e),
     }
 }
@@ -544,7 +590,7 @@ pub fn render_main_menu_frame(
     render_state.update_bodies_orbits_and_ship(&bodies, &orbits, None, super::SCALE, None);
 
     let paused = game.paused;
-    let date_str = sunscatter::game::format_date(game.time());
+    let date_str = crate::game::format_date(game.time());
 
     match render_state.render_main_menu(super::WARP_LEVELS, game.warp_index, &date_str, |ctx| {
         let mut action = MainMenuAction::None;
@@ -631,7 +677,7 @@ pub fn render_main_menu_frame(
             }
         }
         Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
-        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(wgpu::SurfaceError::OutOfMemory) => panic!("OutOfMemory"),
         Err(e) => eprintln!("Main menu render error: {:?}", e),
     }
 
@@ -639,10 +685,10 @@ pub fn render_main_menu_frame(
     for notif in &mut game.notifications {
         if !notif.read && notif.kind.stops_warp() {
             game.warp_index = 0;
-            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            render_state.active_toasts.push((notif.kind.message(), web_time::Instant::now()));
             notif.read = true;
         } else if !notif.read {
-            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            render_state.active_toasts.push((notif.kind.message(), web_time::Instant::now()));
             notif.read = true;
         }
     }
@@ -695,7 +741,7 @@ pub fn render_tech_tree_frame(
 
     render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, super::SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view, &procedural_stars);
 
-    let date_str = sunscatter::game::format_date(game.time());
+    let date_str = crate::game::format_date(game.time());
 
     match render_state.render_tech_tree_screen(
         &mut game.tech_tree,
@@ -709,17 +755,17 @@ pub fn render_tech_tree_frame(
         Ok((new_warp_index, action)) => {
             game.warp_index = new_warp_index;
             match action {
-                sunscatter::render::TechTreeScreenAction::Back => {
+                crate::render::TechTreeScreenAction::Back => {
                     game.leave_tech_tree();
                 }
-                sunscatter::render::TechTreeScreenAction::ChangeWarp(idx) => {
+                crate::render::TechTreeScreenAction::ChangeWarp(idx) => {
                     game.warp_index = idx;
                 }
-                sunscatter::render::TechTreeScreenAction::None => {}
+                crate::render::TechTreeScreenAction::None => {}
             }
         }
         Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
-        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(wgpu::SurfaceError::OutOfMemory) => panic!("OutOfMemory"),
         Err(e) => eprintln!("Tech tree render error: {:?}", e),
     }
 
@@ -727,10 +773,10 @@ pub fn render_tech_tree_frame(
     for notif in &mut game.notifications {
         if !notif.read && notif.kind.stops_warp() {
             game.warp_index = 0;
-            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            render_state.active_toasts.push((notif.kind.message(), web_time::Instant::now()));
             notif.read = true;
         } else if !notif.read {
-            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            render_state.active_toasts.push((notif.kind.message(), web_time::Instant::now()));
             notif.read = true;
         }
     }
@@ -788,20 +834,20 @@ pub fn render_colony_frame(
 
     render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, super::SCALE, Some(&game.part_definitions), &[], &accretion_discs, in_galaxy_view, &procedural_stars);
 
-    let date_str = sunscatter::game::format_date(game.time());
+    let date_str = crate::game::format_date(game.time());
 
     // Build colony data
     let colony_body_hab: Vec<u32> = game.solar_system.bodies.iter().map(|b| b.habitability_score).collect();
     let colony_body_radii: Vec<f64> = game.solar_system.bodies.iter().map(|b| b.radius).collect();
-    let colony_body_mineable: Vec<Vec<sunscatter::colony::ResourceType>> = game.solar_system.bodies.iter().map(|b| b.mineable_resources.clone()).collect();
-    let colony_body_atmospheric: Vec<Vec<sunscatter::colony::ResourceType>> = game.solar_system.bodies.iter().map(|b| b.atmospheric_resources.clone()).collect();
+    let colony_body_mineable: Vec<Vec<crate::colony::ResourceType>> = game.solar_system.bodies.iter().map(|b| b.mineable_resources.clone()).collect();
+    let colony_body_atmospheric: Vec<Vec<crate::colony::ResourceType>> = game.solar_system.bodies.iter().map(|b| b.atmospheric_resources.clone()).collect();
 
     // Check if we can return to flight (only if we came from flight)
     let can_return_to_flight = game.colony_return_mode == Some(GameMode::Flight);
 
     // Compute solar power factor for this body: (AU / sun_distance)^2
     let au: f64 = 1.496e11;
-    let sun_dist = sunscatter::colony::simulation::sun_distance(body_index, &game.solar_system);
+    let sun_dist = crate::colony::simulation::sun_distance(body_index, &game.solar_system);
     let solar_power_factor = (au / sun_dist).powi(2);
 
     match render_state.render_colony(
@@ -825,7 +871,7 @@ pub fn render_colony_frame(
         Ok((new_warp_index, action)) => {
             game.warp_index = new_warp_index;
             match action {
-                sunscatter::render::ColonyScreenAction::QueueBuilding(bi, bt, count) => {
+                crate::render::ColonyScreenAction::QueueBuilding(bi, bt, count) => {
                     let hab_score = game.solar_system.bodies[bi].habitability_score;
                     let body_radius_m = game.solar_system.bodies[bi].radius;
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
@@ -834,11 +880,11 @@ pub fn render_colony_frame(
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::AddMineAssignment(bi, resource, count) => {
+                crate::render::ColonyScreenAction::AddMineAssignment(bi, resource, count) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
                         for _ in 0..count {
                             if let Some(building) = colony.buildings.iter_mut().find(|b| {
-                                b.building_type == sunscatter::colony::BuildingType::Mine
+                                b.building_type == crate::colony::BuildingType::Mine
                                     && b.assigned_resource.is_none()
                             }) {
                                 building.assigned_resource = Some(resource);
@@ -848,11 +894,11 @@ pub fn render_colony_frame(
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::RemoveMineAssignment(bi, resource, count) => {
+                crate::render::ColonyScreenAction::RemoveMineAssignment(bi, resource, count) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
                         for _ in 0..count {
                             if let Some(building) = colony.buildings.iter_mut().find(|b| {
-                                b.building_type == sunscatter::colony::BuildingType::Mine
+                                b.building_type == crate::colony::BuildingType::Mine
                                     && b.assigned_resource == Some(resource)
                             }) {
                                 building.assigned_resource = None;
@@ -862,11 +908,11 @@ pub fn render_colony_frame(
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::AddCollectorAssignment(bi, resource, count) => {
+                crate::render::ColonyScreenAction::AddCollectorAssignment(bi, resource, count) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
                         for _ in 0..count {
                             if let Some(building) = colony.buildings.iter_mut().find(|b| {
-                                b.building_type == sunscatter::colony::BuildingType::AtmosphericCollector
+                                b.building_type == crate::colony::BuildingType::AtmosphericCollector
                                     && b.assigned_resource.is_none()
                             }) {
                                 building.assigned_resource = Some(resource);
@@ -876,11 +922,11 @@ pub fn render_colony_frame(
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::RemoveCollectorAssignment(bi, resource, count) => {
+                crate::render::ColonyScreenAction::RemoveCollectorAssignment(bi, resource, count) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
                         for _ in 0..count {
                             if let Some(building) = colony.buildings.iter_mut().find(|b| {
-                                b.building_type == sunscatter::colony::BuildingType::AtmosphericCollector
+                                b.building_type == crate::colony::BuildingType::AtmosphericCollector
                                     && b.assigned_resource == Some(resource)
                             }) {
                                 building.assigned_resource = None;
@@ -890,13 +936,13 @@ pub fn render_colony_frame(
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::AddFactoryAssignment(bi, recipe, count) => {
+                crate::render::ColonyScreenAction::AddFactoryAssignment(bi, recipe, count) => {
                     if !game.tech_tree.is_recipe_available(recipe.recipe_id()) {
                         log::warn!("[colony] Blocked factory assignment: recipe {:?} not unlocked", recipe);
                     } else if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
                         for _ in 0..count {
                             if let Some(building) = colony.buildings.iter_mut().find(|b| {
-                                b.building_type == sunscatter::colony::BuildingType::Factory
+                                b.building_type == crate::colony::BuildingType::Factory
                                     && b.assigned_recipe.is_none()
                             }) {
                                 building.assigned_recipe = Some(recipe);
@@ -906,11 +952,11 @@ pub fn render_colony_frame(
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::RemoveFactoryAssignment(bi, recipe, count) => {
+                crate::render::ColonyScreenAction::RemoveFactoryAssignment(bi, recipe, count) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
                         for _ in 0..count {
                             if let Some(building) = colony.buildings.iter_mut().find(|b| {
-                                b.building_type == sunscatter::colony::BuildingType::Factory
+                                b.building_type == crate::colony::BuildingType::Factory
                                     && b.assigned_recipe == Some(recipe)
                             }) {
                                 building.assigned_recipe = None;
@@ -920,47 +966,47 @@ pub fn render_colony_frame(
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::ReturnToFlight => {
+                crate::render::ColonyScreenAction::ReturnToFlight => {
                     game.leave_colony();
                 }
-                sunscatter::render::ColonyScreenAction::GoToTrackingStation => {
+                crate::render::ColonyScreenAction::GoToTrackingStation => {
                     game.colony_view_body_index = None;
                     game.colony_return_mode = None;
                     game.enter_tracking_station();
                 }
-                sunscatter::render::ColonyScreenAction::GoToColonyOverview => {
+                crate::render::ColonyScreenAction::GoToColonyOverview => {
                     game.colony_view_body_index = None;
                     game.colony_return_mode = None;
                     game.enter_colony_overview();
                 }
-                sunscatter::render::ColonyScreenAction::GoToMainMenu => {
+                crate::render::ColonyScreenAction::GoToMainMenu => {
                     game.colony_view_body_index = None;
                     game.colony_return_mode = None;
                     game.enter_main_menu();
                 }
-                sunscatter::render::ColonyScreenAction::ChangeWarp(idx) => {
+                crate::render::ColonyScreenAction::ChangeWarp(idx) => {
                     game.warp_index = idx;
                 }
-                sunscatter::render::ColonyScreenAction::SwitchColony(bi) => {
+                crate::render::ColonyScreenAction::SwitchColony(bi) => {
                     game.colony_view_body_index = Some(bi);
                     render_state.tracked_body = Some(bi);
                 }
-                sunscatter::render::ColonyScreenAction::DebugAddResource(bi, res, amount) => {
+                crate::render::ColonyScreenAction::DebugAddResource(bi, res, amount) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
                         // Route Food to food_stored instead of resource inventory
-                        if res == sunscatter::colony::ResourceType::Food {
+                        if res == crate::colony::ResourceType::Food {
                             colony.food_stored += amount;
                         } else {
                             colony.resources.add(res, amount);
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::DebugAddBuilding(bi, bt) => {
+                crate::render::ColonyScreenAction::DebugAddBuilding(bi, bt) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
-                        colony.buildings.push(sunscatter::colony::BuildingInstance::new(bt));
+                        colony.buildings.push(crate::colony::BuildingInstance::new(bt));
                     }
                 }
-                sunscatter::render::ColonyScreenAction::DebugAddCrew(bi, count) => {
+                crate::render::ColonyScreenAction::DebugAddCrew(bi, count) => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
                         let cap = colony.crew_capacity();
                         if cap > 0 {
@@ -970,7 +1016,7 @@ pub fn render_colony_frame(
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::ScrapShip(bi, ship_id) => {
+                crate::render::ColonyScreenAction::ScrapShip(bi, ship_id) => {
                     let body_name = game.solar_system.bodies.get(bi)
                         .map(|b| b.name.clone())
                         .unwrap_or_else(|| "Unknown".to_string());
@@ -981,8 +1027,8 @@ pub fn render_colony_frame(
                             .unwrap_or_else(|| "Unknown".to_string());
                         if colony.scrap_ship(ship_id, &game.part_definitions).is_some() {
                             log::info!("Scrapped ship '{}' at {}", ship_name, body_name);
-                            game.notifications.push(sunscatter::colony::Notification {
-                                kind: sunscatter::colony::NotificationKind::ShipScrapped {
+                            game.notifications.push(crate::colony::Notification {
+                                kind: crate::colony::NotificationKind::ShipScrapped {
                                     ship_name,
                                     location: body_name,
                                 },
@@ -992,24 +1038,24 @@ pub fn render_colony_frame(
                         }
                     }
                 }
-                sunscatter::render::ColonyScreenAction::Trade(trade_action) => {
+                crate::render::ColonyScreenAction::Trade(trade_action) => {
                     super::handle_trade_action(trade_action, game);
                 }
-                sunscatter::render::ColonyScreenAction::SetStorageAllocation { body_index: bi, resource, percent } => {
+                crate::render::ColonyScreenAction::SetStorageAllocation { body_index: bi, resource, percent } => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
                         colony.storage_allocation.set_pinned(resource, percent);
                     }
                 }
-                sunscatter::render::ColonyScreenAction::UnpinStorageAllocation { body_index: bi, resource } => {
+                crate::render::ColonyScreenAction::UnpinStorageAllocation { body_index: bi, resource } => {
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
                         colony.storage_allocation.unpin(resource);
                     }
                 }
-                sunscatter::render::ColonyScreenAction::None => {}
+                crate::render::ColonyScreenAction::None => {}
             }
         }
         Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
-        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(wgpu::SurfaceError::OutOfMemory) => panic!("OutOfMemory"),
         Err(e) => eprintln!("Colony render error: {:?}", e),
     }
 
@@ -1017,10 +1063,10 @@ pub fn render_colony_frame(
     for notif in &mut game.notifications {
         if !notif.read && notif.kind.stops_warp() {
             game.warp_index = 0;
-            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            render_state.active_toasts.push((notif.kind.message(), web_time::Instant::now()));
             notif.read = true;
         } else if !notif.read {
-            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            render_state.active_toasts.push((notif.kind.message(), web_time::Instant::now()));
             notif.read = true;
         }
     }
@@ -1108,7 +1154,7 @@ pub fn render_tracking_station_frame(
     render_state.track_catalog_body(&bodies, super::SCALE);
 
     render_state.update_bodies_orbits_ship_and_vessels(&bodies, &orbits, None, super::SCALE, Some(&game.part_definitions), &tracking_vessels, &accretion_discs, in_galaxy_view, &procedural_stars);
-    let date_str = sunscatter::game::format_date(game.time());
+    let date_str = crate::game::format_date(game.time());
 
     // Build body info data for the info panel
     let body_info: Vec<BodyInfoData> = game.solar_system.bodies.iter().enumerate().map(|(i, body)| {
@@ -1124,9 +1170,9 @@ pub fn render_tracking_station_frame(
         // Collect children (moons/planets whose parent is this body) for the info panel.
         // For non-star bodies (planets), children are moons. For stars, children are planets.
         // Exclude child stars (e.g. the Sun) from the planetary system — only show planets.
-        let children: Vec<sunscatter::render::CatalogPlanetInfo> = game.solar_system.bodies.iter().enumerate().filter(|(j, b)| {
+        let children: Vec<crate::render::CatalogPlanetInfo> = game.solar_system.bodies.iter().enumerate().filter(|(j, b)| {
             b.parent == Some(i) && !body_is_star[*j]
-        }).map(|(_, b)| sunscatter::render::CatalogPlanetInfo {
+        }).map(|(_, b)| crate::render::CatalogPlanetInfo {
             name: b.name.clone(),
             designation: String::new(),
             temperature_k: 0.0,
@@ -1187,14 +1233,14 @@ pub fn render_tracking_station_frame(
     // Build focused_star_info from procedural star data (for unified info panel)
     render_state.focused_star_info = render_state.focused_star.and_then(|idx| {
         render_state.current_procedural_stars.get(idx).map(|s| {
-            use sunscatter::bodies::{galactic_enclosed_mass, calculate_soi};
-            use sunscatter::render::{CatalogPlanetInfo, CatalogStarInfo};
+            use crate::bodies::{galactic_enclosed_mass, calculate_soi};
+            use crate::render::{CatalogPlanetInfo, CatalogStarInfo};
             let mass_kg = s.mass_solar * 1.989e30;
             let soi = calculate_soi(s.semi_major_axis_m, mass_kg, galactic_enclosed_mass(s.semi_major_axis_m)) / 20.0;
             let surface_gravity = G * mass_kg / (s.radius_m * s.radius_m);
 
             // Look up catalog data if this is a named star
-            let cat = sunscatter::galaxy::catalog::lookup_system(s.catalog_index);
+            let cat = crate::galaxy::catalog::lookup_system(s.catalog_index);
             let is_multi_star = cat.map(|sys| sys.stars.len() > 1).unwrap_or(false);
 
             if is_multi_star {
@@ -1311,7 +1357,7 @@ pub fn render_tracking_station_frame(
             }
             // Handle tracking station actions
             match ts_action {
-                sunscatter::render::TrackingStationAction::FlyVessel(id) => {
+                crate::render::TrackingStationAction::FlyVessel(id) => {
                     // Pull vessel from inactive list and enter flight
                     match game.flight.activate_vessel(id, &game.solar_system) {
                         Ok(()) => {
@@ -1322,7 +1368,7 @@ pub fn render_tracking_station_frame(
                     }
                     game.enter_flight();
                 }
-                sunscatter::render::TrackingStationAction::FocusVessel(id) => {
+                crate::render::TrackingStationAction::FocusVessel(id) => {
                     // Focus camera on vessel and track it continuously
                     if let Some(vessel_data) = tracking_vessels.iter().find(|v| v.id == id) {
                         let soi_pos = scaled_positions[vessel_data.soi_body];
@@ -1337,7 +1383,7 @@ pub fn render_tracking_station_frame(
                         render_state.tracked_vessel = Some(id);
                     }
                 }
-                sunscatter::render::TrackingStationAction::DeleteVessel(id) => {
+                crate::render::TrackingStationAction::DeleteVessel(id) => {
                     game.flight.inactive_vessels.retain(|v| v.id != id);
                     // If we were tracking the deleted vessel, stop tracking
                     if render_state.tracked_vessel == Some(id) {
@@ -1345,17 +1391,17 @@ pub fn render_tracking_station_frame(
                         render_state.focus_on_body(game.solar_system.earth_index);
                     }
                 }
-                sunscatter::render::TrackingStationAction::FocusBody(bi) => {
+                crate::render::TrackingStationAction::FocusBody(bi) => {
                     render_state.focus_on_body(bi);
                 }
-                sunscatter::render::TrackingStationAction::OpenColony(bi) => {
+                crate::render::TrackingStationAction::OpenColony(bi) => {
                     game.enter_colony(bi, GameMode::TrackingStation);
                 }
-                sunscatter::render::TrackingStationAction::None => {}
+                crate::render::TrackingStationAction::None => {}
             }
         }
         Err(wgpu::SurfaceError::Lost) => render_state.resize(render_state.size),
-        Err(wgpu::SurfaceError::OutOfMemory) => std::process::exit(1),
+        Err(wgpu::SurfaceError::OutOfMemory) => panic!("OutOfMemory"),
         Err(e) => eprintln!("Tracking station render error: {:?}", e),
     }
 
@@ -1363,10 +1409,10 @@ pub fn render_tracking_station_frame(
     for notif in &mut game.notifications {
         if !notif.read && notif.kind.stops_warp() {
             game.warp_index = 0;
-            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            render_state.active_toasts.push((notif.kind.message(), web_time::Instant::now()));
             notif.read = true;
         } else if !notif.read {
-            render_state.active_toasts.push((notif.kind.message(), std::time::Instant::now()));
+            render_state.active_toasts.push((notif.kind.message(), web_time::Instant::now()));
             notif.read = true;
         }
     }
@@ -1470,23 +1516,23 @@ pub fn render_editor_frame(
 
         // Contract board window
         if show_contracts {
-            let mut editor_contract_action = sunscatter::render::ManagementAction::None;
+            let mut editor_contract_action = crate::render::ManagementAction::None;
             egui::Window::new("Contracts")
                 .open(&mut show_contracts)
                 .default_width(400.0)
                 .resizable(true)
                 .show(ctx, |ui| {
-                    sunscatter::render::management_ui::render_contracts_section(
+                    crate::render::management_ui::render_contracts_section(
                         ui,
                         &game.contracts,
                         &mut editor_contract_action,
                     );
                 });
             match editor_contract_action {
-                sunscatter::render::ManagementAction::AcceptContract(id) => {
+                crate::render::ManagementAction::AcceptContract(id) => {
                     game.contracts.accept(id);
                 }
-                sunscatter::render::ManagementAction::CancelContract(id) => {
+                crate::render::ManagementAction::CancelContract(id) => {
                     let cancelled_ids = game.contracts.cancel(id);
                     // Remove payloads from editor parts for cancelled contracts
                     for part in game.editor.parts.values_mut() {
@@ -1611,7 +1657,7 @@ pub fn render_editor_frame(
     if let Err(e) = result {
         match e {
             wgpu::SurfaceError::Lost => render_state.resize(render_state.size),
-            wgpu::SurfaceError::OutOfMemory => std::process::exit(1),
+            wgpu::SurfaceError::OutOfMemory => panic!("OutOfMemory"),
             e => eprintln!("Editor render error: {:?}", e),
         }
     }

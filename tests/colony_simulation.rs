@@ -6,12 +6,12 @@
 //! - Independent per-building degradation (C6)
 
 use std::collections::HashMap;
-use sunscatter::bodies::SolarSystem;
-use sunscatter::colony::{
+use sunscatter_app::bodies::SolarSystem;
+use sunscatter_app::colony::{
     BuildingInstance, BuildingType, Colony, ResourceType, TechTree,
 };
-use sunscatter::colony::simulation::simulate_colony_tick;
-use sunscatter::parts::{
+use sunscatter_app::colony::simulation::simulate_colony_tick;
+use sunscatter_app::parts::{
     parts_to_blueprint, AttachmentType, FuelType, PlacedPart, PlacedPartId,
 };
 
@@ -320,7 +320,7 @@ fn per_resource_storage_cap_limits_mine_output() {
 /// Auto-allocated resources should share remaining space equally.
 #[test]
 fn storage_allocation_auto_splits_evenly() {
-    use sunscatter::colony::{StorageAllocation, compute_active_resources, ResourceInventory};
+    use sunscatter_app::colony::{StorageAllocation, compute_active_resources, ResourceInventory};
 
     let alloc = StorageAllocation::default();
     let mut inv = ResourceInventory::new();
@@ -353,7 +353,7 @@ fn storage_allocation_auto_splits_evenly() {
 /// Pinning one resource should reduce the auto-allocated share for others.
 #[test]
 fn storage_allocation_pinning_reduces_others() {
-    use sunscatter::colony::{StorageAllocation, compute_active_resources, ResourceInventory};
+    use sunscatter_app::colony::{StorageAllocation, compute_active_resources, ResourceInventory};
 
     let mut alloc = StorageAllocation::default();
     alloc.set_pinned(ResourceType::MetalOre, 50.0); // Pin metal at 50%
@@ -385,7 +385,7 @@ fn storage_allocation_pinning_reduces_others() {
 /// against kg caps (50,000 kg), so the cap never triggered.
 #[test]
 fn factory_mirror_output_capped_by_storage_allocation() {
-    use sunscatter::colony::FactoryRecipe;
+    use sunscatter_app::colony::FactoryRecipe;
 
     let solar_system = SolarSystem::new();
     let earth_idx = solar_system.earth_index;
@@ -424,7 +424,7 @@ fn factory_mirror_output_capped_by_storage_allocation() {
     }
 
     let mirrors = colony.resources.get(ResourceType::MirrorSegment);
-    let mirror_mass = sunscatter::colony::dyson_swarm::mirror_mass_at_tier(0);
+    let mirror_mass = sunscatter_app::colony::dyson_swarm::mirror_mass_at_tier(0);
     let total_mirror_kg = mirrors * mirror_mass;
     let cap_kg = 500_000.0 * 0.05; // 25,000 kg
 

@@ -1,9 +1,18 @@
 //! Sprite atlas — loads part/engine/plume PNGs, packs into a single GPU texture,
 //! and provides part ID → UV rect mapping.
 
+// On wasm we use the build-time atlas, so the runtime packer + cache helpers
+// (build_sprite_atlas, shelf_pack, *_parallel, mtime probes, etc.) are
+// intentionally compiled but unreachable. Silence the dead-code chorus there.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+// Filesystem metadata (mtime) returns std::time::SystemTime; use it directly
+// rather than web_time::SystemTime so std::fs::Metadata interop type-checks. This
+// code path is desktop-only — wasm uses an embedded prebuilt atlas (Phase 3).
 use std::time::SystemTime;
+#[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use serde::{Serialize, Deserialize};
 
@@ -204,37 +213,95 @@ fn save_to_cache(atlas_data: &[u8], metadata: &SpriteAtlasMetadata) {
     }
 }
 
-/// Load all sprites and create the atlas
+/// Load all sprites and create the atlas. On wasm this decodes a build-time
+/// pre-packed atlas from `OUT_DIR`; on desktop it walks `data/sprites/` and
+/// packs at runtime (with a `data/cache/` fallthrough cache).
 pub fn load_sprite_atlas(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) -> SpriteAtlas {
-    let sprite_dir = Path::new("data/sprites");
+    #[cfg(target_arch = "wasm32")]
+    {
+        return load_sprite_atlas_embedded(device, queue);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let sprite_dir = Path::new("data/sprites");
 
-    // Try loading from cache first
-    let (atlas_data, atlas_width, atlas_height, parts, plumes) = if is_cache_fresh(sprite_dir) {
-        if let Some((data, metadata)) = load_from_cache() {
-            log::info!(
-                "Loaded sprite atlas from cache ({}x{}, {} parts, {} plume types)",
-                metadata.atlas_width, metadata.atlas_height,
-                metadata.parts.len(), metadata.plumes.len()
-            );
-            (data, metadata.atlas_width, metadata.atlas_height, metadata.parts, metadata.plumes)
+        // Try loading from cache first
+        let (atlas_data, atlas_width, atlas_height, parts, plumes) = if is_cache_fresh(sprite_dir) {
+            if let Some((data, metadata)) = load_from_cache() {
+                log::info!(
+                    "Loaded sprite atlas from cache ({}x{}, {} parts, {} plume types)",
+                    metadata.atlas_width, metadata.atlas_height,
+                    metadata.parts.len(), metadata.plumes.len()
+                );
+                (data, metadata.atlas_width, metadata.atlas_height, metadata.parts, metadata.plumes)
+            } else {
+                log::info!("Cache files corrupted, rebuilding sprite atlas");
+                build_sprite_atlas(sprite_dir, device)
+            }
         } else {
-            log::info!("Cache files corrupted, rebuilding sprite atlas");
             build_sprite_atlas(sprite_dir, device)
+        };
+
+        if parts.is_empty() && plumes.is_empty() {
+            log::warn!("No sprites loaded, creating dummy sprite atlas");
+            return create_dummy_atlas(device, queue);
         }
-    } else {
-        build_sprite_atlas(sprite_dir, device)
+
+        upload_atlas_to_gpu(device, queue, &atlas_data, atlas_width, atlas_height, parts, plumes)
+    }
+}
+
+/// Decode the build-time atlas embedded in the wasm binary and upload to GPU.
+#[cfg(target_arch = "wasm32")]
+fn load_sprite_atlas_embedded(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> SpriteAtlas {
+    const ATLAS_PNG: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sprite_atlas.png"));
+    const ATLAS_RON: &str = include_str!(concat!(env!("OUT_DIR"), "/sprite_atlas.ron"));
+
+    let img = match image::load_from_memory(ATLAS_PNG) {
+        Ok(i) => i.into_rgba8(),
+        Err(e) => {
+            log::error!("Failed to decode embedded sprite atlas: {}", e);
+            return create_dummy_atlas(device, queue);
+        }
+    };
+    let metadata: SpriteAtlasMetadata = match ron::from_str(ATLAS_RON) {
+        Ok(m) => m,
+        Err(e) => {
+            log::error!("Failed to parse embedded sprite atlas metadata: {}", e);
+            return create_dummy_atlas(device, queue);
+        }
     };
 
-    if parts.is_empty() && plumes.is_empty() {
-        log::warn!("No sprites loaded, creating dummy sprite atlas");
+    let (w, h) = img.dimensions();
+    if w != metadata.atlas_width || h != metadata.atlas_height {
+        log::error!(
+            "Embedded atlas dimensions {}x{} disagree with metadata {}x{}",
+            w, h, metadata.atlas_width, metadata.atlas_height
+        );
         return create_dummy_atlas(device, queue);
     }
 
-    // Upload atlas to GPU
-    upload_atlas_to_gpu(device, queue, &atlas_data, atlas_width, atlas_height, parts, plumes)
+    log::info!(
+        "Loaded embedded sprite atlas ({}x{}, {} parts, {} plume types)",
+        metadata.atlas_width, metadata.atlas_height,
+        metadata.parts.len(), metadata.plumes.len()
+    );
+
+    upload_atlas_to_gpu(
+        device,
+        queue,
+        &img.into_raw(),
+        metadata.atlas_width,
+        metadata.atlas_height,
+        metadata.parts,
+        metadata.plumes,
+    )
 }
 
 /// Build the sprite atlas from source PNGs: decode, pack, blit, cache, return raw data + metadata
@@ -532,35 +599,37 @@ fn decode_sprites_parallel(
     kind: &str,
 ) -> Vec<SpriteEntry> {
     let kind = kind.to_string();
-    paths.into_par_iter()
-        .filter_map(|(stem, path)| {
-            let mut reader = match image::ImageReader::open(&path) {
-                Ok(r) => r,
-                Err(e) => {
-                    log::warn!("Failed to load sprite {}: {}", path.display(), e);
-                    return None;
-                }
-            };
-            reader.no_limits();
-            match reader.decode() {
-                Ok(img) => {
-                    let rgba = cap_sprite_size(&stem, img.into_rgba8());
-                    let (w, h) = rgba.dimensions();
-                    Some(SpriteEntry {
-                        id: stem,
-                        image: rgba,
-                        width: w,
-                        height: h,
-                        kind: kind.clone(),
-                    })
-                }
-                Err(e) => {
-                    log::warn!("Failed to decode sprite {}: {}", path.display(), e);
-                    None
-                }
+    let decode_one = move |(stem, path): (String, PathBuf)| -> Option<SpriteEntry> {
+        let mut reader = match image::ImageReader::open(&path) {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!("Failed to load sprite {}: {}", path.display(), e);
+                return None;
             }
-        })
-        .collect()
+        };
+        reader.no_limits();
+        match reader.decode() {
+            Ok(img) => {
+                let rgba = cap_sprite_size(&stem, img.into_rgba8());
+                let (w, h) = rgba.dimensions();
+                Some(SpriteEntry {
+                    id: stem,
+                    image: rgba,
+                    width: w,
+                    height: h,
+                    kind: kind.clone(),
+                })
+            }
+            Err(e) => {
+                log::warn!("Failed to decode sprite {}: {}", path.display(), e);
+                None
+            }
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    return paths.into_par_iter().filter_map(decode_one).collect();
+    #[cfg(target_arch = "wasm32")]
+    return paths.into_iter().filter_map(decode_one).collect();
 }
 
 /// Collect plume sprite paths and their parsed metadata
@@ -593,35 +662,37 @@ fn collect_plume_paths(dir: &Path) -> Vec<(String, PathBuf, String)> {
 fn decode_plume_sprites_parallel(
     paths: Vec<(String, PathBuf, String)>,
 ) -> Vec<SpriteEntry> {
-    paths.into_par_iter()
-        .filter_map(|(stem, path, kind)| {
-            let mut reader = match image::ImageReader::open(&path) {
-                Ok(r) => r,
-                Err(e) => {
-                    log::warn!("Failed to load plume sprite {}: {}", path.display(), e);
-                    return None;
-                }
-            };
-            reader.no_limits();
-            match reader.decode() {
-                Ok(img) => {
-                    let rgba = cap_sprite_size(&stem, img.into_rgba8());
-                    let (w, h) = rgba.dimensions();
-                    Some(SpriteEntry {
-                        id: stem,
-                        image: rgba,
-                        width: w,
-                        height: h,
-                        kind,
-                    })
-                }
-                Err(e) => {
-                    log::warn!("Failed to decode plume sprite {}: {}", path.display(), e);
-                    None
-                }
+    let decode_one = |(stem, path, kind): (String, PathBuf, String)| -> Option<SpriteEntry> {
+        let mut reader = match image::ImageReader::open(&path) {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!("Failed to load plume sprite {}: {}", path.display(), e);
+                return None;
             }
-        })
-        .collect()
+        };
+        reader.no_limits();
+        match reader.decode() {
+            Ok(img) => {
+                let rgba = cap_sprite_size(&stem, img.into_rgba8());
+                let (w, h) = rgba.dimensions();
+                Some(SpriteEntry {
+                    id: stem,
+                    image: rgba,
+                    width: w,
+                    height: h,
+                    kind,
+                })
+            }
+            Err(e) => {
+                log::warn!("Failed to decode plume sprite {}: {}", path.display(), e);
+                None
+            }
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    return paths.into_par_iter().filter_map(decode_one).collect();
+    #[cfg(target_arch = "wasm32")]
+    return paths.into_iter().filter_map(decode_one).collect();
 }
 
 /// Create a dummy 1x1 atlas when no sprites are found

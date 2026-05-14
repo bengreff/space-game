@@ -650,5 +650,9 @@ pub enum TitleScreenAction {
     NewGame(String),
     LoadGame(String),
     DeleteGame(String),
+    /// Open a file picker to import a `.ron` save into IndexedDB (wasm only).
+    ImportSave,
+    /// Trigger a browser download of the save with this id (wasm only).
+    ExportSave(String),
     QuitGame,
 }

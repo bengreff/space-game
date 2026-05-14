@@ -1,6 +1,6 @@
 mod common;
 
-use sunscatter::parts::{
+use sunscatter_app::parts::{
     PartDefinitions, PartSize, PartCategory, FuelType,
     BlueprintPart, VesselBlueprint, AttachmentType, FlightVessel,
 };
@@ -226,7 +226,7 @@ fn fuel_type_all_covers_all_variants() {
 
 #[test]
 fn every_fuel_type_has_price() {
-    use sunscatter::colony::economy::fuel_price_per_kg;
+    use sunscatter_app::colony::economy::fuel_price_per_kg;
     for ft in FuelType::all() {
         let price = fuel_price_per_kg(*ft);
         assert!(
@@ -267,7 +267,7 @@ fn fuel_resource_names_map_to_resource_types() {
     // Every fuel type must have a documented mapping to a ResourceType (or None).
     // If a new FuelType is added, this table must be extended — the final assert
     // guards that every variant in FuelType::all() appears in `expected`.
-    use sunscatter::colony::ResourceType;
+    use sunscatter_app::colony::ResourceType;
 
     let expected: &[(FuelType, Option<ResourceType>)] = &[
         (FuelType::Rp1, Some(ResourceType::Rp1)),

@@ -1,3 +1,7 @@
+// On wasm the std::fs paths are unreachable (replaced with IndexedDB via the
+// `wasm_storage` submodule); silence the resulting dead-code chorus.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]
+
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -8,6 +12,12 @@ use crate::game::{Game, VesselId, TrackedVessel};
 use crate::parts::{FlightVessel, VesselBlueprint};
 use crate::render::ManeuverNode;
 use crate::ship::Ship;
+
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_storage;
+
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_io;
 
 const SAVE_DIR: &str = "data/saves";
 
@@ -211,76 +221,101 @@ impl SaveGame {
         }
     }
 
-    /// Write this save game to disk as `data/saves/{name}/save.ron`.
+    /// Write this save game. On desktop, writes `data/saves/{name}/save.ron`;
+    /// on wasm, writes to the IndexedDB-backed `save:{id}` key.
     pub fn write_to_file(&self) -> Result<(), String> {
         let save_id = sanitize_save_name(&self.name);
-        let dir = PathBuf::from(SAVE_DIR).join(&save_id);
-        if !dir.exists() {
-            fs::create_dir_all(&dir)
-                .map_err(|e| format!("Failed to create save directory: {}", e))?;
-        }
-
-        let path = dir.join("save.ron");
-
         let content = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
             .map_err(|e| format!("Failed to serialize save game: {}", e))?;
 
-        atomic_write(&path, &content)?;
-
-        log::info!("Saved game '{}' to {:?}", self.name, path);
-        Ok(())
+        #[cfg(target_arch = "wasm32")]
+        {
+            wasm_storage::write_save(&save_id, &self.name, content, self.simulation_time, self.vessels.len());
+            log::info!("Saved game '{}' to IndexedDB", self.name);
+            return Ok(());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dir = PathBuf::from(SAVE_DIR).join(&save_id);
+            if !dir.exists() {
+                fs::create_dir_all(&dir)
+                    .map_err(|e| format!("Failed to create save directory: {}", e))?;
+            }
+            let path = dir.join("save.ron");
+            atomic_write(&path, &content)?;
+            log::info!("Saved game '{}' to {:?}", self.name, path);
+            Ok(())
+        }
     }
 
-    /// Write a quicksave to `data/saves/{name}/quicksave_{N}.ron`.
-    /// Returns the quicksave index.
+    /// Write a quicksave. On desktop saves to `data/saves/{name}/quicksave_{N}.ron`;
+    /// on wasm the quicksave is appended to IndexedDB. Returns the quicksave index.
     pub fn write_quicksave(&self) -> Result<u32, String> {
         let save_id = sanitize_save_name(&self.name);
-        let dir = PathBuf::from(SAVE_DIR).join(&save_id);
-        if !dir.exists() {
-            fs::create_dir_all(&dir)
-                .map_err(|e| format!("Failed to create save directory: {}", e))?;
-        }
-
-        // Find highest existing quicksave index
-        let next_index = next_quicksave_index(&dir);
-
-        let path = dir.join(format!("quicksave_{}.ron", next_index));
         let content = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
             .map_err(|e| format!("Failed to serialize quicksave: {}", e))?;
 
-        atomic_write(&path, &content)?;
-
-        log::info!("Quicksaved '{}' as quicksave_{}", self.name, next_index);
-        Ok(next_index)
+        #[cfg(target_arch = "wasm32")]
+        {
+            let index = wasm_storage::write_quicksave(&save_id, &self.name, content, self.simulation_time);
+            log::info!("Quicksaved '{}' as quicksave_{} (IndexedDB)", self.name, index);
+            return Ok(index);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dir = PathBuf::from(SAVE_DIR).join(&save_id);
+            if !dir.exists() {
+                fs::create_dir_all(&dir)
+                    .map_err(|e| format!("Failed to create save directory: {}", e))?;
+            }
+            let next_index = next_quicksave_index(&dir);
+            let path = dir.join(format!("quicksave_{}.ron", next_index));
+            atomic_write(&path, &content)?;
+            log::info!("Quicksaved '{}' as quicksave_{}", self.name, next_index);
+            Ok(next_index)
+        }
     }
 
-    /// Write a launch save to `data/saves/{name}/launch.ron`.
-    /// Overwrites any existing launch save.
+    /// Persist a launch save (overwrites any existing one).
     pub fn write_launch_save(&self) -> Result<(), String> {
         let save_id = sanitize_save_name(&self.name);
-        let dir = PathBuf::from(SAVE_DIR).join(&save_id);
-        if !dir.exists() {
-            fs::create_dir_all(&dir)
-                .map_err(|e| format!("Failed to create save directory: {}", e))?;
-        }
-
-        let path = dir.join("launch.ron");
         let content = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
             .map_err(|e| format!("Failed to serialize launch save: {}", e))?;
 
-        atomic_write(&path, &content)?;
-
-        log::info!("Saved launch state for '{}'", self.name);
-        Ok(())
+        #[cfg(target_arch = "wasm32")]
+        {
+            wasm_storage::write_launch(&save_id, &self.name, content, self.simulation_time, self.vessels.len());
+            log::info!("Saved launch state for '{}' to IndexedDB", self.name);
+            return Ok(());
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dir = PathBuf::from(SAVE_DIR).join(&save_id);
+            if !dir.exists() {
+                fs::create_dir_all(&dir)
+                    .map_err(|e| format!("Failed to create save directory: {}", e))?;
+            }
+            let path = dir.join("launch.ron");
+            atomic_write(&path, &content)?;
+            log::info!("Saved launch state for '{}'", self.name);
+            Ok(())
+        }
     }
 
-    /// Load a launch save from `data/saves/{save_name}/launch.ron`.
+    /// Load a launch save (filesystem on desktop, IndexedDB on wasm).
     pub fn load_launch_save(save_name: &str) -> Result<Self, String> {
         let save_id = sanitize_save_name(save_name);
-        let path = PathBuf::from(SAVE_DIR).join(&save_id).join("launch.ron");
 
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read launch save: {}", e))?;
+        #[cfg(target_arch = "wasm32")]
+        let content = wasm_storage::load_launch_content(&save_id)
+            .ok_or_else(|| format!("Launch save '{}' not found", save_id))?;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let content = {
+            let path = PathBuf::from(SAVE_DIR).join(&save_id).join("launch.ron");
+            fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read launch save: {}", e))?
+        };
 
         let save: SaveGame = ron::from_str(&content)
             .map_err(|e| format!("Failed to parse launch save: {}", e))?;
@@ -296,25 +331,29 @@ impl SaveGame {
         Ok(save)
     }
 
-    /// Load a save game from `data/saves/{save_id}/save.ron`.
-    /// Falls back to legacy flat file `data/saves/{save_id}.ron`.
+    /// Load a save game by id. On desktop reads `data/saves/{save_id}/save.ron`
+    /// (with legacy flat-file fallback); on wasm reads from IndexedDB.
     pub fn load_from_file(save_id: &str) -> Result<Self, String> {
-        // Try folder-based first
-        let folder_path = PathBuf::from(SAVE_DIR).join(save_id).join("save.ron");
-        let path = if folder_path.exists() {
-            folder_path
-        } else {
-            // Legacy fallback: flat .ron file
-            let legacy_path = PathBuf::from(SAVE_DIR).join(format!("{}.ron", save_id));
-            if legacy_path.exists() {
-                legacy_path
-            } else {
-                return Err(format!("Save '{}' not found", save_id));
-            }
-        };
+        #[cfg(target_arch = "wasm32")]
+        let content = wasm_storage::load_save_content(save_id)
+            .ok_or_else(|| format!("Save '{}' not found", save_id))?;
 
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read save file: {}", e))?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let content = {
+            let folder_path = PathBuf::from(SAVE_DIR).join(save_id).join("save.ron");
+            let path = if folder_path.exists() {
+                folder_path
+            } else {
+                let legacy_path = PathBuf::from(SAVE_DIR).join(format!("{}.ron", save_id));
+                if legacy_path.exists() {
+                    legacy_path
+                } else {
+                    return Err(format!("Save '{}' not found", save_id));
+                }
+            };
+            fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read save file: {}", e))?
+        };
 
         let save: SaveGame = ron::from_str(&content)
             .map_err(|e| format!("Failed to parse save file: {}", e))?;
@@ -330,13 +369,20 @@ impl SaveGame {
         Ok(save)
     }
 
-    /// Load a quicksave from `data/saves/{save_name}/quicksave_filename`.
+    /// Load a quicksave (filesystem on desktop, IndexedDB on wasm).
     pub fn load_quicksave(save_name: &str, qs_filename: &str) -> Result<Self, String> {
         let save_id = sanitize_save_name(save_name);
-        let path = PathBuf::from(SAVE_DIR).join(&save_id).join(qs_filename);
 
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read quicksave: {}", e))?;
+        #[cfg(target_arch = "wasm32")]
+        let content = wasm_storage::load_quicksave_content(&save_id, qs_filename)
+            .ok_or_else(|| format!("Quicksave '{}' not found", qs_filename))?;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let content = {
+            let path = PathBuf::from(SAVE_DIR).join(&save_id).join(qs_filename);
+            fs::read_to_string(&path)
+                .map_err(|e| format!("Failed to read quicksave: {}", e))?
+        };
 
         let save: SaveGame = ron::from_str(&content)
             .map_err(|e| format!("Failed to parse quicksave: {}", e))?;
@@ -352,10 +398,14 @@ impl SaveGame {
         Ok(save)
     }
 
-    /// List all save files in the saves directory.
-    /// Finds folder-based saves (with save.ron) and legacy flat .ron files.
-    /// Folders take priority over legacy files with the same name.
+    /// List all save files. Desktop scans the saves directory; wasm reads
+    /// the IndexedDB-backed in-memory cache.
     pub fn list_saves() -> Vec<SaveFileInfo> {
+        #[cfg(target_arch = "wasm32")]
+        return wasm_storage::list_saves();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
         let dir = Path::new(SAVE_DIR);
         if !dir.exists() {
             return Vec::new();
@@ -455,33 +505,50 @@ impl SaveGame {
         // Sort by modification time, most recent first
         saves.sort_by(|a, b| b.modified.cmp(&a.modified));
         saves
+        }  // end #[cfg(not(target_arch = "wasm32"))]
     }
 
-    /// Delete a save game by save_id (removes folder or legacy file).
+    /// Delete a save by id. Desktop removes the folder/legacy file; wasm
+    /// removes the matching IDB records and any quicksaves under that id.
     pub fn delete_save(save_id: &str) -> Result<(), String> {
-        let folder_path = PathBuf::from(SAVE_DIR).join(save_id);
-        if folder_path.is_dir() {
-            fs::remove_dir_all(&folder_path)
-                .map_err(|e| format!("Failed to delete save folder: {}", e))?;
-            log::info!("Deleted save folder: {:?}", folder_path);
+        #[cfg(target_arch = "wasm32")]
+        {
+            wasm_storage::delete_save(save_id);
+            log::info!("Deleted save '{}' from IndexedDB", save_id);
             return Ok(());
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let folder_path = PathBuf::from(SAVE_DIR).join(save_id);
+            if folder_path.is_dir() {
+                fs::remove_dir_all(&folder_path)
+                    .map_err(|e| format!("Failed to delete save folder: {}", e))?;
+                log::info!("Deleted save folder: {:?}", folder_path);
+                return Ok(());
+            }
 
-        let legacy_path = PathBuf::from(SAVE_DIR).join(format!("{}.ron", save_id));
-        if legacy_path.is_file() {
-            fs::remove_file(&legacy_path)
-                .map_err(|e| format!("Failed to delete save file: {}", e))?;
-            log::info!("Deleted save file: {:?}", legacy_path);
-            return Ok(());
+            let legacy_path = PathBuf::from(SAVE_DIR).join(format!("{}.ron", save_id));
+            if legacy_path.is_file() {
+                fs::remove_file(&legacy_path)
+                    .map_err(|e| format!("Failed to delete save file: {}", e))?;
+                log::info!("Deleted save file: {:?}", legacy_path);
+                return Ok(());
+            }
+
+            Err(format!("Save '{}' not found", save_id))
         }
-
-        Err(format!("Save '{}' not found", save_id))
     }
 
     /// List all quicksaves for a given save name.
     /// Returns sorted by index descending (newest first).
     pub fn list_quicksaves(save_name: &str) -> Vec<QuicksaveInfo> {
         let save_id = sanitize_save_name(save_name);
+
+        #[cfg(target_arch = "wasm32")]
+        return wasm_storage::list_quicksaves(&save_id);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
         let dir = PathBuf::from(SAVE_DIR).join(&save_id);
         if !dir.exists() {
             return Vec::new();
@@ -533,6 +600,7 @@ impl SaveGame {
         // Sort by index descending (newest first)
         quicksaves.sort_by(|a, b| b.index.cmp(&a.index));
         quicksaves
+        }  // end #[cfg(not(target_arch = "wasm32"))]
     }
 
     /// Migrate old-format tech IDs ("1.1", "2.3", etc.) to new descriptive IDs.
@@ -701,7 +769,7 @@ fn next_quicksave_index(dir: &Path) -> u32 {
     max_index + 1
 }
 
-fn sanitize_save_name(name: &str) -> String {
+pub(crate) fn sanitize_save_name(name: &str) -> String {
     name.chars()
         .map(|c| {
             if c.is_alphanumeric() || c == '-' || c == '_' {

@@ -71,7 +71,7 @@ pub fn render_tech_tree_screen(
     current_warp_index: usize,
     date_str: &str,
     paused: bool,
-    active_toasts: &[(String, std::time::Instant)],
+    active_toasts: &[(String, web_time::Instant)],
     part_defs: &PartDefinitions,
 ) -> TechTreeScreenAction {
     let mut action = TechTreeScreenAction::None;

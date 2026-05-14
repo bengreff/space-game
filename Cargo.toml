@@ -5,16 +5,29 @@ edition = "2021"
 license = "MIT"
 default-run = "sunscatter"
 
+# rlib for tests/binaries; cdylib for wasm-bindgen / Trunk to consume.
+# `name` is intentionally distinct from the bin (`sunscatter`) so Trunk can
+# disambiguate the wasm artifact from the (empty) wasm-target bin.
+[lib]
+name = "sunscatter_app"
+crate-type = ["rlib", "cdylib"]
+
+[build-dependencies]
+# Used by build.rs to pre-pack the sprite atlas for wasm targets.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 [dependencies]
-# Rendering
-wgpu = "0.19"
+# Rendering. `webgl` is needed so wgpu's wasm32 build targets WebGL2 instead of
+# the WebGPU-only path (which fails on Safari + Firefox + most Chromium today).
+wgpu = { version = "0.19", features = ["webgl"] }
 winit = "0.29"
 lyon = "1.0"
 
 # UI
 egui = "0.27"
 egui-wgpu = "0.27"
-egui-winit = "0.27"
+# egui-winit has target-specific feature sets (clipboard via arboard is desktop-only).
+egui-winit = { version = "0.27", default-features = false, features = ["links"] }
 
 # Math
 glam = { version = "0.25", features = ["serde"] }
@@ -27,11 +40,54 @@ ron = "0.8"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Utilities
-pollster = "0.3"  # For blocking on async wgpu
 bytemuck = { version = "1.14", features = ["derive"] }
-rayon = "1.10"
 log = "0.4"
+web-time = "1"  # Drop-in replacement for std::time on wasm; identity on native
+
+# Desktop-only deps. Threading and stdout-based logging don't apply on wasm.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster = "0.3"
 env_logger = "0.11"
+rayon = "1.10"
+# Re-enable arboard-backed clipboard on desktop (native windowing only).
+egui-winit = { version = "0.27", default-features = false, features = ["clipboard", "links"] }
+
+# Wasm-only deps. Loaded by Trunk + browser; not used on native targets.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+console_error_panic_hook = "0.1"
+console_log = { version = "1", features = ["color"] }
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlElement",
+    "HtmlCanvasElement",
+    "HtmlAnchorElement",
+    "HtmlInputElement",
+    "Node",
+    "Storage",
+    "Performance",
+    "Location",
+    "console",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+    "Headers",
+    "Blob",
+    "Url",
+    "File",
+    "FileList",
+    "FileReader",
+] }
+gloo-net = "0.5"
+# IndexedDB-backed save storage — saves/quicksaves/launch saves/user blueprints
+# persist across reloads.
+idb = "0.6"
+serde-wasm-bindgen = "0.6"
 
 # Optimize dependencies in debug builds (image decoding is 10-20x faster at opt-level 1)
 [profile.dev.package."*"]

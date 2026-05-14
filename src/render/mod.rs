@@ -1,3 +1,5 @@
+#[cfg(target_arch = "wasm32")]
+pub mod body_fetcher;
 mod camera;
 mod colony_ui;
 mod colony_overview_ui;

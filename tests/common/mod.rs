@@ -1,4 +1,4 @@
-use sunscatter::bodies::{Orbit, SolarSystem};
+use sunscatter_app::bodies::{Orbit, SolarSystem};
 
 // Physical constants
 pub const EARTH_MASS: f64 = 5.972e24;
