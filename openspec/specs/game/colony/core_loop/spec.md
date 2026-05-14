@@ -76,9 +76,7 @@ Related state fields: `can_establish_colony`, `landed_body_index`. Click handler
 
 Called from all frame renderers (flight, tracking station, colony, colony overview, management, tech tree) inside `if !game.paused`. R&D science (`game.update_rd_science(dt_sim)`) and contract checking (`game.check_contracts()`) are also called in every frame's simulation block, immediately before `update_colonies`.
 
-Batch ticking: `total_days = dt_sim / 86400`, `num_ticks = ceil(total_days).clamp(1, 1000)`, `days_per_tick = total_days / num_ticks`.
-
-Per tick calls `simulate_colony_tick()` for each colony.
+`num_ticks = ceil(total_days).clamp(1, 1000)`, `days_per_tick = total_days / num_ticks`. Per tick calls `simulate_colony_tick()` for each colony.
 
 ### Tick Order
 
@@ -86,9 +84,9 @@ Per tick calls `simulate_colony_tick()` for each colony.
 1. **Power balance (habitat-priority)** — Sum generation (solar scaled by `(AU/sun_distance)^2` and degradation, reactors by degradation and fuel availability). Demand split into `habitat_demand` (Habitat buildings) and `other_demand` (all other buildings + factory recipe power). Habitats get power first: `habitat_power_fraction = min(1, total_gen / habitat_demand)`. Remaining power goes to other buildings: `other_power_fraction = min(1, (total_gen - habitat_demand) / other_demand)`. If `habitat_power_fraction < 1.0` and crew > 0, push `ColonyPowerLoss` notification (deduped by `habitat_unpowered_notified` flag).
 2. **Maintenance** — Consume `maintenance_cost / 30 * days` per building. Robot capacity check. Degradation increases on shortfall; buildings hold at current degradation when fully maintained (no self-repair). Buildings with no maintenance costs (Stockpile) also do not self-repair. Each building's degradation is tracked independently — siblings of the same type do not share state.
 3. **Construction** — Remaining robot capacity advances first queue item. On completion: add building to colony (no notification).
-4. **Mines** — `2000 * days * (1 - degradation) * other_power_fraction * mining_mult` kg of assigned resource, capped by storage. `mining_mult = 1.11^tier("mining")`.
-4b. **Atmospheric Collectors** — `10,000 * days * (1 - degradation) * other_power_fraction * atmo_mult` kg of assigned resource, capped by storage. `atmo_mult = 1.11^tier("atmospheric_science")`.
-5. **Factories** — `(outputs_per_batch / batch_hours) * 24 * days * (1 - degradation) * other_power_fraction * factory_mult` throughput. `factory_mult = 1.11^tier(recipe.efficiency_line_id())`. Consume proportional inputs. Recipe-to-line mapping: MetalSmelting/AlloyForging → "metallurgy", Electronics/Superconductor → "electronics_mfg", PrecisionInstruments → "precision_mfg", Electrolysis/Deuterium/Sabatier/Methane/Kerosene → "chemical_processing", Uranium/Tritium/NPU → "nuclear_engineering", He3 recipes → "isotope_extraction".
+4. **Mines** — `2000 * days * (1 - degradation) * other_power_fraction * mining_mult` kg of assigned resource, capped by **per-resource storage allocation**. `mining_mult = 1.11^tier("mining")`. Per-resource cap = `storage_allocation.capacity_for(resource, storage_cap, active_resources)`.
+4b. **Atmospheric Collectors** — `10,000 * days * (1 - degradation) * other_power_fraction * atmo_mult` kg of assigned resource, capped by per-resource storage allocation. `atmo_mult = 1.11^tier("atmospheric_science")`.
+5. **Factories** — `(outputs_per_batch / batch_hours) * 24 * days * (1 - degradation) * other_power_fraction * factory_mult` throughput. `factory_mult = 1.11^tier(recipe.efficiency_line_id())`. Consume proportional inputs. Storage check uses **per-resource caps** for each output (accounting for input mass freed by the same resource type). Unit-counted resources (MirrorSegment, CollectorStation) are converted to kg via `ResourceType::storage_mass_per_unit(sail_tier)` before comparing against kg caps. Recipe-to-line mapping: MetalSmelting/AlloyForging → "metallurgy", Electronics/Superconductor → "electronics_mfg", PrecisionInstruments → "precision_mfg", Electrolysis/Deuterium/Sabatier/Methane/Kerosene → "chemical_processing", Uranium/Tritium/NPU → "nuclear_engineering", He3 recipes → "isotope_extraction".
 6. **Greenhouses** — Basic: `0.5 * days * water_factor * (1-degradation) * other_power_fraction * agri_mult` kg food (water_factor = water_fill / 2,000). Advanced: `2.5 * days * water_factor * (1-degradation) * other_power_fraction * agri_mult` kg food (water_factor = water_fill / 5,000). `agri_mult = 1.11^tier("agriculture")`.
 6b. **Food cap** — If `food_capacity() > 0` and `food_stored > food_capacity()`, clamp to capacity.
 7. **Food consumption** — `0.5 * crew * days` kg. If food hits 0 and `!food_depleted_notified`, set flag and push notification. Reset flag when food rises above 0.
@@ -99,7 +97,10 @@ Per tick calls `simulate_colony_tick()` for each colony.
 
 - `habitability_multiplier(score)` — `(200 - score) / 100` (100=1x, 0=2x)
 - `sun_distance(body_index, solar_system)` — Walk parent chain to find sun-orbiting ancestor
-- `Colony::storage_capacity()` — 500,000 kg per operational Stockpile
+- `Colony::storage_capacity()` — 500,000 kg per operational Stockpile (total pool; per-resource caps via `StorageAllocation`)
+- `ResourceType::storage_mass_per_unit(sail_tier)` — kg per inventory unit. Most resources return 1.0 (stored in kg). MirrorSegment returns `mirror_mass_at_tier(sail_tier)`, CollectorStation returns `COLLECTOR_MASS_KG` (5,000).
+- `ResourceInventory::total_storage_mass(sail_tier)` — sum of `amount * storage_mass_per_unit()` for all resources. Used for storage display instead of `total_mass()` to correctly account for unit-counted resources.
+- `compute_production_map(colony, tech_tree)` — lightweight HashMap of resource → production rate for active resource detection
 - `Colony::food_capacity()` — Habitat: 3,000 kg, FoodStorage: 10,000 kg per operational building
 - `Colony::crew_capacity()` — 20 per operational Habitat
 - `Colony::operational_building_count(bt)` — Count of non-degraded buildings of type
@@ -107,10 +108,12 @@ Per tick calls `simulate_colony_tick()` for each colony.
 
 ### Construction
 
-- `Colony::queue_building(bt, hab_score)` — Validates resources, deducts from inventory, pushes `ConstructionQueueItem`
+- `Colony::queue_building(bt, hab_score, body_radius_m, count)` — Validates resources, deducts for `min(count, max_affordable)` units. If an existing queue item of the same building type exists, merges into it (increases count, adds reserved resources). Otherwise pushes a new `ConstructionQueueItem`. `count=0` means "all affordable".
+- `ConstructionQueueItem` fields: `count` (batch total, default 1), `completed` (units finished so far, default 0), `total_mass` (per-unit mass). On completion of each unit in a batch, the building is added, `completed` increments, and `mass_assembled` resets. Queue item removed when `completed >= count`. UI shows remaining count (`count - completed`) as multiplier, decreasing as buildings complete.
 - Habitability multiplier applied to build cost for affected buildings
 - Robot throughput: ConstructionRobot 20,000 kg/day, LightConstructionRobot 5,000 kg/day (both scaled by `1.11^tier("construction")`)
 - Maintenance priority: robots service maintenance first (also scaled by construction multiplier), remaining capacity goes to construction
+- Building construction completions do NOT push notifications (monitored via colony UI progress bars)
 
 ### Maintenance
 
@@ -132,9 +135,10 @@ Per tick calls `simulate_colony_tick()` for each colony.
 ### NotificationKind Enum
 - `ColonyEstablished { colony_name }` — does not stop warp
 - `ColonyFoodDepleted { colony_name }` — stops warp
-- `ColonyResourceDepleted { colony_name, resource }` — stops warp
+- `ColonyResourceDepleted { colony_name, resource }` — does not stop warp
 - `ColonyPowerLoss { colony_name }` — stops warp
-- `ConstructionComplete { colony_name, building }` — defined but not currently pushed (construction monitored via colony UI)
+- `ConstructionComplete { colony_name, building }` — defined but not pushed (construction monitored via colony UI)
+- `SoiTransition { body_name }` — stops warp; pushed from `main.rs` when player ship changes SOI body
 
 ### Notification Struct
 - `kind: NotificationKind`, `time: f64`, `read: bool`
@@ -154,11 +158,12 @@ Full-screen colony management as a dedicated `GameMode::Colony`. Uses `ColonyScr
 
 ### ColonyScreenAction
 ```
-None, QueueBuilding(body_index, BuildingType),
+None, QueueBuilding(body_index, BuildingType, count),
 AddMineAssignment(body_index, ResourceType, count), RemoveMineAssignment(body_index, ResourceType, count),
 AddCollectorAssignment(body_index, ResourceType, count), RemoveCollectorAssignment(body_index, ResourceType, count),
 AddFactoryAssignment(body_index, FactoryRecipe, count), RemoveFactoryAssignment(body_index, FactoryRecipe, count),
 ReturnToFlight, GoToTrackingStation, GoToMainMenu, ChangeWarp(idx), SwitchColony(body_index),
+SetStorageAllocation { body_index, resource, percent }, UnpinStorageAllocation { body_index, resource },
 DebugAddResource(body_index, ResourceType, kg), DebugAddBuilding(body_index, BuildingType),
 DebugAddCrew(body_index, count)
 ```
@@ -188,41 +193,43 @@ Each section rendered by a dedicated helper function, wrapped in `card_frame()` 
 
 **1. Overview card** — `render_overview_card()`
 - Colony name (14pt strong heading), location (12pt gray)
-- 2-column grid: Crew, Food (with days and capacity), Storage
+- 2-column grid: Crew, Robots (count + crew needed, shown if >0), Food (with days and capacity), Storage, Power (net power color-coded green/red with "(CREW AT RISK)" suffix when `habitat_power_fraction < 1.0` and crew > 0)
 - Crisis alert at bottom (red strong, only if `crew_at_crisis_start` is Some)
 
 **2. Power card** — `render_power_card()`
 - Net power summary at top (green/red, 12pt strong)
 - Allocation warnings inline: Habitat % | Buildings %
 - Combined production + demand striped grid (3 cols: Source, Count, Output/Draw) with green production and orange demand, separator row between sections
+- Receiver Array row has a tooltip showing saturation explanation: "Laser-limited" (when laser power < receiver capacity) or "Receiver-limited" (when receiver capacity < laser power), with both values shown. Tooltip only appears when `receiver_laser_power_kw > 0`.
 
 **3. Buildings card** — `render_buildings_card()`
-- Batch size selector (11pt selectable labels: 10/100/1000/All)
+- Batch size selector (11pt selectable labels: 1/10/100/1000/All, default 1)
 - Building counts grid (excluding mines/factories/collectors)
 - Mines sub-section with 13pt strong sub-heading, +/- buttons per resource
 - Atmospheric Collectors sub-section (same pattern)
 - Factories sub-section with recipe tooltips
 
-**Batch Assignment**: Options: `10 | 100 | 1000 | All`. Default is 10. `All` (stored as 0) assigns/unassigns all available. Persists via `egui::Id("colony_batch_size")` in `ctx.data_temp`. Effective count is `min(batch_size, available)` (or all when batch_size == 0).
+**Batch Assignment**: Options: `1 | 10 | 100 | 1000 | All`. Default is 1. `All` (stored as 0) assigns/unassigns all available. Persists via `egui::Id("colony_batch_size")` in `ctx.data_temp`. Effective count is `min(batch_size, available)` (or all when batch_size == 0).
 
 **Mines** use +/- buttons grouped by resource:
 ```
 Mines (5x):
-  Metal Ore: 3  [−] [+]
-  Water: 1      [−] [+]
+  Metal Ore: 3 (6.0 t/d)  [−] [+]
+  Water: 1 (2.0 t/d)      [−] [+]
   Unassigned: 1
 ```
-Only shows mineable resources from `body_mineable`. [+] tooltip "Produces 2,000 kg/day".
+Only shows mineable resources from `body_mineable`. Labels show total production rate inline when count > 0, computed as `2000 * (1 - degradation) * other_power_fraction * mining_mult` per operational mine. [+] tooltip "Produces 2,000 kg/day".
 
-**Atmospheric Collectors** same pattern. [+] tooltip "Produces 10,000 kg/day".
+**Atmospheric Collectors** same pattern. Labels show total production rate inline when count > 0, computed as `10,000 * (1 - degradation) * other_power_fraction * atmo_mult` per operational collector. [+] tooltip "Produces 10,000 kg/day".
 
-**Factories** same pattern. [+] tooltip shows recipe details (inputs → outputs, batch time, power). Recipes are filtered by `tech_tree.is_recipe_available(recipe.recipe_id())` — locked recipes are hidden unless already assigned (legacy/migration edge case). The [+] button is only shown for unlocked recipes. Assignment validation in `frames.rs` also guards against locked recipes via `is_recipe_available()`.
+**Factories** same pattern. Labels show total production rate inline when count > 0, based on primary output scaled by `(batches_per_day) * (1 - degradation) * other_power_fraction * factory_mult` per operational factory, where `factory_mult = 1.11^tier(recipe.efficiency_line_id())`. [+] tooltip shows recipe details (inputs → outputs, batch time, power). Recipes are filtered by `tech_tree.is_recipe_available(recipe.recipe_id())` — locked recipes are hidden unless already assigned (legacy/migration edge case). The [+] button is only shown for unlocked recipes. Assignment validation in `frames.rs` also guards against locked recipes via `is_recipe_available()`.
 
 `FactoryRecipe::recipe_id()` returns the string ID matching `recipe_gates` in `data/tech/tree.ron`. `FactoryRecipe::efficiency_line_id()` returns the tech line governing throughput multiplier.
 
 **4. Construction card** — `render_construction_card()`
-- Progress bars (green fill) per queue item
-- "Queue:" ComboBox for adding buildings with tech gating (`tech_tree.is_building_available(bt)`)
+- Progress bars (green fill) per queue item with estimated time remaining appended. Batch items display: `"Mine ×5 (3/5) — 1.2t / 3.0t — ~2.3d"`. Single items show: `"Mine (1.2t / 3.0t) — ~2.3d"`. Time format: `~Xh` when < 1 day, `~X.Xd` when >= 1 day, `stalled` when available capacity <= 0. Time is cumulative for queued items (each item's estimate includes all preceding items' remaining time). Available capacity = total robot capacity (scaled by construction tech multiplier) minus total maintenance demand.
+- Batch size selector (1/10/100/All, default 1) persisted via `egui::Id("colony_build_batch_size")`
+- "Queue:" ComboBox for adding buildings with tech gating (`tech_tree.is_building_available(bt)`), passes batch count
 
 **5. Maintenance card** — `render_maintenance_card()`
 - Striped grid (4 cols: Resource, Per 30d, In stock, Days left) with colored days
@@ -231,14 +238,18 @@ Only shows mineable resources from `body_mineable`. [+] tooltip "Produces 2,000 
 
 **6. Resources card** — `render_resources_card()`
 - Full-width card (`ui.set_min_width(ui.available_width())`)
-- Striped grid (5 cols: Resource, Amount, Production, Consumption, Days left)
-- Food row from `colony.food_stored`, production green, consumption orange
+- Storage header showing total used/capacity (uses `total_storage_mass()` to correctly account for unit-counted resources)
+- Striped grid (7 cols: Resource, Amount, Cap, Production, Consumption, Days left, Alloc %)
+- **Cap column**: per-resource allocated capacity (yellow when >95% full). Unit-counted resources (MirrorSegment, CollectorStation) display cap as unit count (`cap_kg / mass_per_unit`) rather than kg.
+- **Alloc % column**: editable text input; editing pins the resource at that percentage. Right-click context menu to unpin (return to auto allocation). `ColonyScreenAction::SetStorageAllocation` / `UnpinStorageAllocation` variants.
+- Mirror Segments displayed as count with mass in parentheses: `"5 (5.0 kg)"`. Production/consumption rates shown as `"+0.5/day"` / `"−0.5/day"` (no kg unit)
+- Food row from `colony.food_stored`, production green, consumption orange (no Cap/Alloc % columns for food)
 - Days left = `amount / (consumption - production)` when net negative; green infinity when net positive; blank when no rates
 - Days left colored: red < 10d, yellow < 30d, white otherwise
 - Uses pre-computed `ResourceRates`
 
 Rate sources:
-- **Production**: mines (2,000 kg/day × power_fraction × (1−degradation)), atmospheric collectors (10,000 kg/day × power_fraction × (1−degradation)), factory outputs, greenhouse food
+- **Production**: mines (2,000 kg/day × power_fraction × (1−degradation) × mining_mult), atmospheric collectors (10,000 kg/day × power_fraction × (1−degradation) × atmo_mult), factory outputs, greenhouse food
 - **Consumption**: maintenance costs (per 30d / 30), factory inputs, reactor fuel, food (0.5 kg/crew/day)
 
 **7. Debug section** — `CollapsingHeader` (no card frame, closed by default)
@@ -287,4 +298,4 @@ Uses egui `data_temp` for persistent ComboBox/DragValue state.
 
 `SaveGame.notifications: Vec<Notification>` with `#[serde(default)]` for backward compatibility. Persisted in `from_game()`, restored in `restore_to_game()`.
 
-All new `Colony` fields (`lab_science_extracted`, `lab_elapsed_years`, `habitat_power_fraction`, `other_power_fraction`, `habitat_unpowered_notified`, `crew_at_crisis_start`, `crew_death_accumulator`) use `#[serde(default)]`. Power fractions default to `1.0`.
+All new `Colony` fields (`lab_science_extracted`, `lab_elapsed_years`, `habitat_power_fraction`, `other_power_fraction`, `habitat_unpowered_notified`, `crew_at_crisis_start`, `crew_death_accumulator`, `receiver_power_kw`, `receiver_laser_power_kw`) use `#[serde(default)]`. Power fractions default to `1.0`.

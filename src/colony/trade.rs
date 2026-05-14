@@ -34,6 +34,8 @@ pub struct StoredShip {
 pub enum TradeShipState {
     /// Ship is stationed at a colony (or Earth).
     Stationed,
+    /// Ship is queued at colony mass driver, waiting for energy to launch.
+    WaitingForMassDriver,
     /// Ship is in transit between bodies.
     InTransit,
 }
@@ -152,6 +154,12 @@ pub struct TradeRoute {
     /// If true, automatically queue ship construction when no ship is available in hangar.
     #[serde(default)]
     pub auto_build_ships: bool,
+    /// If true, use mass driver for departure (airless bodies only).
+    #[serde(default)]
+    pub use_mass_driver: bool,
+    /// Mass driver tier to use (e.g. MassDriverMk1). None = best available.
+    #[serde(default)]
+    pub mass_driver_tier: Option<super::buildings::BuildingType>,
 }
 
 impl Default for TradeRoute {
@@ -180,6 +188,8 @@ impl Default for TradeRoute {
             ships_per_window: 1,
             alert_reason: None,
             auto_build_ships: false,
+            use_mass_driver: false,
+            mass_driver_tier: None,
         }
     }
 }
@@ -883,16 +893,67 @@ impl FleetManager {
             }
         }
 
+        // Check if route uses mass driver departure
+        let route = self.get_route(route_id).ok_or("Route not found")?;
+        let use_mass_driver = route.use_mass_driver;
+        let mass_driver_tier = route.mass_driver_tier;
+
         // Update ship state
         let ship = self.get_ship_mut(ship_id).ok_or("Ship not found")?;
-        ship.state = TradeShipState::InTransit;
         ship.cargo = loaded_cargo;
         ship.crew = crew_to_send;
         ship.current_leg = 0;
         ship.returning = false;
-        ship.transit_remaining = flight_time;
         ship.origin = ship.location;
         ship.assigned_route = Some(route_id);
+
+        if use_mass_driver && !is_earth_source {
+            // Mass driver departure: validate and queue
+            ship.state = TradeShipState::WaitingForMassDriver;
+            ship.transit_remaining = flight_time;
+            let ship_mass = ship.dry_mass_kg + ship.cargo.total_mass();
+
+            // Determine which driver tier to use
+            let driver_tier = mass_driver_tier.unwrap_or_else(|| {
+                if let Some(source_idx) = route_source {
+                    colony_manager
+                        .get_by_body(source_idx)
+                        .and_then(|c| c.best_mass_driver())
+                        .unwrap_or(super::buildings::BuildingType::MassDriverMk1)
+                } else {
+                    super::buildings::BuildingType::MassDriverMk1
+                }
+            });
+
+            // Validate mass driver can handle this payload
+            if let Some(max_payload) = driver_tier.mass_driver_max_payload_kg() {
+                if ship_mass > max_payload + 1e-3 {
+                    // Revert ship state
+                    let ship = self.get_ship_mut(ship_id).ok_or("Ship not found")?;
+                    ship.state = TradeShipState::Stationed;
+                    return Err(format!(
+                        "Ship mass ({:.0} kg) exceeds mass driver max payload ({:.0} kg)",
+                        ship_mass, max_payload
+                    ));
+                }
+            }
+
+            // Push onto colony queue
+            if let Some(source_idx) = route_source {
+                if let Some(colony) = colony_manager.get_by_body_mut(source_idx) {
+                    colony.mass_driver_ship_queue.push(super::buildings::MassDriverShipEntry {
+                        trade_ship_id: ship_id,
+                        route_id,
+                        mass_kg: ship_mass,
+                        driver_tier,
+                    });
+                }
+            }
+        } else {
+            // Normal chemical launch
+            ship.state = TradeShipState::InTransit;
+            ship.transit_remaining = flight_time;
+        }
 
         // Update route
         if let Some(route) = self.get_route_mut(route_id) {
@@ -1011,10 +1072,12 @@ impl FleetManager {
                 None => continue,
             };
 
-            // If a ship is currently in transit on this route, skip
+            // If a ship is currently in transit or waiting at mass driver, skip
             if let Some(ship_id) = route.assigned_ship_id {
                 if let Some(ship) = self.ships.iter().find(|s| s.id == ship_id) {
-                    if ship.state == TradeShipState::InTransit {
+                    if ship.state == TradeShipState::InTransit
+                        || ship.state == TradeShipState::WaitingForMassDriver
+                    {
                         continue;
                     }
                 }

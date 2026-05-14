@@ -96,6 +96,10 @@ pub struct LegResult {
     pub transfer_dv: f64,
     /// Delta-v for orbit-to-surface landing (m/s).
     pub landing_dv: f64,
+    /// Departure burn component of transfer_dv (m/s).
+    pub departure_burn: f64,
+    /// Arrival burn component of transfer_dv (m/s).
+    pub arrival_burn: f64,
     /// Flight time (seconds).
     pub flight_time: f64,
 }
@@ -217,7 +221,7 @@ pub fn compute_leg_delta_v(
     // Compute transfer delta-v based on relationship
     let transfer_type = find_common_parent(from_idx, to_idx, bodies);
 
-    let (transfer_dv, flight_time) = match transfer_type {
+    let (transfer_dv, departure_burn, arrival_burn, flight_time) = match transfer_type {
         TransferType::SameParent(parent) => {
             // E.g. Earth-Moon: Hohmann between sibling orbits
             let from_orbit = bodies[from_idx].orbit.as_ref()?;
@@ -231,7 +235,8 @@ pub fn compute_leg_delta_v(
             let adjusted_time = base_time * time_factor;
             // Approximate: dv scales roughly inversely with time for Lambert
             let dv_factor = if time_factor > 0.1 { 1.0 / time_factor } else { 10.0 };
-            (total_hohmann_dv * dv_factor.min(4.0), adjusted_time)
+            let scale = dv_factor.min(4.0);
+            (total_hohmann_dv * scale, dep_dv * scale, arr_dv * scale, adjusted_time)
         }
         TransferType::ChildToParent | TransferType::ParentToChild => {
             // E.g. Moon -> Earth or Earth -> Moon
@@ -257,7 +262,7 @@ pub fn compute_leg_delta_v(
             let transfer_dv = dep_dv + arr_dv;
 
             let time_factor = 1.0 - speed_factor * 0.5;
-            (transfer_dv, base_time * time_factor)
+            (transfer_dv, dep_dv, arr_dv, base_time * time_factor)
         }
         TransferType::Interplanetary {
             from_planet,
@@ -293,7 +298,8 @@ pub fn compute_leg_delta_v(
                 bodies,
             )?;
 
-            (result.ejection_delta_v, adjusted_tof)
+            // For interplanetary, ejection_delta_v is primarily a departure burn
+            (result.ejection_delta_v, result.ejection_delta_v, 0.0, adjusted_tof)
         }
         TransferType::Unknown => return None,
     };
@@ -305,8 +311,60 @@ pub fn compute_leg_delta_v(
         launch_dv,
         transfer_dv,
         landing_dv,
+        departure_burn,
+        arrival_burn,
         flight_time,
     })
+}
+
+/// Compute delta-v for a trade route leg with mass driver assist at the origin.
+///
+/// `mass_driver_velocity_ms` is the velocity imparted by the mass driver (m/s).
+/// When nonzero:
+/// - `launch_dv` is eliminated (the mass driver handles surface-to-orbit)
+/// - If the mass driver velocity exceeds escape velocity, the excess hyperbolic
+///   velocity (`v_∞ = sqrt(v_launch² - v_esc²)`) reduces the `transfer_dv`.
+///
+/// Returns a modified LegResult with reduced delta-v requirements.
+pub fn compute_leg_delta_v_with_mass_driver(
+    from_body: Option<usize>,
+    to_body: Option<usize>,
+    sim_time: f64,
+    speed_factor: f64,
+    solar_system: &SolarSystem,
+    mass_driver_velocity_ms: f64,
+) -> Option<LegResult> {
+    let mut leg = compute_leg_delta_v(from_body, to_body, sim_time, speed_factor, solar_system)?;
+
+    if mass_driver_velocity_ms <= 0.0 {
+        return Some(leg);
+    }
+
+    let earth_idx = solar_system.earth_index;
+    let from_idx = from_body.unwrap_or(earth_idx);
+    let from_body_data = &solar_system.bodies[from_idx];
+
+    // Escape velocity from the body's surface
+    let mu = G * from_body_data.mass;
+    let v_esc = if from_body_data.radius > 0.0 && mu > 0.0 {
+        (2.0 * mu / from_body_data.radius).sqrt()
+    } else {
+        0.0
+    };
+
+    // Mass driver eliminates launch_dv entirely
+    leg.launch_dv = 0.0;
+
+    // If mass driver provides more than escape velocity, excess reduces departure burn
+    if mass_driver_velocity_ms > v_esc {
+        let v_infinity = (mass_driver_velocity_ms * mass_driver_velocity_ms - v_esc * v_esc).sqrt();
+        let reduced_departure = (leg.departure_burn - v_infinity).max(0.0);
+        leg.transfer_dv = reduced_departure + leg.arrival_burn;
+        leg.departure_burn = reduced_departure;
+    }
+
+    leg.total_dv = leg.launch_dv + leg.transfer_dv + leg.landing_dv;
+    Some(leg)
 }
 
 /// Simple Hohmann transfer delta-v between two circular-ish orbits.

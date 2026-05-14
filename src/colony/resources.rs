@@ -33,6 +33,9 @@ pub enum ResourceType {
     NuclearPulseUnits,
     Helium3,
     Antimatter,
+    // Manufactured
+    MirrorSegment,
+    CollectorStation,
     // Consumables
     Food,
 }
@@ -65,6 +68,8 @@ impl ResourceType {
             Self::NuclearPulseUnits => "Nuclear Pulse Units",
             Self::Helium3 => "Helium-3",
             Self::Antimatter => "Antimatter",
+            Self::MirrorSegment => "Mirror Segment",
+            Self::CollectorStation => "Collector Station",
             Self::Food => "Food",
         }
     }
@@ -80,6 +85,8 @@ impl ResourceType {
             Self::Rp1, Self::Methane, Self::LiquidHydrogen, Self::Lox,
             Self::Xenon, Self::Deuterium, Self::Tritium, Self::EnrichedUranium,
             Self::NuclearPulseUnits, Self::Helium3, Self::Antimatter,
+            Self::MirrorSegment,
+            Self::CollectorStation,
             Self::Food,
         ]
     }
@@ -102,6 +109,16 @@ impl ResourceType {
     /// Look up a ResourceType by its display name.
     pub fn from_display_name(name: &str) -> Option<ResourceType> {
         Self::all().iter().find(|rt| rt.display_name() == name).copied()
+    }
+
+    /// Mass in kg per inventory unit. Most resources are stored in kg (returns 1.0).
+    /// MirrorSegment and CollectorStation are stored as unit counts.
+    pub fn storage_mass_per_unit(&self, sail_tier: u32) -> f64 {
+        match self {
+            Self::MirrorSegment => crate::colony::dyson_swarm::mirror_mass_at_tier(sail_tier),
+            Self::CollectorStation => crate::colony::dyson_swarm::COLLECTOR_MASS_KG,
+            _ => 1.0,
+        }
     }
 
     /// Earth purchase price in $/kg. None if the resource cannot be purchased on Earth.
@@ -132,6 +149,8 @@ impl ResourceType {
             Self::NuclearPulseUnits => Some(100_000.0),
             Self::Helium3 => None,
             Self::Antimatter => None,
+            Self::MirrorSegment => None,
+            Self::CollectorStation => None,
             Self::Food => Some(50.0),
         }
     }
@@ -208,6 +227,130 @@ impl ResourceInventory {
     pub fn total_mass(&self) -> f64 {
         self.resources.values().sum()
     }
+
+    /// Total storage mass in kg, accounting for unit-counted resources
+    /// (MirrorSegment, CollectorStation) whose inventory values are counts, not kg.
+    pub fn total_storage_mass(&self, sail_tier: u32) -> f64 {
+        self.resources
+            .iter()
+            .map(|(rt, &amt)| amt * rt.storage_mass_per_unit(sail_tier))
+            .sum()
+    }
+}
+
+/// Per-resource storage allocation within a colony's total stockpile capacity.
+///
+/// Resources can be "pinned" to a fixed percentage of total storage, or left as
+/// "auto" to share the remainder equally. Food is excluded (has its own capacity).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StorageAllocation {
+    /// Manually pinned percentages (resource -> percent of total storage, 0–100).
+    pinned: HashMap<ResourceType, f64>,
+}
+
+impl Default for StorageAllocation {
+    fn default() -> Self {
+        Self {
+            pinned: HashMap::new(),
+        }
+    }
+}
+
+impl StorageAllocation {
+    /// Returns the max kg this resource can occupy in storage.
+    pub fn capacity_for(
+        &self,
+        resource: ResourceType,
+        total_capacity: f64,
+        active_resources: &[ResourceType],
+    ) -> f64 {
+        let pct = self.effective_pct(resource, active_resources);
+        total_capacity * pct / 100.0
+    }
+
+    /// Pin a resource at a specific percentage of total storage.
+    /// Clamps to [0, 100 - other_pinned_total].
+    pub fn set_pinned(&mut self, resource: ResourceType, percent: f64) {
+        let other_pinned: f64 = self
+            .pinned
+            .iter()
+            .filter(|(&r, _)| r != resource)
+            .map(|(_, &p)| p)
+            .sum();
+        let clamped = percent.clamp(0.0, (100.0 - other_pinned).max(0.0));
+        if clamped < 0.01 {
+            self.pinned.remove(&resource);
+        } else {
+            self.pinned.insert(resource, clamped);
+        }
+    }
+
+    /// Remove manual override, return to auto allocation.
+    pub fn unpin(&mut self, resource: ResourceType) {
+        self.pinned.remove(&resource);
+    }
+
+    /// Whether a resource is pinned.
+    pub fn is_pinned(&self, resource: ResourceType) -> bool {
+        self.pinned.contains_key(&resource)
+    }
+
+    /// Compute the effective percentage for a single resource.
+    fn effective_pct(&self, resource: ResourceType, active_resources: &[ResourceType]) -> f64 {
+        if let Some(&pct) = self.pinned.get(&resource) {
+            return pct;
+        }
+        // Auto-allocated: split remainder equally among non-pinned active resources
+        let pinned_total: f64 = self.pinned.values().sum();
+        let remainder = (100.0 - pinned_total).max(0.0);
+        let auto_count = active_resources
+            .iter()
+            .filter(|r| !self.pinned.contains_key(r))
+            .count();
+        if auto_count == 0 {
+            return 0.0;
+        }
+        // Only give share if this resource is in the active set
+        if active_resources.contains(&resource) {
+            remainder / auto_count as f64
+        } else {
+            0.0
+        }
+    }
+
+    /// Compute all effective percentages for display.
+    pub fn effective_pcts(
+        &self,
+        active_resources: &[ResourceType],
+    ) -> HashMap<ResourceType, f64> {
+        let mut result = HashMap::new();
+        for &res in active_resources {
+            result.insert(res, self.effective_pct(res, active_resources));
+        }
+        result
+    }
+}
+
+/// Compute the set of "active" resources for storage allocation.
+/// A resource is active if it has stock > 0 OR has production > 0.
+/// Food is excluded (has its own capacity system).
+pub fn compute_active_resources(
+    resources: &ResourceInventory,
+    production: &HashMap<ResourceType, f64>,
+) -> Vec<ResourceType> {
+    let mut active = Vec::new();
+    for &rt in ResourceType::all() {
+        if rt == ResourceType::Food {
+            continue;
+        }
+        let has_stock = resources.get(rt) > 0.001;
+        let has_production = production.get(&rt).copied().unwrap_or(0.0) > 0.001;
+        if has_stock || has_production {
+            active.push(rt);
+        }
+    }
+    active
 }
 
 /// The player's company — manages money and R&D spending.

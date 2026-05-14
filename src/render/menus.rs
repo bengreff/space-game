@@ -996,6 +996,8 @@ impl RenderState {
         part_defs: &crate::parts::PartDefinitions,
         solar_system: &crate::bodies::SolarSystem,
         sim_time: f64,
+        dyson_swarms: &std::collections::HashMap<usize, crate::colony::DysonSwarm>,
+        tech_tree: &crate::colony::TechTree,
     ) -> Result<(usize, ColonyOverviewAction), wgpu::SurfaceError> {
         self.update_camera_buffer();
 
@@ -1027,6 +1029,8 @@ impl RenderState {
                 part_defs,
                 solar_system,
                 sim_time,
+                dyson_swarms,
+                tech_tree,
             );
             if let ColonyOverviewAction::ChangeWarp(idx) = &result {
                 new_warp_index = *idx;

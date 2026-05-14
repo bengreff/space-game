@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::colony::{ColonyManager, Company, ContractManager, FleetManager, Notification, ScienceState};
+use crate::colony::{ColonyManager, Company, ContractManager, DysonSwarm, FleetManager, Notification, ScienceState};
 use crate::game::{Game, VesselId, TrackedVessel};
 use crate::parts::{FlightVessel, VesselBlueprint};
 use crate::render::ManeuverNode;
@@ -69,6 +69,10 @@ pub struct SaveGame {
     pub contracts: ContractManager,
     #[serde(default)]
     pub fleet: FleetManager,
+    #[serde(default)]
+    pub dyson_swarm: DysonSwarm,
+    #[serde(default)]
+    pub dyson_swarms: HashMap<usize, DysonSwarm>,
     /// Editor blueprint at time of save (used by "Revert to Editor")
     #[serde(default)]
     pub editor_blueprint: Option<VesselBlueprint>,
@@ -123,6 +127,8 @@ impl Default for SaveGame {
             notifications: Vec::new(),
             contracts: ContractManager::default(),
             fleet: FleetManager::default(),
+            dyson_swarm: DysonSwarm::default(),
+            dyson_swarms: HashMap::new(),
             editor_blueprint: None,
         }
     }
@@ -199,6 +205,8 @@ impl SaveGame {
             notifications: game.notifications.clone(),
             contracts: game.contracts.clone(),
             fleet: game.fleet.clone(),
+            dyson_swarm: DysonSwarm::default(),
+            dyson_swarms: game.dyson_swarms.clone(),
             editor_blueprint: game.editor.to_blueprint(&game.part_definitions).ok(),
         }
     }
@@ -655,6 +663,17 @@ impl SaveGame {
             &game.blueprints,
             &game.part_definitions,
         );
+        // Migrate old single dyson_swarm to per-star HashMap
+        if self.dyson_swarms.is_empty()
+            && (self.dyson_swarm.mirror_count > 0
+                || !self.dyson_swarm.deploying.is_empty()
+                || self.dyson_swarm.collector_count > 0
+                || !self.dyson_swarm.deploying_collectors.is_empty())
+        {
+            game.dyson_swarms.insert(game.solar_system.sun_index, self.dyson_swarm);
+        } else {
+            game.dyson_swarms = self.dyson_swarms;
+        }
     }
 }
 

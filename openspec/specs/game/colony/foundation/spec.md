@@ -17,7 +17,7 @@ src/colony/
 ## Resources (`resources.rs`)
 
 ### ResourceType
-26-variant enum covering raw, processed, fuel, and consumable resources. Each variant has:
+27-variant enum covering raw, processed, fuel, manufactured, and consumable resources (includes MirrorSegment). Each variant has:
 - `display_name()` — human-readable name
 - `earth_price()` — `Option<f64>` $/kg purchase price on Earth. `None` for non-purchasable resources (Regolith, AtmosphericCo2, GasGiantAtmosphere, Helium3, Antimatter).
 - `all()` — all variants as static slice
@@ -27,13 +27,27 @@ src/colony/
 ### ResourceInventory
 `HashMap<ResourceType, f64>` wrapper tracking kg of each resource. Methods: `get`, `set`, `add`, `remove` (returns false if insufficient), `has_enough`, `has_enough_all`, `remove_all` (atomic), `iter`, `total_mass`. Implements `Default`, `Serialize`, `Deserialize`.
 
+### StorageAllocation
+Per-resource storage allocation within a colony's total stockpile capacity. Resources can be "pinned" to a fixed percentage of total storage, or left as "auto" to share the remainder equally. Food is excluded (has its own capacity system).
+
+- `capacity_for(resource, total_capacity, active_resources)` — returns max kg for this resource
+- `set_pinned(resource, percent)` — pin a resource at a specific % (clamped to `[0, 100 - other_pinned_total]`)
+- `unpin(resource)` — remove manual override, return to auto allocation
+- `is_pinned(resource)` — whether a resource has a manual override
+- `effective_pcts(active_resources)` — compute all percentages for display
+
+Auto-allocation logic: `auto_pct = (100 - pinned_total) / num_auto_resources`. Each pinned resource keeps its set value.
+
+### compute_active_resources
+`compute_active_resources(resources, production)` — returns Vec of active resource types. A resource is active if stock > 0 OR production > 0. Food is excluded.
+
 ### Company
 Player's financial state: `money: f64` (starting $25M), `rd_budget: f64` (starting $1M/yr).
 
 ## Buildings (`buildings.rs`)
 
 ### BuildingType
-22-variant enum. Each variant provides:
+25-variant enum (includes MassDriverMk1-4, ParticleAcceleratorMk1-4). Each variant provides:
 - `display_name()` — human-readable name
 - `build_cost()` — `Vec<(ResourceType, f64)>` base build cost in kg
 - `power_draw_kw()` — power consumption (Factory power varies by recipe, returns 0)
@@ -44,11 +58,17 @@ Player's financial state: `money: f64` (starting $25M), `rd_budget: f64` (starti
 - `size_multiplier(body_radius_m)` — returns `2π · radius_km` for `ParticleAcceleratorMk4`, `1.0` otherwise
 - `all()` — all variants as static slice
 - `from_display_name(name)` — reverse lookup by display name
+- `is_mass_driver()` — true for MassDriverMk1-4
+- `mass_driver_track_m()` — track length in meters (None for non-drivers)
+- `mass_driver_max_payload_kg()` — max payload in kg
+- `mass_driver_launch_velocity(mass, is_mirror)` — launch velocity for given payload
+- `mass_driver_launch_energy_j(mass, velocity)` — energy per launch (joules, 90% efficiency)
+- `mass_driver_recharge_time_s(energy, power)` — recharge time from power
 
 Particle Accelerator Mk IV stores per-km values; simulation multiplies by body circumference via `size_multiplier`. This multiplier SHALL be applied to `build_cost`, `total_build_mass`, `power_draw_kw`, and `maintenance_cost_per_30d` at every consumption site (construction queueing, construction display, power balance, maintenance processing). `Colony::queue_building` and `Colony::can_queue_building` SHALL accept `body_radius_m` so the multiplier can be applied at the call site.
 
 ### FactoryRecipe
-15-variant enum. Each provides:
+16-variant enum (includes MirrorSegmentAssembly). Each provides:
 - `display_name()`, `inputs()`, `outputs()` — per-batch resource amounts
 - `power_draw_kw()` — power while running
 - `batch_time_hours()` — time per batch
@@ -58,7 +78,7 @@ Particle Accelerator Mk IV stores per-km values; simulation multiplies by body c
 Runtime state for a single building: type, assigned_resource (mines), assigned_recipe (factories), operational flag, degradation (0-1), water_fill (greenhouses).
 
 ### Colony
-Per-body colony state: body_index, name, buildings vec, resources inventory, crew count, food, power balance, construction queue, is_orbital_station flag, lab_science_extracted, lab_elapsed_years, food_depleted_notified.
+Per-body colony state: body_index, name, buildings vec, resources inventory, crew count, food, power balance, construction queue, is_orbital_station flag, lab_science_extracted, lab_elapsed_years, food_depleted_notified, mass_driver_energy_j, mirrors_launched, storage_allocation, receiver_power_kw, receiver_laser_power_kw. Helper methods: `best_mass_driver()`, `has_mass_driver()`.
 
 Food capacity: `Colony::food_capacity()` returns total food storage capacity in kg:
 - Habitat: 3,000 kg per operational building

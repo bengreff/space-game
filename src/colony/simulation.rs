@@ -1,7 +1,10 @@
+use std::collections::HashMap;
 use crate::bodies::SolarSystem;
+use crate::colony::dyson_swarm::DysonSwarm;
 use crate::colony::notification::{Notification, NotificationKind};
 use crate::colony::tech::TechTree;
 use super::buildings::{BuildingType, Colony};
+use super::resources::ResourceType;
 
 /// 1 AU in meters, for solar power distance scaling.
 const AU: f64 = 1.496e11;
@@ -77,6 +80,51 @@ pub fn sun_distance(body_index: usize, solar_system: &SolarSystem) -> f64 {
     }
 }
 
+/// Compute a map of resource -> production rate (kg/day) for active resource detection.
+/// This is a lightweight version — only needs to know which resources have any production.
+fn compute_production_map(colony: &Colony, tech_tree: &TechTree) -> HashMap<ResourceType, f64> {
+    let mut production = HashMap::new();
+    let mining_mult = TechTree::tier_multiplier(tech_tree.line_tier("mining"));
+    let atmo_mult = TechTree::tier_multiplier(tech_tree.line_tier("atmospheric_science"));
+
+    for b in &colony.buildings {
+        if !b.operational {
+            continue;
+        }
+        match b.building_type {
+            BuildingType::Mine => {
+                if let Some(res) = b.assigned_resource {
+                    *production.entry(res).or_insert(0.0) +=
+                        2000.0 * (1.0 - b.degradation) * colony.other_power_fraction * mining_mult;
+                }
+            }
+            BuildingType::AtmosphericCollector => {
+                if let Some(res) = b.assigned_resource {
+                    *production.entry(res).or_insert(0.0) +=
+                        10_000.0 * (1.0 - b.degradation) * colony.other_power_fraction * atmo_mult;
+                }
+            }
+            BuildingType::Factory => {
+                if let Some(recipe) = b.assigned_recipe {
+                    let batches_per_day = 24.0 / recipe.batch_time_hours();
+                    let factory_mult = TechTree::tier_multiplier(
+                        tech_tree.line_tier(recipe.efficiency_line_id()),
+                    );
+                    let factor = batches_per_day
+                        * (1.0 - b.degradation)
+                        * colony.other_power_fraction
+                        * factory_mult;
+                    for &(res, amt) in &recipe.outputs() {
+                        *production.entry(res).or_insert(0.0) += amt * factor;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    production
+}
+
 /// Run one simulation tick for a colony.
 pub fn simulate_colony_tick(
     colony: &mut Colony,
@@ -85,11 +133,14 @@ pub fn simulate_colony_tick(
     notifications: &mut Vec<Notification>,
     sim_time: f64,
     tech_tree: &TechTree,
+    dyson_swarm: Option<&mut DysonSwarm>,
+    fleet_manager: Option<&mut super::trade::FleetManager>,
 ) {
     let hab_score = solar_system.bodies[colony.body_index].habitability_score;
     let hab_mult = habitability_multiplier(hab_score);
     let body_radius_m = solar_system.bodies[colony.body_index].radius;
     let dist = sun_distance(colony.body_index, solar_system);
+    let sail_tier = tech_tree.line_tier("sail_technology");
 
     // === 0. Reactor fuel consumption ===
     // Consume fuel before power calculation. Reactors without fuel don't generate.
@@ -162,6 +213,25 @@ pub fn simulate_colony_tick(
         }
     }
 
+    // Swarm receiver power: depends on available laser from DysonSwarm
+    colony.receiver_power_kw = 0.0;
+    colony.receiver_laser_power_kw = 0.0;
+    if let Some(ref swarm) = dyson_swarm {
+        let beta = crate::colony::dyson_swarm::lightness_number_at_tier(sail_tier);
+        let total_laser_w = swarm.available_laser_power(beta);
+        let receiver_cap_w: f64 = colony.buildings.iter()
+            .filter(|b| b.operational && b.building_type == BuildingType::ReceiverArray)
+            .map(|b| (1.0 - b.degradation) * crate::colony::dyson_swarm::MAX_RECEIVER_INPUT_W)
+            .sum();
+        if receiver_cap_w > 0.0 && total_laser_w > 0.0 {
+            let received_w = total_laser_w.min(receiver_cap_w);
+            let electricity_w = received_w * crate::colony::dyson_swarm::RECEIVER_EFFICIENCY;
+            colony.receiver_power_kw = electricity_w / 1000.0; // W → kW
+            colony.receiver_laser_power_kw = total_laser_w / 1000.0; // W → kW
+            total_generation += colony.receiver_power_kw;
+        }
+    }
+
     // Habitats get power first, then everything else gets the remainder
     colony.habitat_power_fraction = if habitat_demand == 0.0 {
         1.0
@@ -200,10 +270,12 @@ pub fn simulate_colony_tick(
     // === 3. Construction ===
     process_construction(colony, days, hab_mult, body_radius_m, notifications, sim_time, tech_tree);
 
-    // === 4. Mines ===
+    // === 4. Mines (per-resource storage caps) ===
     let storage_cap = colony.storage_capacity();
-    let current_mass = colony.resources.total_mass();
-    let mut available_storage = (storage_cap - current_mass).max(0.0);
+
+    // Compute production rates for active resource detection
+    let production_map = compute_production_map(colony, tech_tree);
+    let active_resources = super::resources::compute_active_resources(&colony.resources, &production_map);
 
     for b in &mut colony.buildings {
         if !b.operational || b.building_type != BuildingType::Mine {
@@ -212,15 +284,16 @@ pub fn simulate_colony_tick(
         if let Some(resource) = b.assigned_resource {
             let mining_mult = TechTree::tier_multiplier(tech_tree.line_tier("mining"));
             let production = 2000.0 * days * (1.0 - b.degradation) * colony.other_power_fraction * mining_mult;
-            let capped = production.min(available_storage);
+            let res_cap = colony.storage_allocation.capacity_for(resource, storage_cap, &active_resources);
+            let available = (res_cap - colony.resources.get(resource)).max(0.0);
+            let capped = production.min(available);
             if capped > 0.0 {
                 colony.resources.add(resource, capped);
-                available_storage -= capped;
             }
         }
     }
 
-    // === 4b. Atmospheric Collectors ===
+    // === 4b. Atmospheric Collectors (per-resource storage caps) ===
     for b in &mut colony.buildings {
         if !b.operational || b.building_type != BuildingType::AtmosphericCollector {
             continue;
@@ -229,15 +302,16 @@ pub fn simulate_colony_tick(
             let atmo_mult = TechTree::tier_multiplier(tech_tree.line_tier("atmospheric_science"));
             let production =
                 10_000.0 * days * (1.0 - b.degradation) * colony.other_power_fraction * atmo_mult;
-            let capped = production.min(available_storage);
+            let res_cap = colony.storage_allocation.capacity_for(resource, storage_cap, &active_resources);
+            let available = (res_cap - colony.resources.get(resource)).max(0.0);
+            let capped = production.min(available);
             if capped > 0.0 {
                 colony.resources.add(resource, capped);
-                available_storage -= capped;
             }
         }
     }
 
-    // === 5. Factories ===
+    // === 5. Factories (per-resource storage caps) ===
     for i in 0..colony.buildings.len() {
         let b = &colony.buildings[i];
         if !b.operational || b.building_type != BuildingType::Factory {
@@ -279,10 +353,26 @@ pub fn simulate_colony_tick(
             continue;
         }
 
-        // Check storage for outputs
-        let output_mass: f64 = outputs.iter().map(|(_, amt)| amt * throughput_factor).sum();
-        let current_total = colony.resources.total_mass();
-        if current_total + output_mass > storage_cap {
+        // Check per-resource storage caps for each output.
+        // Storage caps are in kg, but unit-counted resources (MirrorSegment,
+        // CollectorStation) are stored as counts. Convert to kg before comparing.
+        let mut output_blocked = false;
+        for &(ref res, amount) in &outputs {
+            let output_amount = amount * throughput_factor;
+            let res_cap = colony.storage_allocation.capacity_for(*res, storage_cap, &active_resources);
+            // How much of this input resource is being freed?
+            let input_freed: f64 = inputs.iter()
+                .filter(|(r, _)| *r == *res)
+                .map(|(_, a)| a * throughput_factor)
+                .sum();
+            let current = colony.resources.get(*res);
+            let unit_mass = res.storage_mass_per_unit(sail_tier);
+            if (current + output_amount - input_freed) * unit_mass > res_cap {
+                output_blocked = true;
+                break;
+            }
+        }
+        if output_blocked {
             continue;
         }
 
@@ -364,7 +454,13 @@ pub fn simulate_colony_tick(
         colony.crew_death_accumulator = 0.0;
     }
 
-    // === 8. Science labs ===
+    // === 8. Mass driver (ship queue + mirror auto-launch) ===
+    if let Some(swarm) = dyson_swarm {
+        process_mass_driver(colony, days, swarm, notifications, sim_time, tech_tree, fleet_manager);
+        swarm.process_deployments(sim_time);
+    }
+
+    // === 9. Science labs ===
     process_science_labs(colony, days, solar_system);
 }
 
@@ -489,9 +585,9 @@ fn process_construction(
     let item = &mut colony.construction_queue[0];
     item.mass_assembled += remaining_capacity;
 
-    if item.mass_assembled >= item.total_mass {
+    // Complete units in the batch while mass is sufficient
+    while item.mass_assembled >= item.total_mass {
         let target = item.effective_target();
-        colony.construction_queue.remove(0);
 
         match target {
             super::buildings::ConstructionTarget::Building(building_type) => {
@@ -502,15 +598,6 @@ fn process_construction(
                 if building_type == BuildingType::Habitat {
                     colony.food_stored += 1_000.0;
                 }
-
-                notifications.push(Notification {
-                    kind: NotificationKind::ConstructionComplete {
-                        colony_name: colony.name.clone(),
-                        building: building_type.display_name().to_string(),
-                    },
-                    time: sim_time,
-                    read: false,
-                });
             }
             super::buildings::ConstructionTarget::Ship {
                 name,
@@ -529,8 +616,6 @@ fn process_construction(
                     cached_delta_v,
                 };
                 colony.next_stored_ship_id += 1;
-                // Best-effort store: if hangar is full, just push it anyway
-                // (the resources were already consumed)
                 colony.stored_ships.push(stored);
 
                 notifications.push(Notification {
@@ -543,6 +628,142 @@ fn process_construction(
                 });
             }
         }
+
+        item.completed += 1;
+        if item.completed >= item.count {
+            colony.construction_queue.remove(0);
+            break;
+        }
+        // Reset for next unit in batch
+        item.mass_assembled -= item.total_mass;
+    }
+}
+
+/// Process mass driver: ship queue first (priority), then mirror auto-launch.
+///
+/// The mass driver accumulates energy from available colony power (the fraction
+/// allocated to non-habitat buildings). Ships in the queue are launched first
+/// (1,000g accel), then mirrors (10,000g accel) from stockpile.
+fn process_mass_driver(
+    colony: &mut Colony,
+    days: f64,
+    swarm: &mut DysonSwarm,
+    _notifications: &mut Vec<Notification>,
+    sim_time: f64,
+    tech_tree: &TechTree,
+    fleet_manager: Option<&mut super::trade::FleetManager>,
+) {
+    // Find best mass driver
+    let driver = match colony.best_mass_driver() {
+        Some(d) => d,
+        None => {
+            // No operational driver — refund any queued ships
+            if let Some(fm) = fleet_manager {
+                for entry in colony.mass_driver_ship_queue.drain(..) {
+                    if let Some(ship) = fm.get_ship_mut(entry.trade_ship_id) {
+                        ship.state = super::trade::TradeShipState::Stationed;
+                    }
+                }
+            }
+            return;
+        }
+    };
+
+    // Mirror mass depends on sail technology tier
+    let sail_tier = tech_tree.line_tier("sail_technology");
+    let mirror_mass = crate::colony::dyson_swarm::mirror_mass_at_tier(sail_tier);
+
+    // Power available to mass driver (watts) = power_draw_kw * other_power_fraction * 1000
+    let power_w = driver.power_draw_kw() * 1000.0 * colony.other_power_fraction;
+
+    // Max energy storage capacity for this driver tier
+    let mirror_launch_v = driver.mass_driver_launch_velocity(mirror_mass, true);
+    let mirror_energy = mirror_launch_v
+        .map(|v| BuildingType::mass_driver_launch_energy_j(mirror_mass, v))
+        .unwrap_or(f64::MAX);
+    let capacity = driver.mass_driver_energy_capacity_j().unwrap_or(mirror_energy);
+
+    // Accumulate energy over this tick, capped at storage capacity
+    let energy_this_tick = power_w * days * 86_400.0;
+    colony.mass_driver_energy_j = (colony.mass_driver_energy_j + energy_this_tick).min(capacity);
+
+    // === 1. Process ship queue (priority over mirrors) ===
+    if let Some(fm) = fleet_manager {
+        let mut launched_indices = Vec::new();
+        for (i, entry) in colony.mass_driver_ship_queue.iter().enumerate() {
+            // Check if the required driver tier is still operational
+            let tier_operational = colony.buildings.iter().any(|b| {
+                b.operational && b.building_type == entry.driver_tier
+            });
+            if !tier_operational {
+                // Refund: set ship back to Stationed
+                if let Some(ship) = fm.get_ship_mut(entry.trade_ship_id) {
+                    ship.state = super::trade::TradeShipState::Stationed;
+                }
+                launched_indices.push(i);
+                continue;
+            }
+
+            // Compute launch energy for ship (1,000g accel)
+            let launch_v = match entry.driver_tier.mass_driver_launch_velocity(entry.mass_kg, false) {
+                Some(v) => v,
+                None => {
+                    // Ship too heavy — refund
+                    if let Some(ship) = fm.get_ship_mut(entry.trade_ship_id) {
+                        ship.state = super::trade::TradeShipState::Stationed;
+                    }
+                    launched_indices.push(i);
+                    continue;
+                }
+            };
+            let energy_needed = BuildingType::mass_driver_launch_energy_j(entry.mass_kg, launch_v);
+
+            if colony.mass_driver_energy_j >= energy_needed {
+                colony.mass_driver_energy_j -= energy_needed;
+                // Transition ship to InTransit
+                if let Some(ship) = fm.get_ship_mut(entry.trade_ship_id) {
+                    ship.state = super::trade::TradeShipState::InTransit;
+                }
+                launched_indices.push(i);
+            } else {
+                break; // Not enough energy — wait (blocks mirrors too)
+            }
+        }
+        // Remove launched/refunded entries (reverse order to preserve indices)
+        for i in launched_indices.into_iter().rev() {
+            colony.mass_driver_ship_queue.remove(i);
+        }
+    }
+
+    // === 2. Fire collector stations (ship-class 1,000g accel) ===
+    let collector_mass = crate::colony::dyson_swarm::COLLECTOR_MASS_KG;
+    if let Some(collector_launch_v) = driver.mass_driver_launch_velocity(collector_mass, false) {
+        let collector_energy = BuildingType::mass_driver_launch_energy_j(collector_mass, collector_launch_v);
+        while colony.mass_driver_energy_j >= collector_energy {
+            if colony.resources.get(ResourceType::CollectorStation) < 1.0 {
+                break;
+            }
+            colony.resources.remove(ResourceType::CollectorStation, 1.0);
+            colony.mass_driver_energy_j -= collector_energy;
+            swarm.launch_collector(sim_time);
+        }
+    }
+
+    // === 3. Fire mirrors ===
+    let launch_v = match mirror_launch_v {
+        Some(v) => v,
+        None => return, // Mirror too heavy for this driver
+    };
+    let energy_per_launch = BuildingType::mass_driver_launch_energy_j(mirror_mass, launch_v);
+
+    while colony.mass_driver_energy_j >= energy_per_launch {
+        if colony.resources.get(ResourceType::MirrorSegment) < 1.0 {
+            break;
+        }
+        colony.resources.remove(ResourceType::MirrorSegment, 1.0);
+        colony.mass_driver_energy_j -= energy_per_launch;
+        swarm.launch_mirror(sim_time);
+        colony.mirrors_launched += 1;
     }
 }
 

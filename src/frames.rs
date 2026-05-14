@@ -80,6 +80,8 @@ pub fn render_colony_overview_frame(
         &game.part_definitions,
         &game.solar_system,
         sim_time,
+        &game.dyson_swarms,
+        &game.tech_tree,
     ) {
         Ok((new_warp_index, action)) => {
             game.warp_index = new_warp_index;
@@ -823,11 +825,11 @@ pub fn render_colony_frame(
         Ok((new_warp_index, action)) => {
             game.warp_index = new_warp_index;
             match action {
-                sunscatter::render::ColonyScreenAction::QueueBuilding(bi, bt) => {
+                sunscatter::render::ColonyScreenAction::QueueBuilding(bi, bt, count) => {
                     let hab_score = game.solar_system.bodies[bi].habitability_score;
                     let body_radius_m = game.solar_system.bodies[bi].radius;
                     if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
-                        if let Err(e) = colony.queue_building(bt, hab_score, body_radius_m) {
+                        if let Err(e) = colony.queue_building(bt, hab_score, body_radius_m, count) {
                             log::error!("Failed to queue building: {}", e);
                         }
                     }
@@ -992,6 +994,16 @@ pub fn render_colony_frame(
                 }
                 sunscatter::render::ColonyScreenAction::Trade(trade_action) => {
                     super::handle_trade_action(trade_action, game);
+                }
+                sunscatter::render::ColonyScreenAction::SetStorageAllocation { body_index: bi, resource, percent } => {
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        colony.storage_allocation.set_pinned(resource, percent);
+                    }
+                }
+                sunscatter::render::ColonyScreenAction::UnpinStorageAllocation { body_index: bi, resource } => {
+                    if let Some(colony) = game.colony_manager.get_by_body_mut(bi) {
+                        colony.storage_allocation.unpin(resource);
+                    }
                 }
                 sunscatter::render::ColonyScreenAction::None => {}
             }

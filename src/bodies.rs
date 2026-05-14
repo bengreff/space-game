@@ -1059,6 +1059,25 @@ impl SolarSystem {
         ss
     }
 
+    /// Walk the parent chain to find the star that `body_index` belongs to.
+    /// A star is defined as a body whose parent is the root (Sgr A*, parent=None).
+    /// Returns `None` if `body_index` IS the root.
+    pub fn parent_star(&self, body_index: usize) -> Option<usize> {
+        let mut idx = body_index;
+        loop {
+            let body = &self.bodies[idx];
+            match body.parent {
+                None => return None, // This IS the root (Sgr A*)
+                Some(parent_idx) => {
+                    if self.bodies[parent_idx].parent.is_none() {
+                        return Some(idx); // idx is a star (parent is root)
+                    }
+                    idx = parent_idx;
+                }
+            }
+        }
+    }
+
     /// Get world position of a body at current time
     pub fn body_position(&self, index: usize) -> [f64; 2] {
         let body = &self.bodies[index];

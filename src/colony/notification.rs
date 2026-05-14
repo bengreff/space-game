@@ -17,6 +17,8 @@ pub enum NotificationKind {
     VesselRecovered { vessel_name: String, location: String, value_description: String },
     ShipStoredInHangar { ship_name: String, colony_name: String },
     ShipScrapped { ship_name: String, location: String },
+    MirrorLaunched { colony_name: String, count: u64 },
+    SoiTransition { body_name: String },
 }
 
 impl NotificationKind {
@@ -25,9 +27,8 @@ impl NotificationKind {
         matches!(
             self,
             NotificationKind::ColonyFoodDepleted { .. }
-                | NotificationKind::ColonyResourceDepleted { .. }
                 | NotificationKind::ColonyPowerLoss { .. }
-                | NotificationKind::RoutePaused { .. }
+                | NotificationKind::SoiTransition { .. }
         )
     }
 
@@ -75,6 +76,16 @@ impl NotificationKind {
             }
             NotificationKind::ShipScrapped { ship_name, location } => {
                 format!("{} scrapped at {}", ship_name, location)
+            }
+            NotificationKind::MirrorLaunched { colony_name, count } => {
+                if *count == 1 {
+                    format!("{}: Mirror segment launched to Dyson swarm", colony_name)
+                } else {
+                    format!("{}: {} mirror segments launched to Dyson swarm", colony_name, count)
+                }
+            }
+            NotificationKind::SoiTransition { body_name } => {
+                format!("Entering {} SOI", body_name)
             }
         }
     }

@@ -427,6 +427,8 @@ pub struct Game {
     pub colony_return_mode: Option<GameMode>,
     /// Which mode to return to when leaving the Tech Tree screen
     pub tech_tree_return_mode: Option<GameMode>,
+    /// Dyson swarm state per star (keyed by star body index)
+    pub dyson_swarms: std::collections::HashMap<usize, crate::colony::DysonSwarm>,
     /// Procedural galaxy star system
     pub galaxy: GalaxyState,
 }
@@ -489,6 +491,7 @@ impl Game {
             colony_view_body_index: None,
             colony_return_mode: None,
             tech_tree_return_mode: None,
+            dyson_swarms: std::collections::HashMap::new(),
             galaxy: GalaxyState::new(),
         }
     }
@@ -527,6 +530,7 @@ impl Game {
                 log::error!("Failed to load tech tree: {}", e);
                 TechTree::default()
             });
+        self.dyson_swarms = std::collections::HashMap::new();
         // Reset galaxy state
         self.galaxy = GalaxyState::new();
         // Reset contracts (milestones, active/available contracts)
@@ -1182,8 +1186,6 @@ impl Game {
         }
 
         let total_days = dt_sim / 86400.0;
-        let num_ticks = (total_days.ceil() as usize).clamp(1, 1000);
-        let days_per_tick = total_days / num_ticks as f64;
 
         let mut notifications = Vec::new();
         let sim_time = self.solar_system.time;
@@ -1193,8 +1195,13 @@ impl Game {
             .map(|c| c.lab_science_extracted)
             .collect();
 
+        let num_ticks = (total_days.ceil() as usize).clamp(1, 1000);
+        let days_per_tick = total_days / num_ticks as f64;
+
         for _ in 0..num_ticks {
             for colony in &mut self.colony_manager.colonies {
+                let swarm = self.solar_system.parent_star(colony.body_index)
+                    .map(|si| self.dyson_swarms.entry(si).or_default());
                 crate::colony::simulation::simulate_colony_tick(
                     colony,
                     days_per_tick,
@@ -1202,9 +1209,17 @@ impl Game {
                     &mut notifications,
                     sim_time,
                     &self.tech_tree,
+                    swarm,
+                    Some(&mut self.fleet),
                 );
             }
         }
+
+        // Remove empty phantom swarms created by entry().or_default()
+        self.dyson_swarms.retain(|_, s| {
+            s.mirror_count > 0 || !s.deploying.is_empty()
+                || s.collector_count > 0 || !s.deploying_collectors.is_empty()
+        });
 
         // Compute science deltas and add to available science
         for (i, colony) in self.colony_manager.colonies.iter().enumerate() {

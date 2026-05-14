@@ -141,7 +141,7 @@ Routes processed sorted by priority descending, then by id ascending.
 ### Source: `src/colony/notification.rs`
 
 New variants added:
-- `RoutePaused { route_name, reason }` — **stops warp** (critical: fuel/cargo shortage)
+- `RoutePaused { route_name, reason }` — informational (does not stop warp)
 - `ShipConstructionComplete { ship_name, location }` — informational
 
 Note: `ShipArrived` and `ShipDeparted` notification kinds exist in the enum but are not emitted — only error/failure notifications are shown to avoid toast spam during time warp.

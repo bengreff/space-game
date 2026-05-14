@@ -182,7 +182,7 @@ These features were identified in a gap analysis of `docs/colonies.md` vs implem
 
 - [ ] **Return cargo / round-trip trade routes** — currently 1-way only (correct for now)
 - [ ] **Multi-hop routes with refueling waypoints**
-- [ ] **Railgun functional behavior** — cargo-to-orbit launch mechanic
+- [x] **Mass Driver system** — Mk I-IV electromagnetic mass drivers, mirror segment production, Dyson swarm
 - [ ] **Orbital stations / gas giant scooping colonies**
 - [ ] **Ship Part Manufacturing factory recipe**
 - [ ] **Map icons for in-transit trade ships**

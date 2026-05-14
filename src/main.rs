@@ -643,9 +643,21 @@ fn render_flight_frame(
 
         // Update ship physics (gimbal torque always applied in update_flying)
         let has_flight_vessel = game.flight.vessel.is_some();
+        let prev_soi = game.flight.ship.soi_body;
         game.flight.ship.update(dt * time_warp, time_warp, &game.flight.ship_input, &game.solar_system, vessel_physics.as_ref(), autopilot_active, has_flight_vessel);
         if let Some(target_angle) = autopilot_target_angle {
             game.flight.ship.autopilot_rotate(target_angle, dt * time_warp, vessel_physics.as_ref());
+        }
+
+        // Detect SOI transition → stop warp + notify
+        if game.flight.ship.soi_body != prev_soi {
+            let body_name = game.solar_system.bodies[game.flight.ship.soi_body].name.clone();
+            game.notifications.push(sunscatter::colony::Notification {
+                kind: sunscatter::colony::NotificationKind::SoiTransition { body_name },
+                time: game.solar_system.time,
+                read: false,
+            });
+            game.warp_index = 0;
         }
 
         // Fuel consumption and vessel sync

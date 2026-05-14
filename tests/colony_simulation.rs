@@ -43,6 +43,8 @@ fn reactor_fuel_is_consumed_atomically_per_building() {
         &mut notifications,
         0.0,
         &tech,
+        None,
+        None,
     );
 
     // All uranium consumed (two reactors × 0.5 kg). Pool cannot go negative.
@@ -90,6 +92,8 @@ fn fusion_reactor_fuel_is_all_or_nothing() {
         &mut notifications,
         0.0,
         &tech,
+        None,
+        None,
     );
 
     let deuterium_after = colony.resources.get(ResourceType::Deuterium);
@@ -228,6 +232,8 @@ fn habitat_degradation_is_independent_per_building() {
         &mut notifications,
         0.0,
         &tech,
+        None,
+        None,
     );
 
     let deg0 = colony.buildings[0].degradation;
@@ -252,3 +258,192 @@ fn habitat_degradation_is_independent_per_building() {
         deg0
     );
 }
+
+// ---- Storage Allocation ----
+
+/// Per-resource storage caps should prevent one resource from filling global storage.
+/// When MetalOre allocation is capped, mines should stop producing at that cap
+/// while leaving room for other resources.
+#[test]
+fn per_resource_storage_cap_limits_mine_output() {
+    let solar_system = SolarSystem::new();
+    let earth_idx = solar_system.earth_index;
+    let mut colony = Colony::new(earth_idx, "Test".to_string());
+
+    // Power source
+    colony.buildings.push(BuildingInstance::new(BuildingType::FissionReactor));
+    colony.resources.add(ResourceType::EnrichedUranium, 100.0);
+    // Storage
+    colony.buildings.push(BuildingInstance::new(BuildingType::Stockpile)); // 500,000 kg
+
+    // Two mines: one for MetalOre, one for Water
+    let mut mine_metal = BuildingInstance::new(BuildingType::Mine);
+    mine_metal.assigned_resource = Some(ResourceType::MetalOre);
+    colony.buildings.push(mine_metal);
+
+    let mut mine_water = BuildingInstance::new(BuildingType::Mine);
+    mine_water.assigned_resource = Some(ResourceType::Water);
+    colony.buildings.push(mine_water);
+
+    // Pin MetalOre at 10% of storage = 50,000 kg
+    colony.storage_allocation.set_pinned(ResourceType::MetalOre, 10.0);
+
+    // Pre-fill MetalOre to near its cap
+    colony.resources.add(ResourceType::MetalOre, 49_000.0);
+
+    let tech = TechTree::default();
+    let mut notifications = Vec::new();
+
+    // Run a 1-day tick. MetalOre mine should produce at most ~1,000 kg (cap - current).
+    // Water mine should produce its full 2,000 kg/day.
+    simulate_colony_tick(
+        &mut colony, 1.0, &solar_system, &mut notifications, 0.0, &tech, None, None,
+    );
+
+    let metal = colony.resources.get(ResourceType::MetalOre);
+    let water = colony.resources.get(ResourceType::Water);
+
+    // MetalOre should be capped around 50,000 (cap is 10% of 500,000)
+    assert!(
+        metal <= 50_000.0 + 1.0,
+        "MetalOre should be capped at ~50,000, got {:.0}",
+        metal
+    );
+    // Water should have produced freely (its allocation share should be large)
+    assert!(
+        water > 1_000.0,
+        "Water mine should have produced, got {:.0}",
+        water
+    );
+}
+
+/// Auto-allocated resources should share remaining space equally.
+#[test]
+fn storage_allocation_auto_splits_evenly() {
+    use sunscatter::colony::{StorageAllocation, compute_active_resources, ResourceInventory};
+
+    let alloc = StorageAllocation::default();
+    let mut inv = ResourceInventory::new();
+    inv.add(ResourceType::MetalOre, 1.0);
+    inv.add(ResourceType::Water, 1.0);
+    inv.add(ResourceType::LithiumOre, 1.0);
+
+    let production = HashMap::new();
+    let active = compute_active_resources(&inv, &production);
+
+    // 3 active resources, no pinning => each gets 100/3 ≈ 33.3%
+    let cap_metal = alloc.capacity_for(ResourceType::MetalOre, 300_000.0, &active);
+    let cap_water = alloc.capacity_for(ResourceType::Water, 300_000.0, &active);
+    let cap_lithium = alloc.capacity_for(ResourceType::LithiumOre, 300_000.0, &active);
+
+    assert!(
+        (cap_metal - 100_000.0).abs() < 1.0,
+        "Expected ~100,000 for MetalOre, got {:.0}", cap_metal
+    );
+    assert!(
+        (cap_water - 100_000.0).abs() < 1.0,
+        "Expected ~100,000 for Water, got {:.0}", cap_water
+    );
+    assert!(
+        (cap_lithium - 100_000.0).abs() < 1.0,
+        "Expected ~100,000 for LithiumOre, got {:.0}", cap_lithium
+    );
+}
+
+/// Pinning one resource should reduce the auto-allocated share for others.
+#[test]
+fn storage_allocation_pinning_reduces_others() {
+    use sunscatter::colony::{StorageAllocation, compute_active_resources, ResourceInventory};
+
+    let mut alloc = StorageAllocation::default();
+    alloc.set_pinned(ResourceType::MetalOre, 50.0); // Pin metal at 50%
+
+    let mut inv = ResourceInventory::new();
+    inv.add(ResourceType::MetalOre, 1.0);
+    inv.add(ResourceType::Water, 1.0);
+
+    let production = HashMap::new();
+    let active = compute_active_resources(&inv, &production);
+
+    // MetalOre pinned at 50%, Water gets the remaining 50%
+    let cap_metal = alloc.capacity_for(ResourceType::MetalOre, 100_000.0, &active);
+    let cap_water = alloc.capacity_for(ResourceType::Water, 100_000.0, &active);
+
+    assert!(
+        (cap_metal - 50_000.0).abs() < 1.0,
+        "Expected 50,000 for pinned MetalOre, got {:.0}", cap_metal
+    );
+    assert!(
+        (cap_water - 50_000.0).abs() < 1.0,
+        "Expected 50,000 for auto Water, got {:.0}", cap_water
+    );
+}
+
+/// Factory producing MirrorSegments should be capped by storage allocation
+/// when the mirror count × mirror_mass exceeds the per-resource cap in kg.
+/// Regression: the old code compared unit counts (1.0, 2.0, ...) directly
+/// against kg caps (50,000 kg), so the cap never triggered.
+#[test]
+fn factory_mirror_output_capped_by_storage_allocation() {
+    use sunscatter::colony::FactoryRecipe;
+
+    let solar_system = SolarSystem::new();
+    let earth_idx = solar_system.earth_index;
+    let mut colony = Colony::new(earth_idx, "Test".to_string());
+
+    // Power source
+    colony.buildings.push(BuildingInstance::new(BuildingType::FissionReactor));
+    colony.resources.add(ResourceType::EnrichedUranium, 1000.0);
+    // Storage: 1 Stockpile = 500,000 kg
+    colony.buildings.push(BuildingInstance::new(BuildingType::Stockpile));
+
+    // Factory producing mirrors
+    let mut factory = BuildingInstance::new(BuildingType::Factory);
+    factory.assigned_recipe = Some(FactoryRecipe::MirrorSegmentAssembly);
+    colony.buildings.push(factory);
+
+    // Provide ample inputs for many batches
+    colony.resources.add(ResourceType::StructuralMetal, 100_000.0);
+    colony.resources.add(ResourceType::HighTempAlloys, 50_000.0);
+    colony.resources.add(ResourceType::Electronics, 20_000.0);
+    colony.resources.add(ResourceType::Superconductors, 10_000.0);
+
+    // Pin MirrorSegment at 5% of storage = 25,000 kg cap.
+    // At tier 0, each mirror = 3,500 kg, so cap = 7 mirrors (7 × 3,500 = 24,500 < 25,000).
+    colony.storage_allocation.set_pinned(ResourceType::MirrorSegment, 5.0);
+
+    let tech = TechTree::default();
+    let mut notifications = Vec::new();
+
+    // Run 50 one-day ticks. Factory does 0.5 batches/day = 0.5 mirrors/tick.
+    // Without cap: 25 mirrors. With 25,000 kg cap: stops at 7 mirrors (24,500 kg).
+    for day in 0..50 {
+        simulate_colony_tick(
+            &mut colony, 1.0, &solar_system, &mut notifications, day as f64 * 86400.0, &tech, None, None,
+        );
+    }
+
+    let mirrors = colony.resources.get(ResourceType::MirrorSegment);
+    let mirror_mass = sunscatter::colony::dyson_swarm::mirror_mass_at_tier(0);
+    let total_mirror_kg = mirrors * mirror_mass;
+    let cap_kg = 500_000.0 * 0.05; // 25,000 kg
+
+    assert!(
+        total_mirror_kg <= cap_kg + mirror_mass,
+        "Mirror storage mass ({:.0} kg, {} mirrors) should not exceed cap ({:.0} kg)",
+        total_mirror_kg, mirrors, cap_kg,
+    );
+    // Should have produced some mirrors (not zero)
+    assert!(
+        mirrors >= 1.0,
+        "Factory should have produced at least 1 mirror, got {:.1}",
+        mirrors,
+    );
+    // Should be well below the uncapped amount (25 mirrors)
+    assert!(
+        mirrors < 10.0,
+        "Factory should be capped well below 25 mirrors, got {:.1}",
+        mirrors,
+    );
+}
+

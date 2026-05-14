@@ -1,8 +1,18 @@
 use serde::{Deserialize, Serialize};
 
-use super::resources::{ResourceInventory, ResourceType};
-use super::trade::{StoredShip, StoredShipId};
+use super::resources::{ResourceInventory, ResourceType, StorageAllocation};
+use super::trade::{StoredShip, StoredShipId, TradeShipId, TradeRouteId};
 use crate::parts::VesselBlueprint;
+
+/// An entry in the colony mass driver ship queue.
+/// Ships wait here until the mass driver accumulates enough energy to launch them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MassDriverShipEntry {
+    pub trade_ship_id: TradeShipId,
+    pub route_id: TradeRouteId,
+    pub mass_kg: f64,
+    pub driver_tier: BuildingType,
+}
 
 /// All colony building types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -19,7 +29,10 @@ pub enum BuildingType {
     AtmosphericCollector,
     Factory,
     Launchpad,
-    Railgun,
+    MassDriverMk1,
+    MassDriverMk2,
+    MassDriverMk3,
+    MassDriverMk4,
     LightConstructionRobot,
     ConstructionRobot,
     ScienceLab,
@@ -30,6 +43,7 @@ pub enum BuildingType {
     ParticleAcceleratorMk3,
     ParticleAcceleratorMk4,
     Hangar,
+    ReceiverArray,
 }
 
 impl BuildingType {
@@ -48,7 +62,10 @@ impl BuildingType {
             Self::AtmosphericCollector,
             Self::Factory,
             Self::Launchpad,
-            Self::Railgun,
+            Self::MassDriverMk1,
+            Self::MassDriverMk2,
+            Self::MassDriverMk3,
+            Self::MassDriverMk4,
             Self::LightConstructionRobot,
             Self::ConstructionRobot,
             Self::ScienceLab,
@@ -59,6 +76,7 @@ impl BuildingType {
             Self::ParticleAcceleratorMk3,
             Self::ParticleAcceleratorMk4,
             Self::Hangar,
+            Self::ReceiverArray,
         ]
     }
 
@@ -81,7 +99,10 @@ impl BuildingType {
             Self::AtmosphericCollector => "Atmospheric Collector",
             Self::Factory => "Factory",
             Self::Launchpad => "Launchpad",
-            Self::Railgun => "Railgun",
+            Self::MassDriverMk1 => "Mass Driver Mk I",
+            Self::MassDriverMk2 => "Mass Driver Mk II",
+            Self::MassDriverMk3 => "Mass Driver Mk III",
+            Self::MassDriverMk4 => "Mass Driver Mk IV",
             Self::LightConstructionRobot => "Light Construction Robot",
             Self::ConstructionRobot => "Construction Robot",
             Self::ScienceLab => "Science Lab",
@@ -92,6 +113,7 @@ impl BuildingType {
             Self::ParticleAcceleratorMk3 => "Particle Accelerator Mk III",
             Self::ParticleAcceleratorMk4 => "Particle Accelerator Mk IV",
             Self::Hangar => "Hangar",
+            Self::ReceiverArray => "Receiver Array",
         }
     }
 
@@ -157,11 +179,31 @@ impl BuildingType {
                 (HighTempAlloys, 5_000.0),
                 (Electronics, 5_000.0),
             ],
-            Self::Railgun => vec![
-                (StructuralMetal, 200_000.0),
-                (HighTempAlloys, 40_000.0),
-                (Electronics, 60_000.0),
-                (Superconductors, 40_000.0),
+            Self::MassDriverMk1 => vec![
+                (StructuralMetal, 150_000.0),
+                (HighTempAlloys, 50_000.0),
+                (Electronics, 100_000.0),
+                (Superconductors, 200_000.0),
+            ],
+            Self::MassDriverMk2 => vec![
+                (StructuralMetal, 1_500_000.0),
+                (HighTempAlloys, 500_000.0),
+                (Electronics, 1_000_000.0),
+                (Superconductors, 2_000_000.0),
+            ],
+            Self::MassDriverMk3 => vec![
+                (StructuralMetal, 15_000_000.0),
+                (HighTempAlloys, 5_000_000.0),
+                (Electronics, 10_000_000.0),
+                (Superconductors, 20_000_000.0),
+                (PrecisionInstruments, 500.0),
+            ],
+            Self::MassDriverMk4 => vec![
+                (StructuralMetal, 60_000_000.0),
+                (HighTempAlloys, 20_000_000.0),
+                (Electronics, 40_000_000.0),
+                (Superconductors, 80_000_000.0),
+                (PrecisionInstruments, 2_000.0),
             ],
             Self::LightConstructionRobot => vec![
                 (StructuralMetal, 3_000.0),
@@ -220,6 +262,12 @@ impl BuildingType {
                 (HighTempAlloys, 10_000.0),
                 (Electronics, 5_000.0),
             ],
+            Self::ReceiverArray => vec![
+                (StructuralMetal, 100_000.0),
+                (HighTempAlloys, 20_000.0),
+                (Electronics, 30_000.0),
+                (Superconductors, 10_000.0),
+            ],
         }
     }
 
@@ -238,7 +286,10 @@ impl BuildingType {
             Self::AtmosphericCollector => 100.0,
             Self::Factory => 0.0, // Varies by recipe
             Self::Launchpad => 10.0,
-            Self::Railgun => 10_000.0, // 10 MW
+            Self::MassDriverMk1 => 10_000.0,       // 10 MW
+            Self::MassDriverMk2 => 100_000.0,      // 100 MW
+            Self::MassDriverMk3 => 1_000_000.0,    // 1 GW
+            Self::MassDriverMk4 => 100_000_000.0,  // 100 GW
             Self::LightConstructionRobot => 100.0,
             Self::ConstructionRobot => 500.0,
             Self::ScienceLab => 200.0,
@@ -249,6 +300,7 @@ impl BuildingType {
             Self::ParticleAcceleratorMk3 => 5_000_000_000.0, // 5 TW
             Self::ParticleAcceleratorMk4 => 50_000.0, // 50 GW per km (scaled by circumference)
             Self::Hangar => 50.0,
+            Self::ReceiverArray => 0.0,
         }
     }
 
@@ -260,6 +312,7 @@ impl BuildingType {
             Self::LargeSolarFarm => 1_000_000.0, // 1 GW @ 1 AU
             Self::FissionReactor => 500_000.0, // 500 MW
             Self::FusionReactor => 5_000_000.0, // 5 GW
+            Self::ReceiverArray => 45_000_000.0, // 45 GW (50 GW laser input × 0.90 efficiency)
             _ => 0.0,
         }
     }
@@ -320,10 +373,25 @@ impl BuildingType {
                 (StructuralMetal, 125.0),
                 (HighTempAlloys, 25.0),
             ],
-            Self::Railgun => vec![
-                (StructuralMetal, 500.0),
+            Self::MassDriverMk1 => vec![
+                (StructuralMetal, 375.0),
                 (HighTempAlloys, 125.0),
-                (Superconductors, 125.0),
+                (Superconductors, 500.0),
+            ],
+            Self::MassDriverMk2 => vec![
+                (StructuralMetal, 3_750.0),
+                (HighTempAlloys, 1_250.0),
+                (Superconductors, 5_000.0),
+            ],
+            Self::MassDriverMk3 => vec![
+                (StructuralMetal, 37_500.0),
+                (HighTempAlloys, 12_500.0),
+                (Superconductors, 50_000.0),
+            ],
+            Self::MassDriverMk4 => vec![
+                (StructuralMetal, 150_000.0),
+                (HighTempAlloys, 50_000.0),
+                (Superconductors, 200_000.0),
             ],
             Self::LightConstructionRobot => vec![
                 (StructuralMetal, 15.0),
@@ -376,6 +444,12 @@ impl BuildingType {
                 (StructuralMetal, 125.0),
                 (HighTempAlloys, 25.0),
             ],
+            Self::ReceiverArray => vec![
+                (StructuralMetal, 250.0),
+                (HighTempAlloys, 50.0),
+                (Electronics, 75.0),
+                (Superconductors, 25.0),
+            ],
         }
     }
 
@@ -413,6 +487,85 @@ impl BuildingType {
             _ => 1.0,
         }
     }
+    /// Mass driver track length in meters, or None if not a mass driver.
+    pub fn mass_driver_track_m(&self) -> Option<f64> {
+        match self {
+            Self::MassDriverMk1 => Some(2_000.0),
+            Self::MassDriverMk2 => Some(10_000.0),
+            Self::MassDriverMk3 => Some(50_000.0),
+            Self::MassDriverMk4 => Some(200_000.0),
+            _ => None,
+        }
+    }
+
+    /// Mass driver max payload in kg, or None if not a mass driver.
+    pub fn mass_driver_max_payload_kg(&self) -> Option<f64> {
+        match self {
+            Self::MassDriverMk1 => Some(10_000.0),
+            Self::MassDriverMk2 => Some(50_000.0),
+            Self::MassDriverMk3 => Some(200_000.0),
+            Self::MassDriverMk4 => Some(200_000.0),
+            _ => None,
+        }
+    }
+
+    /// Mass driver system mass in kg, or None if not a mass driver.
+    pub fn mass_driver_system_mass_kg(&self) -> Option<f64> {
+        match self {
+            Self::MassDriverMk1 => Some(500_000.0),
+            Self::MassDriverMk2 => Some(5_000_000.0),
+            Self::MassDriverMk3 => Some(50_000_000.0),
+            Self::MassDriverMk4 => Some(200_000_000.0),
+            _ => None,
+        }
+    }
+
+    /// Whether this building is a mass driver.
+    pub fn is_mass_driver(&self) -> bool {
+        self.mass_driver_track_m().is_some()
+    }
+
+    /// Compute mass driver launch velocity (m/s) for a given payload mass (kg).
+    /// `is_mirror` selects 10,000g accel (mirror segment) vs 1,000g (blueprint ship).
+    /// Returns None if not a mass driver or payload exceeds max.
+    pub fn mass_driver_launch_velocity(&self, payload_mass_kg: f64, is_mirror: bool) -> Option<f64> {
+        let track = self.mass_driver_track_m()?;
+        let max_payload = self.mass_driver_max_payload_kg()?;
+        if payload_mass_kg > max_payload + 1e-3 {
+            return None;
+        }
+        let accel = if is_mirror { 98_100.0 } else { 9_810.0 }; // m/s²
+        // v = sqrt(2 * a * s)
+        Some((2.0 * accel * track).sqrt())
+    }
+
+    /// Kinetic energy (joules) to launch a payload at a given velocity.
+    /// Accounts for 90% superconducting efficiency.
+    pub fn mass_driver_launch_energy_j(payload_mass_kg: f64, velocity_ms: f64) -> f64 {
+        let ke = 0.5 * payload_mass_kg * velocity_ms * velocity_ms;
+        ke / 0.90 // η = 0.90 superconducting efficiency
+    }
+
+    /// Maximum energy storage capacity (joules) for a mass driver.
+    /// Must exceed the worst-case launch: max_payload at max acceleration.
+    /// Returns None if not a mass driver.
+    pub fn mass_driver_energy_capacity_j(&self) -> Option<f64> {
+        match self {
+            Self::MassDriverMk1 => Some(1e12),            // 1 TJ   (worst launch: 766 GJ mirror)
+            Self::MassDriverMk2 => Some(10e12),           // 10 TJ  (worst launch: 5.45 TJ ship)
+            Self::MassDriverMk3 => Some(150e12),          // 150 TJ (worst launch: 109 TJ ship)
+            Self::MassDriverMk4 => Some(500e12),          // 500 TJ (worst launch: 436 TJ ship)
+            _ => None,
+        }
+    }
+
+    /// Recharge time (seconds) given launch energy (J) and available power (W).
+    pub fn mass_driver_recharge_time_s(energy_j: f64, power_w: f64) -> f64 {
+        if power_w <= 0.0 {
+            return f64::INFINITY;
+        }
+        energy_j / power_w
+    }
 }
 
 /// Factory recipes that can be assigned to a Factory building.
@@ -433,6 +586,8 @@ pub enum FactoryRecipe {
     NpuAssembly,
     RegolithHe3Extraction,
     GasGiantHe3Separation,
+    MirrorSegmentAssembly,
+    CollectorStationAssembly,
 }
 
 impl FactoryRecipe {
@@ -453,6 +608,8 @@ impl FactoryRecipe {
             Self::NpuAssembly,
             Self::RegolithHe3Extraction,
             Self::GasGiantHe3Separation,
+            Self::MirrorSegmentAssembly,
+            Self::CollectorStationAssembly,
         ]
     }
 
@@ -473,6 +630,8 @@ impl FactoryRecipe {
             Self::NpuAssembly => "NPU Assembly",
             Self::RegolithHe3Extraction => "Regolith He-3 Extraction",
             Self::GasGiantHe3Separation => "Gas Giant He-3 Separation",
+            Self::MirrorSegmentAssembly => "Mirror Segment Assembly",
+            Self::CollectorStationAssembly => "Collector Station Assembly",
         }
     }
 
@@ -511,6 +670,19 @@ impl FactoryRecipe {
             ],
             Self::RegolithHe3Extraction => vec![(Regolith, 20_000.0)],
             Self::GasGiantHe3Separation => vec![(GasGiantAtmosphere, 10_000.0)],
+            Self::MirrorSegmentAssembly => vec![
+                (StructuralMetal, 2_500.0),
+                (HighTempAlloys, 500.0),
+                (Electronics, 300.0),
+                (Superconductors, 200.0),
+            ],
+            Self::CollectorStationAssembly => vec![
+                (StructuralMetal, 2_000.0),
+                (HighTempAlloys, 800.0),
+                (Electronics, 1_200.0),
+                (Superconductors, 700.0),
+                (PrecisionInstruments, 300.0),
+            ],
         }
     }
 
@@ -537,6 +709,8 @@ impl FactoryRecipe {
             Self::NpuAssembly => vec![(NuclearPulseUnits, 50.0)],
             Self::RegolithHe3Extraction => vec![(Helium3, 0.2)],
             Self::GasGiantHe3Separation => vec![(Helium3, 1.0)],
+            Self::MirrorSegmentAssembly => vec![(MirrorSegment, 1.0)],
+            Self::CollectorStationAssembly => vec![(CollectorStation, 1.0)],
         }
     }
 
@@ -558,6 +732,8 @@ impl FactoryRecipe {
             Self::NpuAssembly => 500.0,
             Self::RegolithHe3Extraction => 500.0,
             Self::GasGiantHe3Separation => 200.0,
+            Self::MirrorSegmentAssembly => 500.0,
+            Self::CollectorStationAssembly => 500.0,
         }
     }
 
@@ -579,6 +755,8 @@ impl FactoryRecipe {
             Self::NpuAssembly => 240.0,
             Self::RegolithHe3Extraction => 24.0,
             Self::GasGiantHe3Separation => 24.0,
+            Self::MirrorSegmentAssembly => 48.0,
+            Self::CollectorStationAssembly => 48.0,
         }
     }
 
@@ -592,6 +770,8 @@ impl FactoryRecipe {
             | Self::MethanePurification | Self::KeroseneRefining => "chemical_processing",
             Self::UraniumEnrichment | Self::TritiumBreeding | Self::NpuAssembly => "nuclear_engineering",
             Self::RegolithHe3Extraction | Self::GasGiantHe3Separation => "isotope_extraction",
+            Self::MirrorSegmentAssembly => "construction",
+            Self::CollectorStationAssembly => "construction",
         }
     }
 
@@ -613,6 +793,8 @@ impl FactoryRecipe {
             Self::NpuAssembly => "NpuAssembly",
             Self::RegolithHe3Extraction => "RegolithHe3Extraction",
             Self::GasGiantHe3Separation => "GasGiantHe3Separation",
+            Self::MirrorSegmentAssembly => "MirrorSegmentAssembly",
+            Self::CollectorStationAssembly => "CollectorStationAssembly",
         }
     }
 
@@ -689,13 +871,19 @@ pub struct ConstructionQueueItem {
     pub building_type: BuildingType,
     /// Resources that have been reserved from colony inventory for this construction.
     pub reserved_resources: ResourceInventory,
-    /// Mass assembled so far (kg).
+    /// Mass assembled so far (kg) — for the current unit in a batch.
     pub mass_assembled: f64,
-    /// Total mass to assemble (kg).
+    /// Total mass to assemble per unit (kg).
     pub total_mass: f64,
     /// What is being constructed. None = legacy (use building_type).
     #[serde(default)]
     pub target: Option<ConstructionTarget>,
+    /// Number of buildings to construct in this batch (default 1 for save compat).
+    #[serde(default = "default_one_u32")]
+    pub count: u32,
+    /// Number of buildings completed so far in this batch.
+    #[serde(default)]
+    pub completed: u32,
 }
 
 impl ConstructionQueueItem {
@@ -714,6 +902,8 @@ impl Default for ConstructionQueueItem {
             mass_assembled: 0.0,
             total_mass: 0.0,
             target: None,
+            count: 1,
+            completed: 0,
         }
     }
 }
@@ -763,10 +953,34 @@ pub struct Colony {
     /// Next ID for stored ships at this colony.
     #[serde(default)]
     pub next_stored_ship_id: StoredShipId,
+    /// Energy accumulated in the mass driver capacitor (joules).
+    #[serde(default)]
+    pub mass_driver_energy_j: f64,
+    /// Total mirrors launched from this colony (lifetime stat).
+    #[serde(default)]
+    pub mirrors_launched: u64,
+    /// Ships queued for mass driver launch (trade ships waiting for energy).
+    #[serde(default)]
+    pub mass_driver_ship_queue: Vec<MassDriverShipEntry>,
+    /// Per-resource storage allocation (pinned percentages).
+    #[serde(default)]
+    pub storage_allocation: StorageAllocation,
+    /// Actual receiver array power output (kW), computed by simulation.
+    /// Accounts for laser availability and degradation.
+    #[serde(default)]
+    pub receiver_power_kw: f64,
+    /// Total laser power available to this colony's receivers (kW), computed by simulation.
+    /// Used in the power card to explain receiver saturation.
+    #[serde(default)]
+    pub receiver_laser_power_kw: f64,
 }
 
 fn default_one() -> f64 {
     1.0
+}
+
+fn default_one_u32() -> u32 {
+    1
 }
 
 impl Default for Colony {
@@ -792,6 +1006,12 @@ impl Default for Colony {
             crew_death_accumulator: 0.0,
             stored_ships: Vec::new(),
             next_stored_ship_id: 0,
+            mass_driver_energy_j: 0.0,
+            mirrors_launched: 0,
+            mass_driver_ship_queue: Vec::new(),
+            storage_allocation: StorageAllocation::default(),
+            receiver_power_kw: 0.0,
+            receiver_laser_power_kw: 0.0,
         }
     }
 }
@@ -819,7 +1039,33 @@ impl Colony {
             crew_death_accumulator: 0.0,
             stored_ships: Vec::new(),
             next_stored_ship_id: 0,
+            mass_driver_energy_j: 0.0,
+            mirrors_launched: 0,
+            mass_driver_ship_queue: Vec::new(),
+            storage_allocation: StorageAllocation::default(),
+            receiver_power_kw: 0.0,
+            receiver_laser_power_kw: 0.0,
         }
+    }
+
+    /// Find the best (highest tier) operational mass driver in this colony.
+    pub fn best_mass_driver(&self) -> Option<BuildingType> {
+        let mut best: Option<BuildingType> = None;
+        for b in &self.buildings {
+            if !b.operational || !b.building_type.is_mass_driver() {
+                continue;
+            }
+            let track = b.building_type.mass_driver_track_m().unwrap_or(0.0);
+            if best.map_or(true, |bt| bt.mass_driver_track_m().unwrap_or(0.0) < track) {
+                best = Some(b.building_type);
+            }
+        }
+        best
+    }
+
+    /// Whether this colony has any operational mass driver.
+    pub fn has_mass_driver(&self) -> bool {
+        self.buildings.iter().any(|b| b.operational && b.building_type.is_mass_driver())
     }
 
     /// Check whether the colony can queue a building (has enough resources).
@@ -839,7 +1085,8 @@ impl Colony {
 
     /// Queue a building for construction, consuming resources from inventory.
     /// `body_radius_m` is used to scale size-dependent buildings (Mk IV accelerator).
-    pub fn queue_building(&mut self, bt: BuildingType, hab_score: u32, body_radius_m: f64) -> Result<(), String> {
+    /// `count` is the batch size: 0 means "all affordable".
+    pub fn queue_building(&mut self, bt: BuildingType, hab_score: u32, body_radius_m: f64, count: u32) -> Result<(), String> {
         let costs = bt.build_cost();
         let hab = if bt.affected_by_habitability() {
             crate::colony::simulation::habitability_multiplier(hab_score)
@@ -848,31 +1095,62 @@ impl Colony {
         };
         let mult = hab * bt.size_multiplier(body_radius_m);
 
-        // Check resources
+        // Determine how many we can afford
+        let mut max_affordable = u32::MAX;
         for &(res, amount) in &costs {
-            let needed = amount * mult;
-            if self.resources.get(res) < needed {
-                return Err(format!("Not enough {}", res.display_name()));
+            let per_unit = amount * mult;
+            if per_unit > 0.0 {
+                let affordable = (self.resources.get(res) / per_unit) as u32;
+                max_affordable = max_affordable.min(affordable);
             }
         }
 
-        // Consume resources
+        let actual_count = if count == 0 {
+            max_affordable
+        } else {
+            count.min(max_affordable)
+        };
+
+        if actual_count == 0 {
+            // Find which resource is insufficient for the error message
+            for &(res, amount) in &costs {
+                let needed = amount * mult;
+                if self.resources.get(res) < needed {
+                    return Err(format!("Not enough {}", res.display_name()));
+                }
+            }
+            return Err("Not enough resources".to_string());
+        }
+
+        // Consume resources for the full batch
         let mut reserved = ResourceInventory::new();
         for &(res, amount) in &costs {
-            let needed = amount * mult;
+            let needed = amount * mult * actual_count as f64;
             self.resources.remove(res, needed);
             reserved.add(res, needed);
         }
 
-        let total_mass = bt.total_build_mass() * mult;
+        let unit_mass = bt.total_build_mass() * mult;
 
-        self.construction_queue.push(ConstructionQueueItem {
-            building_type: bt,
-            reserved_resources: reserved,
-            mass_assembled: 0.0,
-            total_mass,
-            target: None,
-        });
+        // Merge into existing queue item of the same building type if present
+        if let Some(existing) = self.construction_queue.iter_mut().find(|item| {
+            matches!(item.effective_target(), ConstructionTarget::Building(existing_bt) if existing_bt == bt)
+        }) {
+            existing.count += actual_count;
+            for (res, amount) in reserved.iter() {
+                existing.reserved_resources.add(*res, *amount);
+            }
+        } else {
+            self.construction_queue.push(ConstructionQueueItem {
+                building_type: bt,
+                reserved_resources: reserved,
+                mass_assembled: 0.0,
+                total_mass: unit_mass,
+                target: None,
+                count: actual_count,
+                completed: 0,
+            });
+        }
 
         Ok(())
     }
@@ -987,6 +1265,8 @@ impl Colony {
                 dry_mass_kg,
                 cached_delta_v,
             }),
+            count: 1,
+            completed: 0,
         });
 
         Ok(())

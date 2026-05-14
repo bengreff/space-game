@@ -55,9 +55,11 @@ Card layout (horizontal row):
 1. **Name & body** (vertical): colony name (16pt bold white) + body name (12pt gray, looked up from `body_names[colony.body_index]`)
 2. **Crew**: `"Crew: X / Y"` where Y = `colony.crew_capacity()`
 3. **Power net**: `power_generated - power_consumed`, formatted as kW or MW (if abs >= 1000). Green if net >= 0, red if negative
-4. **Food days**: `colony.food_days_remaining()`. Red if < 10 days, yellow if < 30 days, gray otherwise. Shows "Food: stable" if infinite, else `"Food: {days}d"`
-5. **Building count**: `"{N} buildings"` from `colony.buildings.len()`
-6. **"Open" button** (right-aligned): returns `OpenColony(colony.body_index)`
+4. **"CREW AT RISK" tag** (red, 11pt strong): shown when `habitat_power_fraction < 1.0` and crew > 0
+5. **Food days**: `colony.food_days_remaining()`. Red if < 10 days, yellow if < 30 days, gray otherwise. Shows "Food: stable" if infinite, else `"Food: {days}d"`
+6. **"NO FOOD" tag** (red, 11pt strong): shown when `food_stored <= 0.0` and crew > 0
+7. **Building count**: `"{N} buildings"` from `colony.buildings.len()`
+8. **"Open" button** (right-aligned): returns `OpenColony(colony.body_index)`
 
 ### Trade Routes Section
 

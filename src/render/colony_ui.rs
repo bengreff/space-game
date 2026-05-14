@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::colony::{BuildingType, Colony, ColonyManager, FactoryRecipe, FleetManager, ResourceType, StoredShipId};
+use crate::colony::{BuildingType, Colony, ColonyManager, FactoryRecipe, FleetManager, ResourceType, StoredShipId, TechTree};
 use super::types::TradeAction;
 
 // ============================================================
@@ -16,14 +16,44 @@ fn format_colony_mass(kg: f64) -> String {
     }
 }
 
+/// Format energy in joules with SI prefixes.
+fn format_energy_j(j: f64) -> String {
+    if j.abs() >= 1e15 {
+        format!("{:.1} PJ", j / 1e15)
+    } else if j.abs() >= 1e12 {
+        format!("{:.1} TJ", j / 1e12)
+    } else if j.abs() >= 1e9 {
+        format!("{:.1} GJ", j / 1e9)
+    } else {
+        format!("{:.1} MJ", j / 1e6)
+    }
+}
+
 /// Format power in kW with SI prefixes.
-fn format_power_kw(kw: f64) -> String {
-    if kw.abs() >= 1_000_000.0 {
+pub(super) fn format_power_kw(kw: f64) -> String {
+    if kw.abs() >= 1_000_000_000.0 {
+        format!("{:.1} TW", kw / 1_000_000_000.0)
+    } else if kw.abs() >= 1_000_000.0 {
         format!("{:.1} GW", kw / 1_000_000.0)
     } else if kw.abs() >= 1_000.0 {
         format!("{:.1} MW", kw / 1_000.0)
     } else {
         format!("{:.1} kW", kw)
+    }
+}
+
+/// Format power in watts with SI prefixes.
+pub(super) fn format_power_w(w: f64) -> String {
+    if w.abs() >= 1e15 {
+        format!("{:.2} PW", w / 1e15)
+    } else if w.abs() >= 1e12 {
+        format!("{:.1} TW", w / 1e12)
+    } else if w.abs() >= 1e9 {
+        format!("{:.1} GW", w / 1e9)
+    } else if w.abs() >= 1e6 {
+        format!("{:.1} MW", w / 1e6)
+    } else {
+        format!("{:.0} W", w)
     }
 }
 
@@ -46,19 +76,19 @@ fn format_rate(kg_per_day: f64) -> String {
 // Color constants
 // ============================================================
 
-const COLOR_GREEN: egui::Color32 = egui::Color32::from_rgb(100, 255, 100);
+pub(super) const COLOR_GREEN: egui::Color32 = egui::Color32::from_rgb(100, 255, 100);
 const COLOR_RED: egui::Color32 = egui::Color32::from_rgb(255, 100, 100);
-const COLOR_YELLOW: egui::Color32 = egui::Color32::from_rgb(220, 200, 80);
-const COLOR_ORANGE: egui::Color32 = egui::Color32::from_rgb(255, 150, 100);
+pub(super) const COLOR_YELLOW: egui::Color32 = egui::Color32::from_rgb(220, 200, 80);
+pub(super) const COLOR_ORANGE: egui::Color32 = egui::Color32::from_rgb(255, 150, 100);
 const COLOR_DEG_YELLOW: egui::Color32 = egui::Color32::from_rgb(255, 180, 60);
-const COLOR_GRAY: egui::Color32 = egui::Color32::from_rgb(160, 160, 160);
-const CARD_BG: egui::Color32 = egui::Color32::from_rgba_premultiplied(30, 35, 50, 220);
+pub(super) const COLOR_GRAY: egui::Color32 = egui::Color32::from_rgb(160, 160, 160);
+pub(super) const CARD_BG: egui::Color32 = egui::Color32::from_rgba_premultiplied(30, 35, 50, 220);
 
 // ============================================================
 // UI helpers
 // ============================================================
 
-fn card_frame() -> egui::Frame {
+pub(super) fn card_frame() -> egui::Frame {
     egui::Frame::none()
         .fill(CARD_BG)
         .inner_margin(egui::Margin::same(12.0))
@@ -66,7 +96,7 @@ fn card_frame() -> egui::Frame {
         .outer_margin(egui::Margin::symmetric(0.0, 4.0))
 }
 
-fn section_heading(ui: &mut egui::Ui, text: &str) {
+pub(super) fn section_heading(ui: &mut egui::Ui, text: &str) {
     ui.label(
         egui::RichText::new(text)
             .size(14.0)
@@ -98,6 +128,11 @@ const BUILDABLE_BUILDINGS: &[BuildingType] = &[
     BuildingType::Stockpile,
     BuildingType::FoodStorage,
     BuildingType::Hangar,
+    BuildingType::MassDriverMk1,
+    BuildingType::MassDriverMk2,
+    BuildingType::MassDriverMk3,
+    BuildingType::MassDriverMk4,
+    BuildingType::ReceiverArray,
 ];
 
 /// All factory recipes for the assignment UI.
@@ -117,6 +152,8 @@ const ALL_RECIPES: &[FactoryRecipe] = &[
     FactoryRecipe::NpuAssembly,
     FactoryRecipe::RegolithHe3Extraction,
     FactoryRecipe::GasGiantHe3Separation,
+    FactoryRecipe::MirrorSegmentAssembly,
+    FactoryRecipe::CollectorStationAssembly,
 ];
 
 // ============================================================
@@ -127,7 +164,7 @@ const ALL_RECIPES: &[FactoryRecipe] = &[
 #[derive(Debug, Clone, PartialEq)]
 pub enum ColonyScreenAction {
     None,
-    QueueBuilding(usize, BuildingType),
+    QueueBuilding(usize, BuildingType, u32),
     AddMineAssignment(usize, ResourceType, u32),
     RemoveMineAssignment(usize, ResourceType, u32),
     AddCollectorAssignment(usize, ResourceType, u32),
@@ -145,6 +182,8 @@ pub enum ColonyScreenAction {
     DebugAddCrew(usize, u32),
     ScrapShip(usize, StoredShipId),
     Trade(TradeAction),
+    SetStorageAllocation { body_index: usize, resource: ResourceType, percent: f64 },
+    UnpinStorageAllocation { body_index: usize, resource: ResourceType },
 }
 
 // ============================================================
@@ -156,9 +195,14 @@ struct ResourceRates {
     consumption: HashMap<ResourceType, f64>,
 }
 
-fn compute_resource_rates(colony: &Colony, hab_mult: f64) -> ResourceRates {
+fn compute_resource_rates(colony: &Colony, hab_mult: f64, body_radius_m: f64, tech_tree: &TechTree) -> ResourceRates {
     let mut production: HashMap<ResourceType, f64> = HashMap::new();
     let mut consumption: HashMap<ResourceType, f64> = HashMap::new();
+
+    let mining_mult = TechTree::tier_multiplier(tech_tree.line_tier("mining"));
+    let atmo_mult = TechTree::tier_multiplier(tech_tree.line_tier("atmospheric_science"));
+    let agri_mult = TechTree::tier_multiplier(tech_tree.line_tier("agriculture"));
+    let life_support_mult = TechTree::tier_multiplier(tech_tree.line_tier("life_support"));
 
     for b in &colony.buildings {
         if !b.operational {
@@ -168,7 +212,7 @@ fn compute_resource_rates(colony: &Colony, hab_mult: f64) -> ResourceRates {
         // Mine production
         if b.building_type == BuildingType::Mine {
             if let Some(res) = b.assigned_resource {
-                let rate = 2000.0 * (1.0 - b.degradation) * colony.other_power_fraction;
+                let rate = 2000.0 * (1.0 - b.degradation) * colony.other_power_fraction * mining_mult;
                 *production.entry(res).or_insert(0.0) += rate;
             }
         }
@@ -176,7 +220,7 @@ fn compute_resource_rates(colony: &Colony, hab_mult: f64) -> ResourceRates {
         // Atmospheric Collector production
         if b.building_type == BuildingType::AtmosphericCollector {
             if let Some(res) = b.assigned_resource {
-                let rate = 10_000.0 * (1.0 - b.degradation) * colony.other_power_fraction;
+                let rate = 10_000.0 * (1.0 - b.degradation) * colony.other_power_fraction * atmo_mult;
                 *production.entry(res).or_insert(0.0) += rate;
             }
         }
@@ -185,8 +229,9 @@ fn compute_resource_rates(colony: &Colony, hab_mult: f64) -> ResourceRates {
         if b.building_type == BuildingType::Factory {
             if let Some(recipe) = b.assigned_recipe {
                 let batches_per_day = 24.0 / recipe.batch_time_hours();
+                let factory_mult = TechTree::tier_multiplier(tech_tree.line_tier(recipe.efficiency_line_id()));
                 let factor =
-                    batches_per_day * (1.0 - b.degradation) * colony.other_power_fraction;
+                    batches_per_day * (1.0 - b.degradation) * colony.other_power_fraction * factory_mult;
                 for &(res, amt) in &recipe.outputs() {
                     *production.entry(res).or_insert(0.0) += amt * factor;
                 }
@@ -203,7 +248,8 @@ fn compute_resource_rates(colony: &Colony, hab_mult: f64) -> ResourceRates {
                 let rate = 0.5
                     * (b.water_fill / max_water).min(1.0)
                     * (1.0 - b.degradation)
-                    * colony.other_power_fraction;
+                    * colony.other_power_fraction
+                    * agri_mult;
                 *production.entry(ResourceType::Food).or_insert(0.0) += rate;
             }
             BuildingType::AdvancedGreenhouse => {
@@ -211,21 +257,23 @@ fn compute_resource_rates(colony: &Colony, hab_mult: f64) -> ResourceRates {
                 let rate = 2.5
                     * (b.water_fill / max_water).min(1.0)
                     * (1.0 - b.degradation)
-                    * colony.other_power_fraction;
+                    * colony.other_power_fraction
+                    * agri_mult;
                 *production.entry(ResourceType::Food).or_insert(0.0) += rate;
             }
             _ => {}
         }
     }
 
-    // Maintenance consumption
+    // Maintenance consumption (matches process_maintenance in simulation.rs)
     for b in &colony.buildings {
         let costs = b.building_type.maintenance_cost_per_30d();
-        let mult = if b.building_type.affected_by_habitability() {
-            hab_mult
+        let hab = if b.building_type.affected_by_habitability() {
+            hab_mult / life_support_mult
         } else {
             1.0
         };
+        let mult = hab * b.building_type.size_multiplier(body_radius_m);
         for &(res, amt) in &costs {
             *consumption.entry(res).or_insert(0.0) += amt * mult / 30.0;
         }
@@ -265,7 +313,7 @@ fn compute_resource_rates(colony: &Colony, hab_mult: f64) -> ResourceRates {
 // Section renderers
 // ============================================================
 
-fn render_overview_card(ui: &mut egui::Ui, colony: &Colony, body_name: &str) {
+fn render_overview_card(ui: &mut egui::Ui, colony: &Colony, body_name: &str, tech_tree: &TechTree) {
     card_frame().show(ui, |ui| {
         section_heading(ui, &colony.name);
         let location = if colony.is_orbital_station {
@@ -294,6 +342,28 @@ fn render_overview_card(ui: &mut egui::Ui, colony: &Colony, body_name: &str) {
                     ui.label(egui::RichText::new(format!("{}", colony.crew)).size(12.0));
                 }
                 ui.end_row();
+
+                // Robots (crew needed)
+                let robot_count: u32 = colony
+                    .buildings
+                    .iter()
+                    .filter(|b| {
+                        b.operational
+                            && matches!(
+                                b.building_type,
+                                crate::colony::BuildingType::LightConstructionRobot
+                                    | crate::colony::BuildingType::ConstructionRobot
+                            )
+                    })
+                    .count() as u32;
+                if robot_count > 0 {
+                    ui.label(egui::RichText::new("Robots").size(12.0));
+                    ui.label(
+                        egui::RichText::new(format!("{} ({} crew)", robot_count, robot_count))
+                            .size(12.0),
+                    );
+                    ui.end_row();
+                }
 
                 // Food
                 let food_days = colony.food_days_remaining();
@@ -334,7 +404,8 @@ fn render_overview_card(ui: &mut egui::Ui, colony: &Colony, body_name: &str) {
                 ui.end_row();
 
                 // Storage
-                let storage_used = colony.resources.total_mass();
+                let sail_tier = tech_tree.line_tier("sail_technology");
+                let storage_used = colony.resources.total_storage_mass(sail_tier);
                 let storage_cap = colony.storage_capacity();
                 ui.label(egui::RichText::new("Storage").size(12.0));
                 ui.label(
@@ -345,6 +416,25 @@ fn render_overview_card(ui: &mut egui::Ui, colony: &Colony, body_name: &str) {
                     ))
                     .size(12.0),
                 );
+                ui.end_row();
+
+                // Power
+                let power_net = colony.power_generated - colony.power_consumed;
+                let power_color = if power_net < 0.0 {
+                    COLOR_RED
+                } else {
+                    COLOR_GREEN
+                };
+                ui.label(egui::RichText::new("Power").size(12.0));
+                let mut power_text = format!(
+                    "{}{}",
+                    if power_net >= 0.0 { "+" } else { "" },
+                    format_power_kw(power_net),
+                );
+                if colony.habitat_power_fraction < 1.0 && colony.crew > 0 {
+                    power_text.push_str("  (CREW AT RISK)");
+                }
+                ui.label(egui::RichText::new(power_text).size(12.0).color(power_color));
                 ui.end_row();
             });
 
@@ -452,8 +542,14 @@ fn render_power_card(ui: &mut egui::Ui, colony: &Colony, solar_power_factor: f64
         // Combined production + demand grid
         // Power production by building type
         let mut prod_map: BTreeMap<&str, (u32, f64)> = BTreeMap::new();
+        let mut receiver_count = 0u32;
         for b in &colony.buildings {
             if !b.operational {
+                continue;
+            }
+            // Skip receivers — their power comes from colony.receiver_power_kw
+            if b.building_type == BuildingType::ReceiverArray {
+                receiver_count += 1;
                 continue;
             }
             let output = b.building_type.power_output_kw();
@@ -476,6 +572,13 @@ fn render_power_card(ui: &mut egui::Ui, colony: &Colony, solar_power_factor: f64
                 .or_insert((0, 0.0));
             entry.0 += 1;
             entry.1 += actual;
+        }
+        // Add receiver power from simulation (accounts for laser availability + degradation)
+        if receiver_count > 0 {
+            prod_map.insert(
+                BuildingType::ReceiverArray.display_name(),
+                (receiver_count, colony.receiver_power_kw),
+            );
         }
 
         // Power demand by building type + factory recipe
@@ -525,14 +628,38 @@ fn render_power_card(ui: &mut egui::Ui, colony: &Colony, solar_power_factor: f64
                     ui.label(egui::RichText::new("Output").size(11.0).strong());
                     ui.end_row();
 
+                    let receiver_name = BuildingType::ReceiverArray.display_name();
                     for (name, (count, total_kw)) in &prod_map {
                         ui.label(egui::RichText::new(*name).size(11.0));
                         ui.label(egui::RichText::new(format!("{}x", count)).size(11.0));
-                        ui.label(
+                        let output_resp = ui.label(
                             egui::RichText::new(format!("+{}", format_power_kw(*total_kw)))
                                 .size(11.0)
                                 .color(COLOR_GREEN),
                         );
+                        // Receiver saturation tooltip
+                        if *name == receiver_name && colony.receiver_laser_power_kw > 0.0 {
+                            let laser_kw = colony.receiver_laser_power_kw;
+                            let receiver_cap_kw: f64 = colony.buildings.iter()
+                                .filter(|b| b.operational && b.building_type == BuildingType::ReceiverArray)
+                                .map(|b| (1.0 - b.degradation) * crate::colony::dyson_swarm::MAX_RECEIVER_INPUT_W / 1000.0
+                                    * crate::colony::dyson_swarm::RECEIVER_EFFICIENCY)
+                                .sum();
+                            let tooltip = if laser_kw < receiver_cap_kw {
+                                format!(
+                                    "Laser-limited: {} available, {} receiver capacity",
+                                    format_power_kw(laser_kw * crate::colony::dyson_swarm::RECEIVER_EFFICIENCY),
+                                    format_power_kw(receiver_cap_kw),
+                                )
+                            } else {
+                                format!(
+                                    "Receiver-limited: {} capacity / {} laser",
+                                    format_power_kw(receiver_cap_kw),
+                                    format_power_kw(laser_kw * crate::colony::dyson_swarm::RECEIVER_EFFICIENCY),
+                                )
+                            };
+                            output_resp.on_hover_text(tooltip);
+                        }
                         ui.end_row();
                     }
 
@@ -578,11 +705,11 @@ fn render_buildings_card(
 
         // Batch size selector
         let batch_id = egui::Id::new("colony_batch_size");
-        let mut batch_size: u32 = ctx.data_mut(|d| *d.get_temp_mut_or(batch_id, 10u32));
+        let mut batch_size: u32 = ctx.data_mut(|d| *d.get_temp_mut_or(batch_id, 1u32));
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Assign:").size(11.0));
             for &(label, val) in
-                &[("10", 10u32), ("100", 100), ("1000", 1000), ("All", 0)]
+                &[("1", 1u32), ("10", 10), ("100", 100), ("1000", 1000), ("All", 0)]
             {
                 if ui
                     .selectable_label(batch_size == val, egui::RichText::new(label).size(11.0))
@@ -655,7 +782,9 @@ fn render_buildings_card(
                 .cloned()
                 .unwrap_or_default();
 
+            let mining_mult = TechTree::tier_multiplier(tech_tree.line_tier("mining"));
             let mut assigned_counts: HashMap<ResourceType, u32> = HashMap::new();
+            let mut mine_rates: HashMap<ResourceType, f64> = HashMap::new();
             let mut unassigned = 0u32;
             for b in &colony.buildings {
                 if b.building_type != BuildingType::Mine {
@@ -664,48 +793,66 @@ fn render_buildings_card(
                 match b.assigned_resource {
                     Some(res) => {
                         *assigned_counts.entry(res).or_insert(0) += 1;
+                        if b.operational {
+                            *mine_rates.entry(res).or_insert(0.0) +=
+                                2000.0 * (1.0 - b.degradation) * colony.other_power_fraction * mining_mult;
+                        }
                     }
                     None => unassigned += 1,
                 }
             }
 
-            for &res in &mineable {
-                let count = assigned_counts.get(&res).copied().unwrap_or(0);
-                if count == 0 && unassigned == 0 {
-                    continue;
-                }
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    ui.label(
-                        egui::RichText::new(format!("{}: {}", res.display_name(), count))
-                            .size(11.0),
-                    );
-                    if count > 0 {
-                        if ui.small_button("\u{2212}").clicked() {
-                            let n = if batch_size == 0 {
-                                count
-                            } else {
-                                batch_size.min(count)
-                            };
-                            *action =
-                                ColonyScreenAction::RemoveMineAssignment(body_index, res, n);
+            egui::Grid::new("mine_assign_grid")
+                .min_col_width(0.0)
+                .spacing(egui::vec2(4.0, 2.0))
+                .show(ui, |ui| {
+                    for &res in &mineable {
+                        let count = assigned_counts.get(&res).copied().unwrap_or(0);
+                        if count == 0 && unassigned == 0 {
+                            continue;
                         }
-                    }
-                    if unassigned > 0 {
-                        let resp = ui.small_button("+");
-                        if resp.clicked() {
-                            let n = if batch_size == 0 {
-                                unassigned
-                            } else {
-                                batch_size.min(unassigned)
-                            };
-                            *action =
-                                ColonyScreenAction::AddMineAssignment(body_index, res, n);
+                        ui.add_space(16.0);
+                        let label = if count > 0 {
+                            let rate = mine_rates.get(&res).copied().unwrap_or(0.0);
+                            format!("{}: {} ({}/d)", res.display_name(), count, format_colony_mass(rate))
+                        } else {
+                            format!("{}: {}", res.display_name(), count)
+                        };
+                        ui.add_sized(
+                            [220.0, ui.spacing().interact_size.y],
+                            egui::Label::new(
+                                egui::RichText::new(label).size(11.0),
+                            ),
+                        );
+                        if count > 0 {
+                            if ui.small_button("\u{2212}").clicked() {
+                                let n = if batch_size == 0 {
+                                    count
+                                } else {
+                                    batch_size.min(count)
+                                };
+                                *action =
+                                    ColonyScreenAction::RemoveMineAssignment(body_index, res, n);
+                            }
+                        } else {
+                            ui.label("");
                         }
-                        resp.on_hover_text("Produces 2,000 kg/day");
+                        if unassigned > 0 {
+                            let resp = ui.small_button("+");
+                            if resp.clicked() {
+                                let n = if batch_size == 0 {
+                                    unassigned
+                                } else {
+                                    batch_size.min(unassigned)
+                                };
+                                *action =
+                                    ColonyScreenAction::AddMineAssignment(body_index, res, n);
+                            }
+                            resp.on_hover_text("Produces 2,000 kg/day");
+                        }
+                        ui.end_row();
                     }
                 });
-            }
 
             // Non-mineable resources with assignments (edge case)
             for (&res, &count) in &assigned_counts {
@@ -765,7 +912,9 @@ fn render_buildings_card(
                 .cloned()
                 .unwrap_or_default();
 
+            let atmo_mult = TechTree::tier_multiplier(tech_tree.line_tier("atmospheric_science"));
             let mut assigned_counts: HashMap<ResourceType, u32> = HashMap::new();
+            let mut collector_rates: HashMap<ResourceType, f64> = HashMap::new();
             let mut unassigned = 0u32;
             for b in &colony.buildings {
                 if b.building_type != BuildingType::AtmosphericCollector {
@@ -774,50 +923,68 @@ fn render_buildings_card(
                 match b.assigned_resource {
                     Some(res) => {
                         *assigned_counts.entry(res).or_insert(0) += 1;
+                        if b.operational {
+                            *collector_rates.entry(res).or_insert(0.0) +=
+                                10_000.0 * (1.0 - b.degradation) * colony.other_power_fraction * atmo_mult;
+                        }
                     }
                     None => unassigned += 1,
                 }
             }
 
-            for &res in &atmospheric {
-                let count = assigned_counts.get(&res).copied().unwrap_or(0);
-                if count == 0 && unassigned == 0 {
-                    continue;
-                }
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    ui.label(
-                        egui::RichText::new(format!("{}: {}", res.display_name(), count))
-                            .size(11.0),
-                    );
-                    if count > 0 {
-                        if ui.small_button("\u{2212}").clicked() {
-                            let n = if batch_size == 0 {
-                                count
-                            } else {
-                                batch_size.min(count)
-                            };
-                            *action = ColonyScreenAction::RemoveCollectorAssignment(
-                                body_index, res, n,
-                            );
+            egui::Grid::new("collector_assign_grid")
+                .min_col_width(0.0)
+                .spacing(egui::vec2(4.0, 2.0))
+                .show(ui, |ui| {
+                    for &res in &atmospheric {
+                        let count = assigned_counts.get(&res).copied().unwrap_or(0);
+                        if count == 0 && unassigned == 0 {
+                            continue;
                         }
-                    }
-                    if unassigned > 0 {
-                        let resp = ui.small_button("+");
-                        if resp.clicked() {
-                            let n = if batch_size == 0 {
-                                unassigned
-                            } else {
-                                batch_size.min(unassigned)
-                            };
-                            *action = ColonyScreenAction::AddCollectorAssignment(
-                                body_index, res, n,
-                            );
+                        ui.add_space(16.0);
+                        let label = if count > 0 {
+                            let rate = collector_rates.get(&res).copied().unwrap_or(0.0);
+                            format!("{}: {} ({}/d)", res.display_name(), count, format_colony_mass(rate))
+                        } else {
+                            format!("{}: {}", res.display_name(), count)
+                        };
+                        ui.add_sized(
+                            [220.0, ui.spacing().interact_size.y],
+                            egui::Label::new(
+                                egui::RichText::new(label).size(11.0),
+                            ),
+                        );
+                        if count > 0 {
+                            if ui.small_button("\u{2212}").clicked() {
+                                let n = if batch_size == 0 {
+                                    count
+                                } else {
+                                    batch_size.min(count)
+                                };
+                                *action = ColonyScreenAction::RemoveCollectorAssignment(
+                                    body_index, res, n,
+                                );
+                            }
+                        } else {
+                            ui.label("");
                         }
-                        resp.on_hover_text("Produces 10,000 kg/day");
+                        if unassigned > 0 {
+                            let resp = ui.small_button("+");
+                            if resp.clicked() {
+                                let n = if batch_size == 0 {
+                                    unassigned
+                                } else {
+                                    batch_size.min(unassigned)
+                                };
+                                *action = ColonyScreenAction::AddCollectorAssignment(
+                                    body_index, res, n,
+                                );
+                            }
+                            resp.on_hover_text("Produces 10,000 kg/day");
+                        }
+                        ui.end_row();
                     }
                 });
-            }
 
             // Non-atmospheric resources with assignments (edge case)
             for (&res, &count) in &assigned_counts {
@@ -874,6 +1041,7 @@ fn render_buildings_card(
             ui.add_space(2.0);
 
             let mut recipe_counts: HashMap<FactoryRecipe, u32> = HashMap::new();
+            let mut recipe_rates: HashMap<FactoryRecipe, f64> = HashMap::new();
             let mut unassigned_factories = 0u32;
             for b in &colony.buildings {
                 if b.building_type != BuildingType::Factory {
@@ -882,82 +1050,118 @@ fn render_buildings_card(
                 match b.assigned_recipe {
                     Some(recipe) => {
                         *recipe_counts.entry(recipe).or_insert(0) += 1;
+                        if b.operational {
+                            let batches_per_day = 24.0 / recipe.batch_time_hours();
+                            let factory_mult = TechTree::tier_multiplier(
+                                tech_tree.line_tier(recipe.efficiency_line_id()),
+                            );
+                            let factor = batches_per_day
+                                * (1.0 - b.degradation)
+                                * colony.other_power_fraction
+                                * factory_mult;
+                            // Use the first (primary) output for the rate display
+                            let outputs = recipe.outputs();
+                            if let Some(&(_, amt)) = outputs.first() {
+                                *recipe_rates.entry(recipe).or_insert(0.0) += amt * factor;
+                            }
+                        }
                     }
                     None => unassigned_factories += 1,
                 }
             }
 
-            for &recipe in ALL_RECIPES {
-                let count = recipe_counts.get(&recipe).copied().unwrap_or(0);
-                let recipe_unlocked = tech_tree.is_recipe_available(recipe.recipe_id());
-                // Skip recipes that are locked and have no factories assigned
-                if count == 0 && (!recipe_unlocked || unassigned_factories == 0) {
-                    continue;
-                }
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    let label_color = if recipe_unlocked {
-                        egui::Color32::WHITE
-                    } else {
-                        COLOR_GRAY
-                    };
-                    ui.label(
-                        egui::RichText::new(format!("{}: {}", recipe.display_name(), count))
-                            .size(11.0)
-                            .color(label_color),
-                    );
-                    if count > 0 {
-                        if ui.small_button("\u{2212}").clicked() {
-                            let n = if batch_size == 0 {
-                                count
-                            } else {
-                                batch_size.min(count)
-                            };
-                            *action = ColonyScreenAction::RemoveFactoryAssignment(
-                                body_index, recipe, n,
-                            );
+            egui::Grid::new("factory_assign_grid")
+                .min_col_width(0.0)
+                .spacing(egui::vec2(4.0, 2.0))
+                .show(ui, |ui| {
+                    for &recipe in ALL_RECIPES {
+                        let count = recipe_counts.get(&recipe).copied().unwrap_or(0);
+                        let recipe_unlocked = tech_tree.is_recipe_available(recipe.recipe_id());
+                        // Skip recipes that are locked and have no factories assigned
+                        if count == 0 && (!recipe_unlocked || unassigned_factories == 0) {
+                            continue;
                         }
-                    }
-                    if unassigned_factories > 0 && recipe_unlocked {
-                        // Build tooltip
-                        let inputs = recipe.inputs();
-                        let outputs = recipe.outputs();
-                        let input_str: String = inputs
-                            .iter()
-                            .map(|(r, a)| {
-                                format!("{} {}", format_colony_mass(*a), r.display_name())
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" + ");
-                        let output_str: String = outputs
-                            .iter()
-                            .map(|(r, a)| {
-                                format!("{} {}", format_colony_mass(*a), r.display_name())
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" + ");
-                        let tooltip = format!(
-                            "{} \u{2192} {} ({}h, {})",
-                            input_str,
-                            output_str,
-                            recipe.batch_time_hours() as u32,
-                            format_power_kw(recipe.power_draw_kw()),
+                        ui.add_space(16.0);
+                        let label_color = if recipe_unlocked {
+                            egui::Color32::WHITE
+                        } else {
+                            COLOR_GRAY
+                        };
+                        let label = if count > 0 {
+                            let rate = recipe_rates.get(&recipe).copied().unwrap_or(0.0);
+                            format!("{}: {} ({}/d)", recipe.display_name(), count, format_colony_mass(rate))
+                        } else {
+                            format!("{}: {}", recipe.display_name(), count)
+                        };
+                        ui.add_sized(
+                            [240.0, ui.spacing().interact_size.y],
+                            egui::Label::new(
+                                egui::RichText::new(label)
+                                    .size(11.0)
+                                    .color(label_color),
+                            ),
                         );
-                        let resp = ui.small_button("+");
-                        if resp.clicked() {
-                            let n = if batch_size == 0 {
-                                unassigned_factories
-                            } else {
-                                batch_size.min(unassigned_factories)
-                            };
-                            *action = ColonyScreenAction::AddFactoryAssignment(
-                                body_index, recipe, n,
-                            );
+                        if count > 0 {
+                            if ui.small_button("\u{2212}").clicked() {
+                                let n = if batch_size == 0 {
+                                    count
+                                } else {
+                                    batch_size.min(count)
+                                };
+                                *action = ColonyScreenAction::RemoveFactoryAssignment(
+                                    body_index, recipe, n,
+                                );
+                            }
+                        } else {
+                            ui.label("");
                         }
-                        resp.on_hover_text(tooltip);
+                        if unassigned_factories > 0 && recipe_unlocked {
+                            // Build tooltip
+                            let inputs = recipe.inputs();
+                            let outputs = recipe.outputs();
+                            let input_str: String = inputs
+                                .iter()
+                                .map(|(r, a)| {
+                                    format!("{} {}", format_colony_mass(*a), r.display_name())
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" + ");
+                            let sail_tier = tech_tree.line_tier("sail_technology");
+                            let output_str: String = outputs
+                                .iter()
+                                .map(|(r, a)| {
+                                    if *r == ResourceType::MirrorSegment || *r == ResourceType::CollectorStation {
+                                        let unit_mass = r.storage_mass_per_unit(sail_tier);
+                                        format!("{} \u{00d7} {} {}", *a as u32, format_colony_mass(unit_mass), r.display_name())
+                                    } else {
+                                        format!("{} {}", format_colony_mass(*a), r.display_name())
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" + ");
+                            let tooltip = format!(
+                                "{} \u{2192} {} ({}h, {})",
+                                input_str,
+                                output_str,
+                                recipe.batch_time_hours() as u32,
+                                format_power_kw(recipe.power_draw_kw()),
+                            );
+                            let resp = ui.small_button("+");
+                            if resp.clicked() {
+                                let n = if batch_size == 0 {
+                                    unassigned_factories
+                                } else {
+                                    batch_size.min(unassigned_factories)
+                                };
+                                *action = ColonyScreenAction::AddFactoryAssignment(
+                                    body_index, recipe, n,
+                                );
+                            }
+                            resp.on_hover_text(tooltip);
+                        }
+                        ui.end_row();
                     }
                 });
-            }
 
             if unassigned_factories > 0 {
                 ui.horizontal(|ui| {
@@ -975,6 +1179,7 @@ fn render_buildings_card(
 
 fn render_construction_card(
     ui: &mut egui::Ui,
+    ctx: &egui::Context,
     colony: &Colony,
     body_index: usize,
     hab_score: u32,
@@ -992,6 +1197,35 @@ fn render_construction_card(
                     .color(COLOR_GRAY),
             );
         } else {
+            // Compute available construction capacity per day
+            let construction_mult = TechTree::tier_multiplier(tech_tree.line_tier("construction"));
+            let hab_mult = (200.0 - hab_score as f64) / 100.0;
+            let mut robot_cap_per_day = 0.0_f64;
+            for b in &colony.buildings {
+                if !b.operational {
+                    continue;
+                }
+                match b.building_type {
+                    BuildingType::ConstructionRobot => robot_cap_per_day += 20_000.0 * construction_mult,
+                    BuildingType::LightConstructionRobot => robot_cap_per_day += 5_000.0 * construction_mult,
+                    _ => {}
+                }
+            }
+            let mut maintenance_demand_per_day = 0.0_f64;
+            for b in &colony.buildings {
+                let costs = b.building_type.maintenance_cost_per_30d();
+                let hab = if b.building_type.affected_by_habitability() {
+                    hab_mult
+                } else {
+                    1.0
+                };
+                let mult = hab * b.building_type.size_multiplier(body_radius_m);
+                let mass: f64 = costs.iter().map(|(_, amt)| amt * mult).sum();
+                maintenance_demand_per_day += mass / 30.0;
+            }
+            let available_per_day = (robot_cap_per_day - maintenance_demand_per_day).max(0.0);
+
+            let mut cumulative_days = 0.0_f64;
             for item in &colony.construction_queue {
                 let progress = if item.total_mass > 0.0 {
                     (item.mass_assembled / item.total_mass) as f32
@@ -1006,12 +1240,41 @@ fn render_construction_card(
                         format!("Ship: {}", name)
                     }
                 };
-                let text = format!(
-                    "{} ({} / {})",
-                    display_name,
-                    format_colony_mass(item.mass_assembled),
-                    format_colony_mass(item.total_mass),
-                );
+                let remaining_units = item.count - item.completed;
+                let remaining_mass = remaining_units as f64 * item.total_mass - item.mass_assembled;
+                let item_days = if available_per_day > 0.0 {
+                    remaining_mass / available_per_day
+                } else {
+                    f64::INFINITY
+                };
+                cumulative_days += item_days;
+
+                let time_str = if available_per_day <= 0.0 {
+                    " \u{2014} stalled".to_string()
+                } else if cumulative_days < 1.0 {
+                    format!(" \u{2014} ~{:.0}h", cumulative_days * 24.0)
+                } else {
+                    format!(" \u{2014} ~{:.1}d", cumulative_days)
+                };
+
+                let text = if remaining_units > 1 {
+                    format!(
+                        "{} \u{00d7}{} ({} / {}){}",
+                        display_name,
+                        remaining_units,
+                        format_colony_mass(item.mass_assembled),
+                        format_colony_mass(item.total_mass),
+                        time_str,
+                    )
+                } else {
+                    format!(
+                        "{} ({} / {}){}",
+                        display_name,
+                        format_colony_mass(item.mass_assembled),
+                        format_colony_mass(item.total_mass),
+                        time_str,
+                    )
+                };
                 ui.add(
                     egui::ProgressBar::new(progress.clamp(0.0, 1.0))
                         .text(text)
@@ -1024,8 +1287,25 @@ fn render_construction_card(
         ui.separator();
         ui.add_space(4.0);
 
+        // Batch size selector for construction queue
+        let build_batch_id = egui::Id::new("colony_build_batch_size");
+        let mut build_batch: u32 = ctx.data_mut(|d| *d.get_temp_mut_or(build_batch_id, 1u32));
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Queue:").size(12.0));
+            for &(label, val) in
+                &[("1", 1u32), ("10", 10), ("100", 100), ("All", 0)]
+            {
+                if ui
+                    .selectable_label(build_batch == val, egui::RichText::new(label).size(11.0))
+                    .clicked()
+                {
+                    build_batch = val;
+                }
+            }
+        });
+        ctx.data_mut(|d| d.insert_temp(build_batch_id, build_batch));
+
+        ui.horizontal(|ui| {
             egui::ComboBox::from_id_source("cs_add_building_combo")
                 .selected_text("Select building...")
                 .width(200.0)
@@ -1074,7 +1354,7 @@ fn render_construction_card(
                             )
                             .clicked()
                         {
-                            *action = ColonyScreenAction::QueueBuilding(body_index, bt);
+                            *action = ColonyScreenAction::QueueBuilding(body_index, bt, build_batch);
                         }
                     }
                 });
@@ -1236,12 +1516,31 @@ fn render_maintenance_card(ui: &mut egui::Ui, colony: &Colony, hab_mult: f64) {
 
 fn render_resources_card(
     ui: &mut egui::Ui,
+    ctx: &egui::Context,
     colony: &Colony,
+    body_index: usize,
     rates: &ResourceRates,
+    tech_tree: &crate::colony::TechTree,
+    action: &mut ColonyScreenAction,
 ) {
     card_frame().show(ui, |ui| {
         ui.set_min_width(ui.available_width());
         section_heading(ui, "Resources");
+
+        let storage_cap = colony.storage_capacity();
+        let sail_tier = tech_tree.line_tier("sail_technology");
+        let storage_used = colony.resources.total_storage_mass(sail_tier);
+
+        // Show total storage header
+        ui.label(
+            egui::RichText::new(format!(
+                "Storage: {} / {}",
+                format_colony_mass(storage_used),
+                format_colony_mass(storage_cap),
+            ))
+            .size(12.0),
+        );
+        ui.add_space(4.0);
 
         // Build resource list: regular resources + food
         let mut resources: Vec<(ResourceType, f64)> = colony
@@ -1276,6 +1575,13 @@ fn render_resources_card(
         }
         resources.sort_by(|a, b| a.0.display_name().cmp(b.0.display_name()));
 
+        // Compute active resources for allocation display
+        let active_resources = crate::colony::compute_active_resources(
+            &colony.resources,
+            &rates.production,
+        );
+        let alloc_pcts = colony.storage_allocation.effective_pcts(&active_resources);
+
         if resources.is_empty() {
             ui.label(
                 egui::RichText::new("No resources in storage.")
@@ -1285,18 +1591,21 @@ fn render_resources_card(
         } else {
             egui::Grid::new("cs_resources_grid")
                 .striped(true)
-                .num_columns(5)
-                .min_col_width(80.0)
+                .num_columns(7)
+                .min_col_width(60.0)
                 .show(ui, |ui| {
                     ui.label(egui::RichText::new("Resource").size(11.0).strong());
                     ui.label(egui::RichText::new("Amount").size(11.0).strong());
+                    ui.label(egui::RichText::new("Cap").size(11.0).strong());
                     ui.label(egui::RichText::new("Production").size(11.0).strong());
                     ui.label(egui::RichText::new("Consumption").size(11.0).strong());
                     ui.label(egui::RichText::new("Days left").size(11.0).strong());
+                    ui.label(egui::RichText::new("Alloc %").size(11.0).strong());
                     ui.end_row();
 
                     for (rt, amt) in &resources {
-                        let amount = if *rt == ResourceType::Food {
+                        let is_food = *rt == ResourceType::Food;
+                        let amount = if is_food {
                             colony.food_stored
                         } else {
                             *amt
@@ -1305,30 +1614,95 @@ fn render_resources_card(
                         let cons = rates.consumption.get(rt).copied().unwrap_or(0.0);
                         let net = prod - cons;
 
+                        let is_unit_counted = *rt == ResourceType::MirrorSegment
+                            || *rt == ResourceType::CollectorStation;
+
+                        // Resource name
                         ui.label(egui::RichText::new(rt.display_name()).size(11.0));
-                        ui.label(egui::RichText::new(format_colony_mass(amount)).size(11.0));
 
+                        // Amount
+                        if is_unit_counted {
+                            let count = amount.round() as u64;
+                            let unit_mass = if *rt == ResourceType::MirrorSegment {
+                                let sail_tier = tech_tree.line_tier("sail_technology");
+                                crate::colony::dyson_swarm::mirror_mass_at_tier(sail_tier)
+                            } else {
+                                crate::colony::dyson_swarm::COLLECTOR_MASS_KG
+                            };
+                            let total_kg = count as f64 * unit_mass;
+                            ui.label(egui::RichText::new(format!(
+                                "{} ({})", count, format_colony_mass(total_kg)
+                            )).size(11.0));
+                        } else {
+                            ui.label(egui::RichText::new(format_colony_mass(amount)).size(11.0));
+                        }
+
+                        // Cap column (per-resource allocated capacity)
+                        if is_food {
+                            let food_cap = colony.food_capacity();
+                            ui.label(egui::RichText::new(format_colony_mass(food_cap)).size(11.0).color(COLOR_GRAY));
+                        } else {
+                            let res_cap_kg = colony.storage_allocation.capacity_for(*rt, storage_cap, &active_resources);
+                            if is_unit_counted {
+                                // Show cap as unit count (cap_kg / mass_per_unit)
+                                let unit_mass = rt.storage_mass_per_unit(sail_tier);
+                                let cap_count = (res_cap_kg / unit_mass).floor() as u64;
+                                let amount_kg = amount * unit_mass;
+                                let cap_color = if amount_kg > res_cap_kg * 0.95 && res_cap_kg > 0.0 {
+                                    COLOR_YELLOW
+                                } else {
+                                    COLOR_GRAY
+                                };
+                                ui.label(egui::RichText::new(format!("{}", cap_count)).size(11.0).color(cap_color));
+                            } else {
+                                let cap_color = if amount > res_cap_kg * 0.95 && res_cap_kg > 0.0 {
+                                    COLOR_YELLOW
+                                } else {
+                                    COLOR_GRAY
+                                };
+                                ui.label(egui::RichText::new(format_colony_mass(res_cap_kg)).size(11.0).color(cap_color));
+                            }
+                        }
+
+                        // Production
                         if prod > 0.001 {
-                            ui.label(
-                                egui::RichText::new(format_rate(prod))
-                                    .size(11.0)
-                                    .color(COLOR_GREEN),
-                            );
+                            if is_unit_counted {
+                                ui.label(
+                                    egui::RichText::new(format!("+{:.1}/day", prod))
+                                        .size(11.0)
+                                        .color(COLOR_GREEN),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new(format_rate(prod))
+                                        .size(11.0)
+                                        .color(COLOR_GREEN),
+                                );
+                            }
                         } else {
                             ui.label("");
                         }
 
+                        // Consumption
                         if cons > 0.001 {
-                            ui.label(
-                                egui::RichText::new(format_rate(-cons))
-                                    .size(11.0)
-                                    .color(COLOR_ORANGE),
-                            );
+                            if is_unit_counted {
+                                ui.label(
+                                    egui::RichText::new(format!("\u{2212}{:.1}/day", cons))
+                                        .size(11.0)
+                                        .color(COLOR_ORANGE),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new(format_rate(-cons))
+                                        .size(11.0)
+                                        .color(COLOR_ORANGE),
+                                );
+                            }
                         } else {
                             ui.label("");
                         }
 
-                        // Days left: only meaningful when net consumption > 0
+                        // Days left
                         if net < -0.001 && amount > 0.001 {
                             let days_left = amount / (-net);
                             let days_color = if days_left < 10.0 {
@@ -1344,7 +1718,6 @@ fn render_resources_card(
                                     .color(days_color),
                             );
                         } else if net >= 0.001 {
-                            // Net positive — show infinity/stable
                             ui.label(
                                 egui::RichText::new("\u{221e}")
                                     .size(11.0)
@@ -1352,6 +1725,55 @@ fn render_resources_card(
                             );
                         } else {
                             ui.label("");
+                        }
+
+                        // Alloc % column — editable for non-food resources
+                        if is_food {
+                            ui.label(egui::RichText::new("\u{2014}").size(11.0).color(COLOR_GRAY));
+                        } else {
+                            let pct = alloc_pcts.get(rt).copied().unwrap_or(0.0);
+                            let is_pinned = colony.storage_allocation.is_pinned(*rt);
+                            let id = egui::Id::new(("alloc_pct", *rt as u8));
+                            let mut pct_str: String = ctx.data_mut(|d| {
+                                d.get_temp(id).unwrap_or_else(|| format!("{:.0}", pct))
+                            });
+
+                            let pct_color = if is_pinned { COLOR_YELLOW } else { COLOR_GRAY };
+                            let response = ui.add(
+                                egui::TextEdit::singleline(&mut pct_str)
+                                    .desired_width(35.0)
+                                    .font(egui::TextStyle::Small)
+                                    .text_color(pct_color),
+                            );
+                            if response.lost_focus() {
+                                if let Ok(new_pct) = pct_str.trim().parse::<f64>() {
+                                    *action = ColonyScreenAction::SetStorageAllocation {
+                                        body_index,
+                                        resource: *rt,
+                                        percent: new_pct,
+                                    };
+                                }
+                                // Reset temp to reflect new state next frame
+                                ctx.data_mut(|d| d.remove::<String>(id));
+                            } else if !response.has_focus() {
+                                // Update display when not editing
+                                ctx.data_mut(|d| d.insert_temp(id, format!("{:.0}", pct)));
+                            } else {
+                                ctx.data_mut(|d| d.insert_temp(id, pct_str));
+                            }
+
+                            // Right-click to unpin
+                            if is_pinned {
+                                response.context_menu(|ui| {
+                                    if ui.button("Unpin (auto)").clicked() {
+                                        *action = ColonyScreenAction::UnpinStorageAllocation {
+                                            body_index,
+                                            resource: *rt,
+                                        };
+                                        ui.close_menu();
+                                    }
+                                });
+                            }
                         }
 
                         ui.end_row();
@@ -1449,6 +1871,247 @@ fn render_hangar_card(
     });
 }
 
+fn render_mass_driver_card(
+    ui: &mut egui::Ui,
+    colony: &Colony,
+    tech_tree: &crate::colony::TechTree,
+) {
+    card_frame().show(ui, |ui| {
+        let driver = match colony.best_mass_driver() {
+            Some(d) => d,
+            None => return,
+        };
+
+        section_heading(ui, "Mass Driver");
+
+        let sail_tier = tech_tree.line_tier("sail_technology");
+        let mirror_mass = crate::colony::dyson_swarm::mirror_mass_at_tier(sail_tier);
+
+        egui::Grid::new("mass_driver_grid")
+            .striped(true)
+            .num_columns(2)
+            .show(ui, |ui| {
+                ui.label("Type:");
+                ui.label(
+                    egui::RichText::new(driver.display_name())
+                        .color(egui::Color32::WHITE),
+                );
+                ui.end_row();
+
+                if let Some(track) = driver.mass_driver_track_m() {
+                    ui.label("Track length:");
+                    ui.label(format!("{:.0} km", track / 1000.0));
+                    ui.end_row();
+                }
+
+                // Ship launch velocity
+                if let Some(v) = driver.mass_driver_launch_velocity(1000.0, false) {
+                    ui.label("Ship max velocity:");
+                    ui.label(format!("{:.1} km/s", v / 1000.0));
+                    ui.end_row();
+                }
+
+                // Mirror launch velocity
+                if let Some(v) = driver.mass_driver_launch_velocity(mirror_mass, true) {
+                    ui.label("Mirror max velocity:");
+                    ui.label(format!("{:.1} km/s", v / 1000.0));
+                    ui.end_row();
+                }
+
+                if let Some(max_payload) = driver.mass_driver_max_payload_kg() {
+                    ui.label("Max payload:");
+                    ui.label(format_colony_mass(max_payload));
+                    ui.end_row();
+                }
+
+                ui.label("Power draw:");
+                ui.label(format_power_kw(driver.power_draw_kw()));
+                ui.end_row();
+
+                // Energy capacity and stored
+                if let Some(capacity) = driver.mass_driver_energy_capacity_j() {
+                    ui.label("Energy capacity:");
+                    ui.label(format_energy_j(capacity));
+                    ui.end_row();
+
+                    let energy_j = colony.mass_driver_energy_j;
+                    let pct = if capacity > 0.0 { (energy_j / capacity * 100.0).min(100.0) } else { 0.0 };
+                    ui.label("Energy stored:");
+                    ui.label(format!("{} ({:.0}%)", format_energy_j(energy_j), pct));
+                    ui.end_row();
+                }
+
+                ui.label("Mirrors launched:");
+                ui.label(format!("{}", colony.mirrors_launched));
+                ui.end_row();
+
+                // Cadence estimate
+                if let Some(v) = driver.mass_driver_launch_velocity(mirror_mass, true) {
+                    let energy = BuildingType::mass_driver_launch_energy_j(mirror_mass, v);
+                    let power_w = driver.power_draw_kw() * 1000.0;
+                    let recharge_s = BuildingType::mass_driver_recharge_time_s(energy, power_w);
+                    let per_day = if recharge_s > 0.0 { 86_400.0 / recharge_s } else { 0.0 };
+                    ui.label("Mirror cadence:");
+                    if per_day >= 1.0 {
+                        ui.label(format!("{:.0}/day", per_day));
+                    } else {
+                        let hours = recharge_s / 3600.0;
+                        ui.label(format!("1 per {:.1} hrs", hours));
+                    }
+                    ui.end_row();
+                }
+            });
+    });
+}
+
+pub(super) fn render_dyson_swarm_card(
+    ui: &mut egui::Ui,
+    swarm: &crate::colony::DysonSwarm,
+    tech_tree: &crate::colony::TechTree,
+) {
+    // Only show if there's any swarm activity
+    if swarm.mirror_count == 0 && swarm.in_transit() == 0
+        && swarm.collector_count == 0 && swarm.collectors_in_transit() == 0
+    {
+        return;
+    }
+
+    card_frame().show(ui, |ui| {
+        section_heading(ui, "Dyson Swarm (0.1 AU)");
+
+        let sail_tier = tech_tree.line_tier("sail_technology");
+        let beta = crate::colony::dyson_swarm::lightness_number_at_tier(sail_tier);
+
+        // === Section A: Swarm Status ===
+        ui.label(
+            egui::RichText::new("Swarm Status")
+                .size(12.0)
+                .strong()
+                .color(COLOR_GRAY),
+        );
+        ui.add_space(2.0);
+
+        egui::Grid::new("dyson_swarm_status_grid")
+            .num_columns(2)
+            .show(ui, |ui| {
+                let area = swarm.total_area_km2();
+                let area_str = if area >= 1_000_000.0 {
+                    format!("{:.2} M km\u{00B2}", area / 1_000_000.0)
+                } else if area >= 1_000.0 {
+                    format!("{:.0}k km\u{00B2}", area / 1000.0)
+                } else {
+                    format!("{:.0} km\u{00B2}", area)
+                };
+                ui.label("Mirrors:");
+                ui.label(
+                    egui::RichText::new(format!("{} ({})", swarm.mirror_count, area_str))
+                        .color(COLOR_GREEN),
+                );
+                ui.end_row();
+
+                ui.label("Collectors:");
+                ui.label(
+                    egui::RichText::new(format!("{}", swarm.collector_count))
+                        .color(if swarm.collector_count > 0 { COLOR_GREEN } else { COLOR_GRAY }),
+                );
+                ui.end_row();
+
+                let mirrors_transit = swarm.in_transit();
+                let collectors_transit = swarm.collectors_in_transit();
+                if mirrors_transit > 0 || collectors_transit > 0 {
+                    ui.label("In transit:");
+                    let mut parts = Vec::new();
+                    if mirrors_transit > 0 {
+                        parts.push(format!("{} mirrors", mirrors_transit));
+                    }
+                    if collectors_transit > 0 {
+                        parts.push(format!("{} collectors", collectors_transit));
+                    }
+                    ui.label(
+                        egui::RichText::new(parts.join(", "))
+                            .color(COLOR_YELLOW),
+                    );
+                    ui.end_row();
+                }
+            });
+
+        // === Section B: Power Chain ===
+        if swarm.collector_count > 0 || swarm.collectors_in_transit() > 0 {
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new("Power Chain")
+                    .size(12.0)
+                    .strong()
+                    .color(COLOR_GRAY),
+            );
+            ui.add_space(2.0);
+
+            egui::Grid::new("dyson_swarm_power_grid")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.label("Reflected power:");
+                    ui.label(
+                        egui::RichText::new(format_power_w(swarm.total_power_w()))
+                            .color(COLOR_GREEN),
+                    );
+                    ui.end_row();
+
+                    let eta = crate::colony::dyson_swarm::DysonSwarm::collection_efficiency(beta);
+                    let efficiency_tooltip = format!(
+                        "Mirror reflectivity: {:.0}%\nCollector PV+laser: {:.0}%\nReceiver conversion: {:.0}%",
+                        crate::colony::dyson_swarm::MIRROR_EFFICIENCY * 100.0,
+                        crate::colony::dyson_swarm::COLLECTOR_EFFICIENCY * 100.0,
+                        crate::colony::dyson_swarm::RECEIVER_EFFICIENCY * 100.0,
+                    );
+                    ui.label("Collection efficiency:");
+                    let eff_resp = ui.label(format!("{:.0}%", eta * 100.0));
+                    eff_resp.on_hover_text(efficiency_tooltip);
+                    ui.end_row();
+
+                    let laser_w = swarm.available_laser_power(beta);
+                    ui.label("Laser power:");
+                    ui.label(
+                        egui::RichText::new(format_power_w(laser_w))
+                            .color(if laser_w > 0.0 { COLOR_GREEN } else { COLOR_GRAY }),
+                    );
+                    ui.end_row();
+                });
+        }
+
+        // === Section C: Technology ===
+        ui.add_space(4.0);
+        ui.separator();
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("Technology")
+                .size(12.0)
+                .strong()
+                .color(COLOR_GRAY),
+        );
+        ui.add_space(2.0);
+
+        egui::Grid::new("dyson_swarm_tech_grid")
+            .num_columns(2)
+            .show(ui, |ui| {
+                let sigma = crate::colony::dyson_swarm::sail_loading_at_tier(sail_tier);
+                ui.label("Sail loading:");
+                ui.label(format!("{:.2} g/m\u{00B2}  |  \u{03B2}: {:.2}", sigma, beta));
+                ui.end_row();
+
+                if beta >= 1.0 {
+                    ui.label("Status:");
+                    ui.label(
+                        egui::RichText::new("Statite capable")
+                            .color(COLOR_GREEN),
+                    );
+                    ui.end_row();
+                }
+            });
+    });
+}
+
 pub fn render_colony_screen(
     ctx: &egui::Context,
     body_index: usize,
@@ -1483,7 +2146,7 @@ pub fn render_colony_screen(
     let hab_mult = (200.0 - hab_score as f64) / 100.0;
 
     // Pre-compute resource rates
-    let rates = compute_resource_rates(colony, hab_mult);
+    let rates = compute_resource_rates(colony, hab_mult, body_radius_m, tech_tree);
 
     // === Top panel: colony name, selector, date, time warp ===
     egui::TopBottomPanel::top("colony_top_panel").show(ctx, |ui| {
@@ -1610,7 +2273,7 @@ pub fn render_colony_screen(
                     .unwrap_or("Unknown");
 
                 // 1. Overview card
-                render_overview_card(ui, colony, body_name);
+                render_overview_card(ui, colony, body_name, tech_tree);
 
                 // 2. Power card
                 render_power_card(ui, colony, solar_power_factor);
@@ -1630,6 +2293,7 @@ pub fn render_colony_screen(
                 // 4. Construction card
                 render_construction_card(
                     ui,
+                    ctx,
                     colony,
                     body_index,
                     hab_score,
@@ -1642,7 +2306,7 @@ pub fn render_colony_screen(
                 render_maintenance_card(ui, colony, hab_mult);
 
                 // 6. Resources card
-                render_resources_card(ui, colony, &rates);
+                render_resources_card(ui, ctx, colony, body_index, &rates, tech_tree, &mut action);
 
                 // 7. Trade routes section (read-only)
                 {
@@ -1658,7 +2322,12 @@ pub fn render_colony_screen(
                 // 8. Hangar card
                 render_hangar_card(ui, colony, body_index, &mut action);
 
-                // 9. Debug section (no card frame)
+                // 9. Mass Driver card (if colony has one)
+                if colony.has_mass_driver() {
+                    render_mass_driver_card(ui, colony, tech_tree);
+                }
+
+                // 10. Debug section (no card frame)
                 ui.add_space(4.0);
                 egui::CollapsingHeader::new("Debug")
                     .default_open(false)

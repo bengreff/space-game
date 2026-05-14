@@ -84,6 +84,8 @@ pub struct RouteCreationState {
     pub ships_per_window: u32,
     pub build_new_ship: bool,
     pub auto_build_ships: bool,
+    pub use_mass_driver: bool,
+    pub mass_driver_tier: Option<crate::colony::BuildingType>,
     pub automation: AutomationMode,
     pub priority: i32,
     pub min_stockpile: f64,
@@ -143,6 +145,8 @@ impl RouteCreationState {
             ships_per_window: route.ships_per_window,
             build_new_ship: false, // Don't build when editing
             auto_build_ships: route.auto_build_ships,
+            use_mass_driver: route.use_mass_driver,
+            mass_driver_tier: route.mass_driver_tier,
             automation: route.automation.clone(),
             priority: route.priority,
             min_stockpile: route.min_stockpile,
@@ -164,6 +168,8 @@ impl RouteCreationState {
         (self.dv_budget as u64).hash(&mut hasher);
         let cargo_mass = self.cargo_items.iter().map(|(_, kg)| *kg as u64).sum::<u64>();
         cargo_mass.hash(&mut hasher);
+        self.use_mass_driver.hash(&mut hasher);
+        self.mass_driver_tier.map(|t| t.display_name()).hash(&mut hasher);
         hasher.finish()
     }
 }
@@ -270,10 +276,20 @@ pub fn render_fleet_overview_panel(
                     );
                 }
 
-                // Ship status line — show in-transit ship progress
+                // Ship status line — show in-transit or waiting-for-mass-driver progress
                 if let Some(ship_id) = route.assigned_ship_id {
                     if let Some(ship) = fleet.get_ship(ship_id) {
-                        if ship.state == TradeShipState::InTransit {
+                        if ship.state == TradeShipState::WaitingForMassDriver {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "\u{1f680} Queued at mass driver \u{2014} waiting for energy"
+                                    )
+                                    .size(11.0)
+                                    .color(COLOR_YELLOW),
+                                );
+                            });
+                        } else if ship.state == TradeShipState::InTransit {
                             ui.horizontal(|ui| {
                                 let dest = if let Some(r) = fleet.get_route(route.id) {
                                     r.legs.get(ship.current_leg).and_then(|l| l.to_body)
@@ -562,14 +578,34 @@ pub fn render_route_creation_panel(
                         );
                         state.cached_category = Some(category);
 
-                        // Hohmann baseline
-                        state.cached_leg = crate::colony::transfer::compute_leg_delta_v(
-                            state.source_body,
-                            state.dest_body,
-                            sim_time,
-                            0.0,
-                            solar_system,
-                        );
+                        // Compute leg delta-v (with mass driver if enabled)
+                        if state.use_mass_driver {
+                            let tier = state.mass_driver_tier.unwrap_or(
+                                crate::colony::BuildingType::MassDriverMk1,
+                            );
+                            // Use 0 mass for velocity calc to get max launch velocity
+                            // (actual mass doesn't affect velocity — it's accel * track)
+                            let launch_v = tier
+                                .mass_driver_launch_velocity(1.0, false)
+                                .unwrap_or(0.0);
+                            state.cached_leg =
+                                crate::colony::transfer::compute_leg_delta_v_with_mass_driver(
+                                    state.source_body,
+                                    state.dest_body,
+                                    sim_time,
+                                    0.0,
+                                    solar_system,
+                                    launch_v,
+                                );
+                        } else {
+                            state.cached_leg = crate::colony::transfer::compute_leg_delta_v(
+                                state.source_body,
+                                state.dest_body,
+                                sim_time,
+                                0.0,
+                                solar_system,
+                            );
+                        }
                         state.cached_min_dv =
                             state.cached_leg.as_ref().map_or(0.0, |l| l.total_dv);
 
@@ -904,6 +940,183 @@ pub fn render_route_creation_panel(
                         }
                     }
                     ui.add_space(8.0);
+
+                    // 7b. Mass Driver Departure
+                    {
+                        use crate::colony::BuildingType;
+                        use crate::colony::transfer::classify_atmosphere;
+                        use crate::colony::transfer::AtmosphereClass;
+
+                        // Show section when: source is a colony (not Earth), body is
+                        // airless, colony has mass driver, blueprint has probe core.
+                        let source_is_colony = state.source_body.is_some()
+                            && state.source_body != Some(earth_index);
+                        let source_airless = state.source_body.map_or(false, |idx| {
+                            classify_atmosphere(&solar_system.bodies[idx])
+                                == AtmosphereClass::Airless
+                        });
+                        let source_has_driver = source_is_colony
+                            && state.source_body.and_then(|idx| {
+                                colony_manager.get_by_body(idx)
+                            }).map_or(false, |c| c.has_mass_driver());
+
+                        let show_mass_driver = source_is_colony
+                            && source_airless
+                            && source_has_driver
+                            && state.cached_has_probe_core;
+
+                        if show_mass_driver {
+                            section_heading(ui, "Mass Driver Launch");
+
+                            ui.checkbox(
+                                &mut state.use_mass_driver,
+                                "Use mass driver for departure",
+                            );
+
+                            if state.use_mass_driver {
+                                // Collect available driver tiers at source colony
+                                let available_tiers: Vec<BuildingType> = state
+                                    .source_body
+                                    .and_then(|idx| colony_manager.get_by_body(idx))
+                                    .map(|colony| {
+                                        let mut tiers = Vec::new();
+                                        for b in &colony.buildings {
+                                            if b.operational
+                                                && b.building_type.is_mass_driver()
+                                                && !tiers.contains(&b.building_type)
+                                            {
+                                                tiers.push(b.building_type);
+                                            }
+                                        }
+                                        // Sort by track length (ascending)
+                                        tiers.sort_by(|a, b| {
+                                            a.mass_driver_track_m()
+                                                .unwrap_or(0.0)
+                                                .partial_cmp(
+                                                    &b.mass_driver_track_m().unwrap_or(0.0),
+                                                )
+                                                .unwrap()
+                                        });
+                                        tiers
+                                    })
+                                    .unwrap_or_default();
+
+                                // Default to best tier if not set
+                                if state.mass_driver_tier.is_none() && !available_tiers.is_empty()
+                                {
+                                    state.mass_driver_tier = available_tiers.last().copied();
+                                }
+
+                                // Tier selector
+                                let selected_name = state
+                                    .mass_driver_tier
+                                    .map(|t| t.display_name())
+                                    .unwrap_or("Select...");
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Tier:");
+                                    egui::ComboBox::from_id_source("rcp_md_tier")
+                                        .selected_text(selected_name)
+                                        .width(200.0)
+                                        .show_ui(ui, |ui| {
+                                            for &tier in &available_tiers {
+                                                let v = tier
+                                                    .mass_driver_launch_velocity(1.0, false)
+                                                    .unwrap_or(0.0);
+                                                let label = format!(
+                                                    "{} \u{2014} {}",
+                                                    tier.display_name(),
+                                                    format_dv(v)
+                                                );
+                                                if ui
+                                                    .selectable_label(
+                                                        state.mass_driver_tier == Some(tier),
+                                                        &label,
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    state.mass_driver_tier = Some(tier);
+                                                }
+                                            }
+                                        });
+                                });
+
+                                // Show info about launch velocity and dv savings
+                                if let Some(tier) = state.mass_driver_tier {
+                                    let launch_v = tier
+                                        .mass_driver_launch_velocity(1.0, false)
+                                        .unwrap_or(0.0);
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "Launch velocity: {}",
+                                            format_dv(launch_v)
+                                        ))
+                                        .size(11.0)
+                                        .color(COLOR_GRAY),
+                                    );
+
+                                    // Show dv savings vs chemical
+                                    let chemical_leg =
+                                        crate::colony::transfer::compute_leg_delta_v(
+                                            state.source_body,
+                                            state.dest_body,
+                                            sim_time,
+                                            0.0,
+                                            solar_system,
+                                        );
+                                    if let (Some(chem), Some(md)) =
+                                        (&chemical_leg, &state.cached_leg)
+                                    {
+                                        let savings = chem.total_dv - md.total_dv;
+                                        if savings > 0.0 {
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "\u{0394}v savings: {} ({} \u{2192} {})",
+                                                    format_dv(savings),
+                                                    format_dv(chem.total_dv),
+                                                    format_dv(md.total_dv),
+                                                ))
+                                                .size(11.0)
+                                                .color(COLOR_GREEN),
+                                            );
+                                        }
+                                    }
+
+                                    // Warning if ship mass > tier max payload
+                                    if let Some(max_payload) = tier.mass_driver_max_payload_kg() {
+                                        if let Some(bp) = blueprints.get(&state.blueprint_name) {
+                                            let dry_mass = crate::colony::economy::blueprint_dry_mass_kg(bp, part_defs);
+                                            let cargo_mass: f64 =
+                                                state.cargo_items.iter().map(|(_, kg)| kg).sum();
+                                            let total_mass = dry_mass + cargo_mass;
+                                            if total_mass > max_payload {
+                                                ui.label(
+                                                    egui::RichText::new(format!(
+                                                        "WARNING: Ship mass ({:.0} kg) exceeds max payload ({:.0} kg)",
+                                                        total_mass, max_payload
+                                                    ))
+                                                    .size(11.0)
+                                                    .strong()
+                                                    .color(COLOR_RED),
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            ui.add_space(8.0);
+                        } else if !source_airless && source_is_colony && source_has_driver {
+                            // Atmospheric body with mass driver — show info
+                            ui.label(
+                                egui::RichText::new(
+                                    "Mass driver: not available (body has atmosphere)",
+                                )
+                                .size(11.0)
+                                .color(COLOR_GRAY),
+                            );
+                            ui.add_space(8.0);
+                        }
+                    }
 
                     // 8. Departure Inventory
                     section_heading(ui, "Departure Inventory");
@@ -1266,6 +1479,8 @@ pub fn render_route_creation_panel(
                                     ships_per_window: state.ships_per_window,
                                     alert_reason: None,
                                     auto_build_ships: state.auto_build_ships,
+                                    use_mass_driver: state.use_mass_driver,
+                                    mass_driver_tier: state.mass_driver_tier,
                                 };
 
                                 if state.editing_route_id.is_some() {
@@ -1384,6 +1599,12 @@ pub fn render_colony_trade_section(
                                 let loc =
                                     body_name_or_earth(ship.location, body_names, earth_index);
                                 format!("Ship: {} (stationed at {})", ship.name, loc)
+                            }
+                            TradeShipState::WaitingForMassDriver => {
+                                format!(
+                                    "Ship: {} (queued at mass driver)",
+                                    ship.name,
+                                )
                             }
                             TradeShipState::InTransit => {
                                 format!(

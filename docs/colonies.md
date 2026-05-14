@@ -113,7 +113,7 @@ Shows which raw resources can be extracted by Mine or Atmospheric Collector on e
 
 Examples: Earth (100) = 1.0× base cost. Mars (30) = 1.7× base cost. Moon (15) = 1.85× base cost. Mercury (8) = 1.92× base cost. Ship/space station (0) = 2.0× base cost.
 
-**Affects Habitats and Greenhouses ONLY** — resource costs, power draw, AND maintenance all scale by this multiplier. Automated industrial infrastructure (Mines, Factories, Solar Farms, Construction Robots, Particle Accelerators, Railguns, Launchpads) uses base costs — these systems don't require the radiation shielding and life support that drives the multiplier.
+**Affects Habitats and Greenhouses ONLY** — resource costs, power draw, AND maintenance all scale by this multiplier. Automated industrial infrastructure (Mines, Factories, Solar Farms, Construction Robots, Particle Accelerators, Mass Drivers, Launchpads) uses base costs — these systems don't require the radiation shielding and life support that drives the multiplier.
 
 | Body | Score | Avg Temp (K) | Radiation | Atmosphere | Notes |
 |------|------:|-------------:|-----------|------------|-------|
@@ -303,15 +303,19 @@ Enables rocket launches from the colony. Required to send ships off-world.
 | Build cost | 30,000 kg Metal, 5,000 kg HTA, 5,000 kg Elec |
 | Maintenance / 30 days | 125 kg Metal, 25 kg HTA |
 
-### Railgun
-Electromagnetic launch system. No-atmosphere bodies only (Moon, Mercury, Phobos, Deimos, asteroids). Launches cargo to orbit using electrical power instead of fuel. **Cargo only — cannot launch crew** (acceleration forces exceed human tolerance).
+### Mass Driver (Mk I–IV)
+Electromagnetic coilgun launch system. Airless bodies only (Moon, Mercury, Phobos, Deimos, asteroids). Launches uncrewed blueprint ships (1,000g) and Dyson swarm mirror segments (10,000g) using electrical power.
 
-| Stat | Value |
-|------|-------|
-| Payload capacity | 10,000 kg cargo to low orbit per launch (no crew) |
-| Power draw | 10 MW (constant — capacitor recharging) |
-| Build cost | 200,000 kg Metal, 40,000 kg HTA, 60,000 kg Elec, 40,000 kg Super |
-| Maintenance / 30 days | 500 kg Metal, 125 kg HTA, 125 kg Super |
+| Stat | Mk I | Mk II | Mk III | Mk IV |
+|------|------|-------|--------|-------|
+| Track length | 2 km | 10 km | 50 km | 200 km |
+| Max payload | 10 t | 50 t | 200 t | 200 t |
+| Ship max v | 6.3 km/s | 14 km/s | 31 km/s | 63 km/s |
+| Mirror max v | 19.8 km/s | 44 km/s | 99 km/s | 198 km/s |
+| Power draw | 10 MW | 100 MW | 1 GW | 100 GW |
+| Tech era | 4 | 6 | 8 | 9 |
+
+See `openspec/specs/game/colony/mass_driver/spec.md` for full details.
 
 ### Light Construction Robot
 A single remotely operated construction drone for small or early-stage colonies. Lower throughput than a full Construction Robot fleet, but much cheaper to build and ship. Ideal for initial colony bootstrapping.
@@ -1542,7 +1546,7 @@ Gecko, Tank 1×1, Tank 1×2, Tank 1×4, Tank 1×8, Tiny Probe Core, NC-1 Nose Co
 
 **4.2 Deep Space Habitation** — 2,500 sci — Prereqs: [3.8]
 - XL Inline Ctrl, Large Quarters, SP-24, Battery Z-9, Battery Z-13, Large Cargo, Large Greenhouse (ship)
-- Buildings: Advanced Greenhouse, Railgun, Large Solar Farm
+- Buildings: Advanced Greenhouse, Mass Driver Mk I, Large Solar Farm
 
 **4.3 Science Laboratory** — 1,500 sci — Prereqs: [2.6]
 - Buildings: Science Lab
