@@ -1330,7 +1330,7 @@ pub fn render_editor_ui(
                                     action = EditorAction::ExportBlueprint(name.to_string());
                                 }
                                 if ui.small_button("🗑").on_hover_text("Delete").clicked() {
-                                    action = EditorAction::DeleteBlueprint(name.to_string());
+                                    editor.confirm_delete_blueprint = Some(name.to_string());
                                 }
                             });
                         }
@@ -1339,8 +1339,42 @@ pub fn render_editor_ui(
 
                 if ui.button("Cancel").clicked() {
                     editor.show_load_dialog = false;
+                    editor.confirm_delete_blueprint = None;
                 }
             });
+
+        // Delete confirmation overlay — sits on top of the load dialog so
+        // the user has to acknowledge before the blueprint is removed.
+        if let Some(delete_name) = editor.confirm_delete_blueprint.clone() {
+            let confirm_label = format!("Delete \"{}\"?", delete_name);
+            egui::Area::new(egui::Id::new("delete_blueprint_confirm_overlay"))
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 220))
+                        .inner_margin(egui::Margin::same(20.0))
+                        .rounding(egui::Rounding::same(6.0))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.label(egui::RichText::new(&confirm_label).size(18.0).color(egui::Color32::WHITE));
+                                ui.add_space(4.0);
+                                ui.label(egui::RichText::new("This cannot be undone.").size(13.0).color(egui::Color32::from_rgb(200, 150, 150)));
+                                ui.add_space(12.0);
+                                ui.horizontal(|ui| {
+                                    if ui.button(egui::RichText::new("Delete").color(egui::Color32::from_rgb(220, 80, 80))).clicked() {
+                                        action = EditorAction::DeleteBlueprint(delete_name.clone());
+                                        editor.confirm_delete_blueprint = None;
+                                    }
+                                    ui.add_space(8.0);
+                                    if ui.button("Cancel").clicked() {
+                                        editor.confirm_delete_blueprint = None;
+                                    }
+                                });
+                            });
+                        });
+                });
+        }
     }
 
     // Alert message overlay (shown temporarily after errors)

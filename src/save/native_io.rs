@@ -5,19 +5,31 @@
 //!
 //! Uses `rfd`'s synchronous API. The dialog blocks the calling thread —
 //! acceptable since the egui frame is already paused while the dialog is up.
+//!
+//! Every entry point takes the winit window so the dialog can be parented
+//! to it. Without that, macOS opens the panel without ownership and it can
+//! end up behind the game window in non-fullscreen mode.
 
 #![cfg(not(target_arch = "wasm32"))]
 
 use std::fs;
+
+use winit::window::Window;
 
 use super::paths;
 use super::{sanitize_save_name, SaveGame};
 use crate::parts::VesselBlueprint;
 use crate::parts::registry::sanitize_filename as blueprint_filename;
 
-/// Show a save-file dialog and write `<save_id>.ron` to whatever location
-/// the user picks. Default filename is `<save_id>.ron`.
-pub fn export_save(save_id: &str) {
+/// Build a `rfd::FileDialog` already parented to `window`. Centralizes the
+/// set_parent dance so every entry point gets correct dialog ownership.
+fn dialog(window: &Window) -> rfd::FileDialog {
+    rfd::FileDialog::new().set_parent(window)
+}
+
+/// Show a save-file dialog and write the save's RON content to whatever
+/// location the user picks. Default filename is `<save_id>.ron`.
+pub fn export_save(window: &Window, save_id: &str) {
     let save_path = paths::saves_dir().join(save_id).join("save.ron");
     let content = match fs::read_to_string(&save_path) {
         Ok(c) => c,
@@ -26,7 +38,7 @@ pub fn export_save(save_id: &str) {
             return;
         }
     };
-    let Some(target) = rfd::FileDialog::new()
+    let Some(target) = dialog(window)
         .set_file_name(format!("{}.ron", save_id))
         .add_filter("Sunscatter save", &["ron"])
         .save_file()
@@ -44,8 +56,8 @@ pub fn export_save(save_id: &str) {
 /// Show an open-file dialog, parse the chosen `.ron` as a `SaveGame`, and
 /// install it under the platform saves dir as `<save_id>/save.ron`. The
 /// save_id is derived from the save's stored `name` (not the source filename).
-pub fn import_save() {
-    let Some(source) = rfd::FileDialog::new()
+pub fn import_save(window: &Window) {
+    let Some(source) = dialog(window)
         .add_filter("Sunscatter save", &["ron"])
         .pick_file()
     else {
@@ -87,7 +99,7 @@ pub fn import_save() {
 
 /// Save-as for a single blueprint. Reads from the platform blueprints dir;
 /// writes wherever the user picks.
-pub fn export_blueprint(name: &str) {
+pub fn export_blueprint(window: &Window, name: &str) {
     let stem = blueprint_filename(name);
     let source = paths::blueprints_dir().join(format!("{}.ron", stem));
     let content = match fs::read_to_string(&source) {
@@ -97,7 +109,7 @@ pub fn export_blueprint(name: &str) {
             return;
         }
     };
-    let Some(target) = rfd::FileDialog::new()
+    let Some(target) = dialog(window)
         .set_file_name(format!("{}.ron", stem))
         .add_filter("Sunscatter blueprint", &["ron"])
         .save_file()
@@ -116,8 +128,8 @@ pub fn export_blueprint(name: &str) {
 /// destination filename comes from the blueprint's stored `name`, not the
 /// source filename. The blueprint registry refreshes from disk on the next
 /// frame the palette is open, so the new entry appears in the UI.
-pub fn import_blueprint() {
-    let Some(source) = rfd::FileDialog::new()
+pub fn import_blueprint(window: &Window) {
+    let Some(source) = dialog(window)
         .add_filter("Sunscatter blueprint", &["ron"])
         .pick_file()
     else {
@@ -151,4 +163,3 @@ pub fn import_blueprint() {
     }
     log::info!("Imported blueprint '{}' to {:?}", parsed.name, dest);
 }
-

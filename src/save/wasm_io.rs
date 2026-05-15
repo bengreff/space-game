@@ -15,10 +15,14 @@ use super::{sanitize_save_name, wasm_storage, SaveGame};
 use crate::parts::VesselBlueprint;
 use crate::parts::registry::sanitize_filename as blueprint_filename;
 
+// The `_window` parameter is unused on wasm — the browser owns dialog
+// chrome — but is kept for signature parity with the native backend so
+// call sites don't have to cfg-gate around each invocation.
+
 /// Trigger a browser download of the save with id `save_id` as
 /// `<save_id>.ron`. Pulls content from the in-memory cache populated by
 /// `wasm_storage`.
-pub fn export_save(save_id: &str) {
+pub fn export_save(_window: &winit::window::Window, save_id: &str) {
     let Some(content) = wasm_storage::load_save_content(save_id) else {
         log::warn!("export_save: no save with id '{}'", save_id);
         return;
@@ -35,7 +39,7 @@ pub fn export_save(save_id: &str) {
 /// it via `wasm_storage`. Asynchronous; returns immediately. The egui save
 /// list is refreshed every frame so the imported save appears in the UI
 /// once the IDB write completes.
-pub fn import_save() {
+pub fn import_save(_window: &winit::window::Window) {
     spawn_local(async move {
         match pick_and_read().await {
             Ok(content) => {
@@ -70,7 +74,7 @@ fn ingest(content: &str) -> Result<(), String> {
 
 /// Trigger a browser download of the blueprint with this stored `name` as
 /// `<sanitized_name>.ron`. Pulls content from the in-memory IndexedDB cache.
-pub fn export_blueprint(name: &str) {
+pub fn export_blueprint(_window: &winit::window::Window, name: &str) {
     let Some(content) = wasm_storage::load_blueprint_content(name) else {
         log::warn!("export_blueprint: no blueprint named '{}'", name);
         return;
@@ -86,7 +90,7 @@ pub fn export_blueprint(name: &str) {
 /// File picker → parse → write to IndexedDB. The blueprint registry's
 /// `load_all()` reads from the IDB cache, so the next refresh (driven by
 /// the editor's blueprint palette) picks up the new entry.
-pub fn import_blueprint() {
+pub fn import_blueprint(_window: &winit::window::Window) {
     spawn_local(async move {
         match pick_and_read().await {
             Ok(content) => {

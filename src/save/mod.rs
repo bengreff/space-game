@@ -22,6 +22,8 @@ pub mod wasm_io;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod paths;
 
+pub mod test_fixture;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native_io;
 
@@ -372,9 +374,16 @@ impl SaveGame {
         Ok(save)
     }
 
-    /// Load a save game by id. On desktop reads `data/saves/{save_id}/save.ron`
+    /// Load a save game by id. On desktop reads `<saves_dir>/{save_id}/save.ron`
     /// (with legacy flat-file fallback); on wasm reads from IndexedDB.
+    ///
+    /// The synthetic ID `test_fixture::FIXTURE_ID` short-circuits both paths
+    /// and returns a freshly-built fixture save.
     pub fn load_from_file(save_id: &str) -> Result<Self, String> {
+        if save_id == test_fixture::FIXTURE_ID {
+            return Ok(test_fixture::build());
+        }
+
         #[cfg(target_arch = "wasm32")]
         let content = wasm_storage::load_save_content(save_id)
             .ok_or_else(|| format!("Save '{}' not found", save_id))?;
@@ -440,10 +449,15 @@ impl SaveGame {
     }
 
     /// List all save files. Desktop scans the saves directory; wasm reads
-    /// the IndexedDB-backed in-memory cache.
+    /// the IndexedDB-backed in-memory cache. The synthetic dev fixture
+    /// (`test_fixture`) is always prepended.
     pub fn list_saves() -> Vec<SaveFileInfo> {
         #[cfg(target_arch = "wasm32")]
-        return wasm_storage::list_saves();
+        {
+            let mut out = vec![test_fixture::fixture_info()];
+            out.extend(wasm_storage::list_saves());
+            return out;
+        }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -545,7 +559,10 @@ impl SaveGame {
 
         // Sort by modification time, most recent first
         saves.sort_by(|a, b| b.modified.cmp(&a.modified));
-        saves
+        // Always prepend the dev fixture so it sits at the top of the list.
+        let mut out = vec![test_fixture::fixture_info()];
+        out.extend(saves);
+        out
         }  // end #[cfg(not(target_arch = "wasm32"))]
     }
 

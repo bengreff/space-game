@@ -349,15 +349,26 @@ pub fn render_title_screen_frame(
                                 } else {
                                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                                         for save in save_list {
-                                            let label = format!(
-                                                "{} \u{2014} {} vessels \u{2014} {}",
-                                                save.name,
-                                                save.vessel_count,
-                                                crate::game::format_date(save.simulation_time),
-                                            );
+                                            let is_fixture = save.save_id == crate::save::test_fixture::FIXTURE_ID;
+                                            let label = if is_fixture {
+                                                format!("{} \u{2014} dev fixture", save.name)
+                                            } else {
+                                                format!(
+                                                    "{} \u{2014} {} vessels \u{2014} {}",
+                                                    save.name,
+                                                    save.vessel_count,
+                                                    crate::game::format_date(save.simulation_time),
+                                                )
+                                            };
                                             ui.horizontal(|ui| {
                                                 let total_width = ui.available_width();
-                                                let row_button_width = total_width - 56.0;
+                                                // No export/delete buttons on the fixture row, so it
+                                                // gets the full-width load button.
+                                                let row_button_width = if is_fixture {
+                                                    total_width
+                                                } else {
+                                                    total_width - 56.0
+                                                };
                                                 let button_resp = ui.add_sized(
                                                     [row_button_width, 0.0],
                                                     egui::Button::new(egui::RichText::new(&label).size(16.0)),
@@ -365,24 +376,26 @@ pub fn render_title_screen_frame(
                                                 if button_resp.clicked() {
                                                     action = TitleScreenAction::LoadGame(save.save_id.clone());
                                                 }
-                                                let export_btn = ui.small_button(
-                                                    egui::RichText::new("\u{2913}")
-                                                        .size(16.0)
-                                                        .color(egui::Color32::from_rgb(120, 180, 220)),
-                                                );
-                                                if export_btn.clicked() {
-                                                    action = TitleScreenAction::ExportSave(save.save_id.clone());
+                                                if !is_fixture {
+                                                    let export_btn = ui.small_button(
+                                                        egui::RichText::new("\u{2913}")
+                                                            .size(16.0)
+                                                            .color(egui::Color32::from_rgb(120, 180, 220)),
+                                                    );
+                                                    if export_btn.clicked() {
+                                                        action = TitleScreenAction::ExportSave(save.save_id.clone());
+                                                    }
+                                                    export_btn.on_hover_text("Export save as .ron");
+                                                    let delete_btn = ui.small_button(
+                                                        egui::RichText::new("\u{00d7}")
+                                                            .size(16.0)
+                                                            .color(egui::Color32::from_rgb(180, 80, 80)),
+                                                    );
+                                                    if delete_btn.clicked() {
+                                                        confirm_delete = Some(save.save_id.clone());
+                                                    }
+                                                    delete_btn.on_hover_text("Delete save");
                                                 }
-                                                export_btn.on_hover_text("Export save as .ron");
-                                                let delete_btn = ui.small_button(
-                                                    egui::RichText::new("\u{00d7}")
-                                                        .size(16.0)
-                                                        .color(egui::Color32::from_rgb(180, 80, 80)),
-                                                );
-                                                if delete_btn.clicked() {
-                                                    confirm_delete = Some(save.save_id.clone());
-                                                }
-                                                delete_btn.on_hover_text("Delete save");
                                             });
                                         }
                                     });
@@ -494,10 +507,10 @@ pub fn render_title_screen_frame(
                     return;
                 }
                 TitleScreenAction::ImportSave => {
-                    crate::save::io::import_save();
+                    crate::save::io::import_save(&render_state.window);
                 }
                 TitleScreenAction::ExportSave(save_id) => {
-                    crate::save::io::export_save(save_id);
+                    crate::save::io::export_save(&render_state.window, save_id);
                 }
                 TitleScreenAction::QuitGame => {
                     elwt.exit();
@@ -1614,7 +1627,7 @@ pub fn render_editor_frame(
             }
         }
         EditorAction::ImportBlueprint => {
-            crate::save::io::import_blueprint();
+            crate::save::io::import_blueprint(&render_state.window);
             // Refresh the in-memory registry so the imported blueprint appears
             // in the palette. Native: blocks on rfd, registry is up-to-date.
             // Wasm: spawn_local writes to IDB async; load_all reads from the
@@ -1624,7 +1637,7 @@ pub fn render_editor_frame(
             }
         }
         EditorAction::ExportBlueprint(name) => {
-            crate::save::io::export_blueprint(&name);
+            crate::save::io::export_blueprint(&render_state.window, &name);
         }
         EditorAction::NewVessel => {
             game.new_vessel();

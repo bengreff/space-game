@@ -112,6 +112,8 @@ pub struct EditorState {
     pub vessel_name: String,
     pub show_save_dialog: bool,
     pub show_load_dialog: bool,
+    /// Blueprint name awaiting delete confirmation (None = no dialog shown).
+    pub confirm_delete_blueprint: Option<String>,
     pub hovered_part: Option<PlacedPartId>,
     pub part_to_delete: Option<PlacedPartId>,
 
@@ -165,6 +167,7 @@ impl EditorState {
             vessel_name: "Untitled Vessel".to_string(),
             show_save_dialog: false,
             show_load_dialog: false,
+            confirm_delete_blueprint: None,
             hovered_part: None,
             part_to_delete: None,
             dragging_part: None,
