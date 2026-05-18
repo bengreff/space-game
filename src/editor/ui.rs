@@ -103,13 +103,19 @@ fn format_delta_v(dv: f64) -> String {
 /// Reusable across editor info panel and tech tree detail panel.
 /// `id_prefix` is used to disambiguate egui indent IDs across call sites.
 pub fn render_part_info(ui: &mut egui::Ui, def: &crate::parts::PartDefinition, id_prefix: &str) {
+    use crate::colony::economy::{material_breakdown_lines, part_dry_earth_cost};
+    use crate::colony::format_money;
+
     ui.heading(&def.name);
     ui.label(&def.description);
 
     ui.separator();
     ui.label(format!("Size: {}", def.size.display_name()));
     ui.label(format!("Mass: {:.3} t ({:.0} kg)", def.mass, def.mass * 1000.0));
-    ui.label(format!("Cost: ${}", def.cost));
+    ui.label(format!("Cost: {}", format_money(part_dry_earth_cost(def))));
+    for line in material_breakdown_lines(def) {
+        ui.label(line);
+    }
     ui.label(format!("Dimensions: {}x{} grid", def.grid_width, def.grid_height));
 
     // Engine info
@@ -171,16 +177,22 @@ pub fn render_part_info(ui: &mut egui::Ui, def: &crate::parts::PartDefinition, i
         ui.label(format!("Dry Mass: {:.0} kg", def.mass * 1000.0));
 
         ui.separator();
-        ui.label("Propellant Capacity:");
 
-        let (ox, fuel) = tank.propellant_capacity(FuelType::Rp1);
-        ui.label(format!("  RP-1: {}", format_mass(ox + fuel)));
-
-        let (ox, fuel) = tank.propellant_capacity(FuelType::Methane);
-        ui.label(format!("  CH4: {}", format_mass(ox + fuel)));
-
-        let (ox, fuel) = tank.propellant_capacity(FuelType::Hydrogen);
-        ui.label(format!("  LH2: {}", format_mass(ox + fuel)));
+        if let Some(locked) = tank.fixed_fuel_type {
+            // Specialized tank: show capacity for its locked fuel only.
+            let (ox, fuel) = tank.propellant_capacity(locked);
+            ui.label(format!("Fuel: {} (locked)", locked.display_name()));
+            ui.label(format!("Capacity: {}", format_mass(ox + fuel)));
+        } else {
+            // Standard tank: show capacities for the three common chemical propellants.
+            ui.label("Propellant Capacity:");
+            let (ox, fuel) = tank.propellant_capacity(FuelType::Rp1);
+            ui.label(format!("  RP-1: {}", format_mass(ox + fuel)));
+            let (ox, fuel) = tank.propellant_capacity(FuelType::Methane);
+            ui.label(format!("  CH4: {}", format_mass(ox + fuel)));
+            let (ox, fuel) = tank.propellant_capacity(FuelType::Hydrogen);
+            ui.label(format!("  LH2: {}", format_mass(ox + fuel)));
+        }
     }
 
     // Pod info
@@ -723,13 +735,33 @@ pub fn render_editor_ui(
                 else if let Some(part_id) = editor.selected_placed_part {
                     if let Some(part) = editor.parts.get(&part_id).cloned() {
                         if let Some(def) = part_defs.get(&part.definition_id) {
+                            use crate::colony::economy::{
+                                fuel_blended_cost_per_kg, material_breakdown_lines,
+                                part_dry_earth_cost, part_filled_fuel_cost,
+                            };
+                            use crate::colony::format_money;
+
                             ui.heading(&def.name);
                             ui.label(&def.description);
 
                             ui.separator();
                             ui.label(format!("Size: {}", def.size.display_name()));
                             ui.label(format!("Mass: {:.3} t ({:.0} kg)", def.mass, def.mass * 1000.0));
-                            ui.label(format!("Cost: ${}", def.cost));
+                            let dry_cost = part_dry_earth_cost(def);
+                            let fuel_cost = part_filled_fuel_cost(def, part.fuel_type, part.fill_fraction);
+                            if fuel_cost > 0.0 {
+                                let unit = fuel_blended_cost_per_kg(part.fuel_type);
+                                ui.label(format!("Cost: {} (dry {} + fuel {} @ ${:.2}/kg)",
+                                    format_money(dry_cost + fuel_cost),
+                                    format_money(dry_cost),
+                                    format_money(fuel_cost),
+                                    unit));
+                            } else {
+                                ui.label(format!("Cost: {}", format_money(dry_cost)));
+                            }
+                            for line in material_breakdown_lines(def) {
+                                ui.label(line);
+                            }
                             ui.label(format!("Dimensions: {}x{} grid", def.grid_width, def.grid_height));
 
                             // Engine info
@@ -791,30 +823,60 @@ pub fn render_editor_ui(
                                 ui.label(format!("Dry Mass: {:.0} kg", def.mass * 1000.0));
 
                                 ui.separator();
-                                ui.label("Fuel Type:");
 
                                 let mirror_id = part.mirror_partner;
 
-                                // Fuel type selector buttons
-                                ui.horizontal_wrapped(|ui| {
-                                    for fuel_type in FuelType::all() {
-                                        let selected = part.fuel_type == *fuel_type;
-                                        if ui.selectable_label(selected, fuel_type.display_name()).clicked() {
-                                            let new_fill = if *fuel_type != FuelType::Empty { 1.0 } else { 0.0 };
-                                            if let Some(p) = editor.parts.get_mut(&part_id) {
-                                                p.fuel_type = *fuel_type;
-                                                p.fill_fraction = new_fill;
+                                if let Some(locked) = tank.fixed_fuel_type {
+                                    // Specialized tank: fuel type is locked; no selector shown.
+                                    let unit = crate::colony::economy::fuel_blended_cost_per_kg(locked);
+                                    let price_str = if unit > 0.0 {
+                                        format!(" — ${:.2}/kg", unit)
+                                    } else {
+                                        String::new()
+                                    };
+                                    ui.label(format!("Fuel Type: {} (locked){}",
+                                        locked.display_name(), price_str));
+                                } else {
+                                    ui.label("Fuel Type:");
+
+                                    // Fuel type selector buttons — standard tanks only.
+                                    // Specialized fuels (Xenon, Antimatter, Pulse Units) are excluded;
+                                    // they require dedicated tank parts.
+                                    ui.horizontal_wrapped(|ui| {
+                                        for fuel_type in FuelType::all() {
+                                            if !fuel_type.is_standard_tank_compatible() {
+                                                continue;
                                             }
-                                            // Apply to mirror partner
-                                            if let Some(mid) = mirror_id {
-                                                if let Some(mp) = editor.parts.get_mut(&mid) {
-                                                    mp.fuel_type = *fuel_type;
-                                                    mp.fill_fraction = new_fill;
+                                            let selected = part.fuel_type == *fuel_type;
+                                            let unit = crate::colony::economy::fuel_blended_cost_per_kg(*fuel_type);
+                                            let label = if *fuel_type == FuelType::Empty || unit == 0.0 {
+                                                fuel_type.display_name().to_string()
+                                            } else if unit < 0.1 {
+                                                format!("{} (${:.2}/kg)", fuel_type.display_name(), unit)
+                                            } else if unit < 100.0 {
+                                                format!("{} (${:.2}/kg)", fuel_type.display_name(), unit)
+                                            } else {
+                                                format!("{} ({}/kg)",
+                                                    fuel_type.display_name(),
+                                                    crate::colony::format_money(unit))
+                                            };
+                                            if ui.selectable_label(selected, label).clicked() {
+                                                let new_fill = if *fuel_type != FuelType::Empty { 1.0 } else { 0.0 };
+                                                if let Some(p) = editor.parts.get_mut(&part_id) {
+                                                    p.fuel_type = *fuel_type;
+                                                    p.fill_fraction = new_fill;
+                                                }
+                                                // Apply to mirror partner
+                                                if let Some(mid) = mirror_id {
+                                                    if let Some(mp) = editor.parts.get_mut(&mid) {
+                                                        mp.fuel_type = *fuel_type;
+                                                        mp.fill_fraction = new_fill;
+                                                    }
                                                 }
                                             }
                                         }
-                                    }
-                                });
+                                    });
+                                }
 
                                 // Draggable fuel bars (only if fuel type selected)
                                 if part.fuel_type != FuelType::Empty {

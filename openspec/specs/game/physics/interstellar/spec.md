@@ -35,9 +35,22 @@ Interstellar engine sprites SHALL be included in the sprite atlas (not excluded)
 
 Fuel resource names: `fusion_fuel`, `antimatter`, `nuclear_pulse`.
 
+### Requirement: Standard-tank fuel compatibility
+
+`FuelType::is_standard_tank_compatible(self)` SHALL return `true` for Empty, RP-1, Methane, Hydrogen (hydrolox), Monopropellant, PureHydrogen (LH2), and FusionFuel; and `false` for Xenon, Antimatter, and NuclearPulse. The editor SHALL use this method to filter the fuel-type selector for tanks without a `fixed_fuel_type`. Standard rectangular tanks can therefore hold any of the seven compatible fuels (e.g. D+He3 may be loaded into a kerolox tank), but specialized fuels are reserved for their dedicated tank parts.
+
+### Requirement: Locked-fuel tanks
+
+`TankData` SHALL include an optional `fixed_fuel_type: Option<FuelType>` field (serde-defaulting to `None`). When `Some(ft)`:
+- The editor fuel-type selector SHALL be replaced by a "Fuel Type: {ft} (locked)" label.
+- On placement, `PlacedPart::fuel_type` SHALL be initialized to `ft` and `fill_fraction` to `1.0`.
+- The palette tank-info panel SHALL show capacity for `ft` only, not the generic RP-1/CH4/LH2 trio.
+
+Xenon, Antimatter, and Pulse-Unit tanks SHALL set `fixed_fuel_type`; standard fuel tanks and fusion spheres SHALL leave it `None`.
+
 ### Requirement: Fusion fuel in standard tanks
 
-`FuelType::all()` SHALL include `FusionFuel`, making D+He3 selectable in the editor fuel type picker for standard fuel tanks.
+D+He3 (`FuelType::FusionFuel`) is standard-tank-compatible and may be selected in any non-locked tank. Standard rectangular tanks lack the cryogenic insulation modeled in the fusion sphere structural density and carry far less `grid_area` per part, so they are usable in early fusion stages but cannot match the bulk capacity of XL fusion spheres.
 
 ### Requirement: Pure hydrogen tank capacity
 
@@ -45,7 +58,19 @@ Fuel resource names: `fusion_fuel`, `antimatter`, `nuclear_pulse`.
 
 ### Requirement: ReactorData
 
-`PartDefinition` SHALL support `reactor: Option<ReactorData>`. `ReactorData { output_watts: f64 }` defines constant power output in Watts. Reactors generate power using the same pattern as RTGs — constant output, no fuel consumption.
+`PartDefinition` SHALL support `reactor: Option<ReactorData>`. `ReactorData { output_watts: f64, fuel: Option<ReactorFuelData> }` defines constant power output in Watts. By default reactors generate continuously like RTGs — `fuel: None` means constant output with no fuel consumption (fission and fusion reactors).
+
+### Requirement: Fuel-consuming reactors (ReactorFuelData)
+
+`ReactorData::fuel` MAY be `Some(ReactorFuelData)`, in which case the reactor produces no power on any tick where its fuel reserves are insufficient. `ReactorFuelData` contains:
+- `primary: FuelType` — primary fuel resource consumed
+- `secondary: Option<FuelType>` — optional second fuel (for matter+antimatter mixes)
+- `secondary_fraction: f64` — fraction of total mass flow that is the secondary fuel (0.0–1.0)
+- `total_kg_s: f64` — total combined mass flow while running
+
+In `FlightVessel::update_power`, fuel-consuming reactors are processed in a first phase before all other generation/consumption. The runtime calls `try_consume_reactor_fuel(fuel_data, dt)` which atomically checks both fuels' availability across the whole vessel; if either is insufficient the reactor produces no power that tick and **no fuel is drained**. If both are available, the reactor drains them proportionally across all non-destroyed, non-decoupled parts and adds `output_watts` to the generation pool.
+
+Antimatter reactors (`reactor_am_small`, `reactor_am_large`) SHALL set `fuel.primary = Antimatter`, `fuel.secondary = Some(PureHydrogen)`, `fuel.secondary_fraction = 0.5` — they consume antimatter and LH2 in equal mass. Total mass-flow rates approximate published antimatter-reactor figures: 0.0000209 kg/s for the Penning (small) and 0.0000656 kg/s for the Ixion (large), corresponding to roughly 75 g/hr and 236 g/hr of combined reactant.
 
 ### Requirement: ShieldData
 
@@ -57,6 +82,21 @@ Fuel resource names: `fusion_fuel`, `antimatter`, `nuclear_pulse`.
 ## Interstellar Engines
 
 All interstellar engines are vacuum-only (`thrust_asl: 0`, `isp_asl: 0`), `shape: Trapezoid`, `category: Interstellar`, `size: XL`.
+
+### Requirement: No gimbal on interstellar engines
+
+Every engine in the Interstellar category SHALL have `gimbal_range: 0.0`. Interstellar-scale propulsion (Orion pulse, fusion drives, antimatter drives) is too physically constrained — by pusher-plate geometry, magnetic-nozzle alignment, or annihilation-chamber rigidity — to vector thrust. Vessels using these engines steer via RCS only. Verified by a unit test that iterates every Interstellar-category part with an `engine` and asserts `gimbal_range == 0.0`.
+
+### Requirement: Antimatter engines consume antimatter + LH2 in equal mass
+
+`Antimatter Torch` (`engine_am_torch`) and `Gamma Converter` (`engine_gamma_conversion`) SHALL set:
+- `propellant: Antimatter`
+- `secondary_propellant: Some(Hydrogen)` (pure LH2)
+- `secondary_fuel_fraction: 0.5`
+
+Both engines therefore consume an equal mass of antimatter and LH2 every tick. (`Propellant::Hydrogen` maps to `FuelType::PureHydrogen`, which shares the `"hydrogen"` resource name with the hydrolox `FuelType::Hydrogen`, so the engines draw from any LH2-bearing tank in their fuel zone — pure LH2 or hydrolox.) The existing `EngineData::secondary_propellant` mechanism handles consumption end-to-end; no new runtime code is required.
+
+`AM-Cat Fusion` (`engine_amcat_fusion`) keeps its existing FusionFuel + Antimatter (0.24%) configuration — it uses antimatter as a catalyst, not a reactant.
 
 ### Nuclear Pulse (Tier 1 — Fission)
 
@@ -78,8 +118,8 @@ All interstellar engines are vacuum-only (`thrust_asl: 0`, `isp_asl: 0`), `shape
 | ID | Name | Grid | Mass (t) | Thrust (kN) | Isp (s) | Propellant |
 |----|------|------|----------|-------------|---------|------------|
 | engine_amcat_fusion | AM-Cat Fusion | 22x16 | 2000 | 4,000 | 3,059,148 | FusionFuel + Antimatter (0.24%) |
-| engine_am_torch | Antimatter Torch | 8x12 | 800 | 2,000 | 15,295,740 | Antimatter |
-| engine_gamma_conversion | Gamma Converter | 34x26 | 1800 | 1,300 | 26,002,758 | Antimatter |
+| engine_am_torch | Antimatter Torch | 8x12 | 800 | 2,000 | 15,295,740 | Antimatter + LH2 (50/50) |
+| engine_gamma_conversion | Gamma Converter | 34x26 | 1800 | 1,300 | 26,002,758 | Antimatter + LH2 (50/50) |
 
 ## Interstellar Reactors
 
@@ -118,6 +158,65 @@ All shields are `category: Interstellar`, `shape: Rectangle`. Three types across
 | shield_geodesic_small | Large | 9x9 | 800 | 4 GW |
 | shield_geodesic_medium | XL | 13x11 | 2000 | 8 GW |
 | shield_geodesic_large | XL | 17x13 | 6000 | 16 GW |
+
+## Specialized Fuel Tanks
+
+Three specialized tank families lock to a single fuel via `TankData::fixed_fuel_type`. They share the same Tiny / Small / Medium / Large dimensions as the existing Xenon tanks: 1x1, 3x1, 5x1, 9x1 grid with `grid_area` values 0.4 / 2.3 / 5.0 / 12.1. Mass varies by family to reflect containment requirements. All three families use `category: FuelTanks` (alongside Xenon tanks and standard chemical tanks) — they appear in the editor's Fuel Tanks palette tab under their respective size sub-groupings, NOT in the Interstellar tab.
+
+The previously-existing LH2-specific tanks (`tank_h2_*`) were removed; PureHydrogen is now stored in standard tanks via the fuel-type selector. Stale `LH2-T`, `LH2-S`, `LH2-M`, `LH2-L` references were removed from the tech tree.
+
+### Xenon Tanks (`category: FuelTanks`, locked to Xenon)
+
+Supercritical xenon storage for ion / Hall / MPD propulsion. Structural density 28.1 kg/m³.
+
+| ID | Name | Size | Mass (t) | Xenon Capacity |
+|----|------|------|----------|----------------|
+| tank_xe_tiny | Xe-1 | Tiny (1x1) | 0.006 | ~126 kg |
+| tank_xe_small | Xe-3 | Small (3x1) | 0.032 | ~725 kg |
+| tank_xe_medium | Xe-5 | Medium (5x1) | 0.069 | ~1,575 kg |
+| tank_xe_large | Xe-9 | Large (9x1) | 0.167 | ~3,812 kg |
+
+### Antimatter Penning Arrays (`category: FuelTanks`, locked to Antimatter)
+
+Rectangular Penning-trap arrays for proton-antiproton storage. Mass dominated by superconducting magnets, cryocoolers, and radiation-hardened vessel; structural density ~40 kg/grid-area. Capacity reflects the global Antimatter density of 5 kg per grid-area.
+
+| ID | Name | Size | Mass (t) | Antimatter Capacity |
+|----|------|------|----------|---------------------|
+| tank_am_tiny | AM-1 | Tiny (1x1) | 0.016 | ~2 kg |
+| tank_am_small | AM-3 | Small (3x1) | 0.092 | ~11.5 kg |
+| tank_am_medium | AM-5 | Medium (5x1) | 0.200 | ~25 kg |
+| tank_am_large | AM-9 | Large (9x1) | 0.484 | ~60.5 kg |
+
+### Antimatter Spheres — endgame bulk containment (`category: FuelTanks`, locked to Antimatter)
+
+Three spherical bulk-storage tanks sharing the fusion sphere silhouette (20×20, 40×40, 60×60) but built around an advanced topological-confinement field rather than a Penning-trap array. Dry mass is 2× the corresponding fusion sphere; capacity equals what the same-size fusion sphere would hold as PureHydrogen (140 kg/grid-area × fusion-sphere grid_area). Implemented by inflating `TankData::grid_area` by a factor of 28 relative to the matching fusion sphere — a containment-efficiency abstraction, since the global Antimatter density (5 kg/grid-area) stays unchanged. Unlocked by the `bulk_am_storage` tech node (prereq: `am_torch`).
+
+| ID | Name | Grid | Mass (t) | grid_area | Antimatter Capacity |
+|----|------|------|----------|-----------|---------------------|
+| tank_am_sphere_s | AM Sphere S | 20x20 | 10.388 | 18289.6 | ~91.4 t |
+| tank_am_sphere_m | AM Sphere M | 40x40 | 58.768 | 103460.0 | ~517.3 t |
+| tank_am_sphere_l | AM Sphere L | 60x60 | 161.944 | 285104.4 | ~1,425.5 t |
+
+### Pulse-Unit Magazines (`category: FuelTanks`, locked to NuclearPulse)
+
+Rectangular radiation-shielded steel magazines for Orion-style fission pulse units. Structural density ~60 kg/grid-area.
+
+| ID | Name | Size | Mass (t) | Pulse-Unit Capacity |
+|----|------|------|----------|---------------------|
+| tank_pulse_tiny | PU-1 | Tiny (1x1) | 0.024 | ~200 kg |
+| tank_pulse_small | PU-3 | Small (3x1) | 0.138 | ~1,150 kg |
+| tank_pulse_medium | PU-5 | Medium (5x1) | 0.300 | ~2,500 kg |
+| tank_pulse_large | PU-9 | Large (9x1) | 0.726 | ~6,050 kg |
+
+### Fusion Spheres (`category: FuelTanks`, not locked)
+
+Spherical cryogenic D+He3 tanks for bulk fusion-stage propellant. Structural density 16.2 kg/m³ (~95.2% fuel fraction). Geometric mean scaling: `grid_area = sqrt(d² × V_sphere / 0.491)`. Fusion spheres are NOT locked to FusionFuel — they may hold any standard-tank-compatible fuel — but their dimensions and structural density are optimized for cryogenic D+He3 storage.
+
+| ID | Name | Grid | Mass (t) | grid_area | D+He3 Capacity |
+|----|------|------|----------|-----------|----------------|
+| tank_sphere_s | Fusion Sphere S | 20x20 | 5.194 | 653.2 | ~103 t |
+| tank_sphere_m | Fusion Sphere M | 40x40 | 29.384 | 3695.0 | ~584 t |
+| tank_sphere_l | Fusion Sphere L | 60x60 | 80.972 | 10182.3 | ~1,609 t |
 
 ## Attachment Diameters
 
@@ -171,3 +270,8 @@ Note: Engine hitbox widths are set to the next odd integer above `grid_width` (f
 - `data/parts/engines_interstellar.ron` — 8 interstellar engines
 - `data/parts/reactors_interstellar.ron` — 6 interstellar reactors
 - `data/parts/shields.ron` — 9 shields (3 types × 3 sizes)
+- `data/parts/tanks_fusion.ron` — 3 fusion spheres (`category: FuelTanks`)
+- `data/parts/tanks_antimatter.ron` — 4 Penning-array antimatter tanks (Tiny/Small/Medium/Large, unlocked by `am_catalyzed`) plus 3 endgame antimatter spheres (S/M/L, unlocked by `bulk_am_storage`). All `category: FuelTanks`, locked to Antimatter.
+- `data/parts/tanks_pulse.ron` — 4 nuclear pulse magazines (Tiny/Small/Medium/Large), `category: FuelTanks`, locked to NuclearPulse, unlocked by the `nuclear_pulse` tech node
+- `data/parts/tanks_xenon.ron` — 4 xenon tanks (Tiny/Small/Medium/Large), `category: FuelTanks`, locked to Xenon (Xe-1 / Xe-3 / Xe-5+Xe-9 unlocked progressively across xenon-propulsion tech nodes)
+- `data/tech/tree.ron` — tech-tree node `unlocks_parts` reference part names (e.g. `"AM-1"`, `"PU-3"`), not IDs

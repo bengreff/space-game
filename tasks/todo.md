@@ -261,3 +261,76 @@ Each Phase B item is a natural commit boundary. Do not batch phases; commit afte
 
 - **C4, C5, C6** — Integration tests added for reactor atomicity, blueprint determinism, and independent degradation
 - **C1, C2, C3** — Remaining; low priority, opportunistic
+
+---
+
+# Parts Coverage Initiative (May 2026)
+
+Closes the functional gaps identified by the May 2026 parts audit. Six phases, each leaves the game in a working state with code + spec updated together. Workflow: direct commits per phase (no OpenSpec ceremony), playtest before commit, review before next phase. Fairings explicitly out of scope.
+
+## Phase 1 — Missing fuel storage (data only)
+
+- [ ] Verify in-editor that standard tanks already let you select `Monopropellant` and `FusionFuel` via `FuelType::all()`. If yes, no code change.
+- [ ] Tune `FuelType::propellant_per_grid_square()` so monoprop and fusion fuel in standard tanks give physically reasonable capacities. Standard-tank fusion fuel should be less efficient than the dedicated `Fusion Sphere` parts.
+- [ ] **New file** `data/parts/tanks_antimatter.ron` — 3 sizes of Penning-trap storage (Era 7). Heavy mass from magnetic confinement + cooling. Mass/capacity targets from `docs/part_ideas.md`.
+- [ ] **New file** `data/parts/tanks_pulse.ron` — 3 sizes of nuclear pulse-unit magazines (Era 5/6). Heavy steel casing, modest capacity.
+- [ ] Playtest: build & launch vessels using AM Torch + AM tank, Orion + pulse magazine.
+- [ ] Spec: update closest `openspec/specs/game/vessels/` spec to document the four new propellant storage options.
+
+## Phase 2 — Electric-engine power gating
+
+The power system already tracks generation, batteries, and pod draw (`src/parts/vessel.rs:1360`). Only the consumer side is missing for electric engines.
+
+- [ ] In `update_power`, add electric engines as consumers: when `engine_active` and `engine.power_required > 0`, add `power_required` to consumption.
+- [ ] Ignition path: refuse to fire an electric engine when `total_electricity == 0` and `generation < power_required`.
+- [ ] While firing: if batteries drain to zero and generation can't cover draw, cut the engine; HUD reason = "Power deficit".
+- [ ] HUD: power-budget bar with deficit indicator.
+- [ ] Spec: update `openspec/specs/game/vessels/propulsion/spec.md` for power gating.
+
+## Phase 3 — Shield activation + power draw
+
+- [ ] Add `shield_active: bool` to `FlightPart`; default off.
+- [ ] Part-action / right-click menu: toggle shield on/off.
+- [ ] When active, `update_power` adds `shield.power_base_watts` to consumption.
+- [ ] Auto-deactivate when batteries hit zero; user can re-arm when power returns.
+- [ ] **Deflection mechanics deferred** — shields don't yet stop debris/radiation. Documented as future work in the new spec.
+- [ ] Spec: new `openspec/specs/game/vessels/shields/spec.md` documenting activation + power model and explicitly flagging deflection as not-yet-simulated.
+
+## Phase 4 — Greenhouses + life support (slow crew loss)
+
+- [ ] Add `GreenhouseData { food_production_rate_kg_per_day, power_required_w }` to `definition.rs`; wire `greenhouse: Option<GreenhouseData>` on `PartDefinition`. The RON files already emit this shape — parsing currently silently drops it.
+- [ ] Constant `CREW_FOOD_KG_PER_DAY = 1.5`.
+- [ ] New `FlightVessel::update_life_support(dt)`: greenhouses produce food (gated on power); crew consume food at rate × dt.
+- [ ] Starvation model: warning at <30 days food remaining. When food == 0, after a 7-day grace period, kill **one crew per day across the whole vessel** (pick from any crewed pod). If all controllable pods reach 0 crew → vessel loses control authority (still flies on rails, just can't be commanded until reboarded).
+- [ ] HUD: "Food: N days" indicator when crew > 0; red text when starving.
+- [ ] Spec: new `openspec/specs/game/vessels/life_support/spec.md`.
+
+## Phase 5 — Radiators + thermal model (vessel-wide pool)
+
+Biggest gap. Reactor RON descriptions reference radiators that don't exist as parts.
+
+- [ ] Add `RadiatorData { heat_rejection_w, operating_temp_k, deployable: bool }` to `definition.rs`.
+- [ ] Add vessel-level thermal state: `pooled_heat_j: f64`, `pooled_capacity_j_per_k: f64`. (Vessel-wide pool — radiator placement doesn't matter, matches the abstraction level of the existing power system.)
+- [ ] **New file** `data/parts/radiators.ron` — three tech tiers from `docs/part_ideas.md`:
+  - Heat-pipe panels (fission era, low rejection, low mass)
+  - Liquid droplet radiators (fusion era, deployable, mid-high)
+  - Phononic/graphene fins (antimatter era, very high T, high rejection)
+- [ ] Per-tick thermal update:
+  - Heat sources: reactor waste = `output_watts × (1 - efficiency)` (fission≈0.7, fusion≈0.5, AM≈0.3); interstellar engines when firing add a fraction of fuel power.
+  - Heat sinks: sum of active radiators' `heat_rejection_w`.
+  - `pooled_heat_j += (sources - sinks) × dt`; clamp ≥ 0.
+  - Pool temperature `T = pooled_heat_j / pooled_capacity_j_per_k + ambient`.
+  - If T > critical (~1500 K): auto-trip all reactors and electric/fusion/AM engines until T drops. HUD: "Overheating — radiator deficit".
+- [ ] HUD: thermal gauge alongside power-budget bar.
+- [ ] Spec: new `openspec/specs/game/vessels/thermal/spec.md`.
+
+## Phase 6 — Hull thermal tolerance (reentry + sustained heat)
+
+- [ ] Aerodynamic heating in atmosphere: forward-facing parts accumulate heat proportional to `0.5 × ρ × v³`. Heat shields have much higher tolerance + ablative behavior (mass loss model).
+- [ ] Track per-part temperature (separate from the vessel pool, since reentry heating is localized).
+- [ ] Parts whose `temperature_k` exceeds `max_heat_tolerance` for sustained time → `part.destroyed = true`. Decoupler-like ejection.
+- [ ] Spec: extend `openspec/specs/game/vessels/thermal/spec.md` (or new `physics/aerothermal/spec.md`).
+
+## Execution order
+
+1 → 2 → 3 → 4 → 5 → 6. Phases 1–4 are independent and incremental wins. Phase 5 establishes the vessel-wide thermal pool; Phase 6 layers localized hull heating on top.

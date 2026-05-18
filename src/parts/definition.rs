@@ -245,6 +245,13 @@ impl FuelType {
         &[FuelType::Empty, FuelType::Rp1, FuelType::Methane, FuelType::Hydrogen, FuelType::Monopropellant, FuelType::PureHydrogen, FuelType::Xenon, FuelType::FusionFuel, FuelType::Antimatter, FuelType::NuclearPulse]
     }
 
+    /// Whether this fuel may be loaded into a standard (unrestricted) tank.
+    /// Specialized fuels (Xenon, Antimatter, NuclearPulse) require dedicated tank
+    /// parts that lock their fuel type via `TankData::fixed_fuel_type`.
+    pub fn is_standard_tank_compatible(self) -> bool {
+        !matches!(self, FuelType::Xenon | FuelType::Antimatter | FuelType::NuclearPulse)
+    }
+
     /// Get propellant masses per grid square (in kg)
     /// Returns (oxygen_kg, fuel_kg)
     pub fn propellant_per_grid_square(&self) -> (f64, f64) {
@@ -299,6 +306,11 @@ impl FuelType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TankData {
     pub grid_area: f64,  // Tank volume in grid-area-equivalent units (for capacity calculation)
+    /// If set, the tank can only hold this fuel type — the editor selector is hidden and
+    /// the part loads with this fuel by default. Used for specialized containment
+    /// (Xenon high-pressure COPVs, Penning-trap antimatter arrays, Orion pulse magazines).
+    #[serde(default)]
+    pub fixed_fuel_type: Option<FuelType>,
 }
 
 impl TankData {
@@ -350,6 +362,27 @@ pub struct RtgData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReactorData {
     pub output_watts: f64,  // Power output in Watts
+    /// Optional fuel consumption. Reactors without this run for free at constant
+    /// output (fission RTG-style abstraction). Antimatter reactors set this so
+    /// they only produce power while their fuel reserves are non-zero.
+    #[serde(default)]
+    pub fuel: Option<ReactorFuelData>,
+}
+
+/// Per-reactor fuel-consumption configuration. Used by antimatter reactors,
+/// which consume an antiproton/hydrogen mix continuously while running.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReactorFuelData {
+    /// Primary fuel resource the reactor consumes
+    pub primary: FuelType,
+    /// Optional secondary fuel (e.g. matter half of a matter+antimatter mix)
+    #[serde(default)]
+    pub secondary: Option<FuelType>,
+    /// Fraction of total mass flow that is the secondary fuel (0.0-1.0)
+    #[serde(default)]
+    pub secondary_fraction: f64,
+    /// Total combined mass flow when running (kg/s)
+    pub total_kg_s: f64,
 }
 
 /// Shield type for interstellar shielding
@@ -758,5 +791,169 @@ mod tests {
         assert_eq!(PartSize::Medium.grid_width(), 5);
         assert_eq!(PartSize::Large.grid_width(), 9);
         assert_eq!(PartSize::XL.grid_width(), 13);
+    }
+
+    #[test]
+    fn test_all_part_ron_files_parse() {
+        let defs = PartDefinitions::load_from_directory("data/parts")
+            .expect("parts directory must load");
+        assert!(defs.parts.len() > 100, "expected catalog of at least 100 parts");
+
+        for (id, expected_fuel) in &[
+            ("tank_am_tiny",      FuelType::Antimatter),
+            ("tank_am_small",     FuelType::Antimatter),
+            ("tank_am_medium",    FuelType::Antimatter),
+            ("tank_am_large",     FuelType::Antimatter),
+            ("tank_am_sphere_s",  FuelType::Antimatter),
+            ("tank_am_sphere_m",  FuelType::Antimatter),
+            ("tank_am_sphere_l",  FuelType::Antimatter),
+            ("tank_pulse_tiny",   FuelType::NuclearPulse),
+            ("tank_pulse_small",  FuelType::NuclearPulse),
+            ("tank_pulse_medium", FuelType::NuclearPulse),
+            ("tank_pulse_large",  FuelType::NuclearPulse),
+            ("tank_xe_tiny",      FuelType::Xenon),
+            ("tank_xe_small",     FuelType::Xenon),
+            ("tank_xe_medium",    FuelType::Xenon),
+            ("tank_xe_large",     FuelType::Xenon),
+        ] {
+            let part = defs.get(id).unwrap_or_else(|| panic!("missing part: {}", id));
+            let tank = part.tank.as_ref().unwrap_or_else(|| panic!("{} has no tank data", id));
+            assert_eq!(
+                tank.fixed_fuel_type,
+                Some(*expected_fuel),
+                "{} should be locked to {:?}",
+                id,
+                expected_fuel,
+            );
+        }
+
+        // LH2-specific tanks were deleted; verify they are gone
+        for removed in &["tank_h2_tiny", "tank_h2_small", "tank_h2_medium", "tank_h2_large"] {
+            assert!(defs.get(removed).is_none(), "{} should be deleted", removed);
+        }
+
+        // Per-part Earth cost is positive and derived from material breakdown.
+        // (The static `def.cost` RON field is no longer displayed — both the
+        // editor info panel and the vessel total now use part_dry_earth_cost.)
+        use crate::colony::economy::{part_dry_earth_cost, part_filled_fuel_cost};
+        for (id, part) in &defs.parts {
+            let cost = part_dry_earth_cost(part);
+            assert!(cost > 0.0,
+                "{} should have positive Earth cost (mass {} t)", id, part.mass);
+        }
+
+        // Loading antimatter into an AM Sphere L adds an enormous fuel cost
+        // (16,193 t × $0/kg AM = $0 since AM is non-purchasable on Earth);
+        // loading LH2 into a fusion sphere of equal grid_area would add a
+        // measurable cost. Sanity-check the helper handles the AM zero case.
+        let am_l = defs.get("tank_am_sphere_l").expect("tank_am_sphere_l");
+        let am_fuel_cost = part_filled_fuel_cost(am_l, FuelType::Antimatter, 1.0);
+        assert_eq!(am_fuel_cost, 0.0,
+            "Antimatter has no Earth purchase price, so a full AM Sphere L \
+             should add $0 fuel cost (got {})", am_fuel_cost);
+
+        // Smoke test the full palette filter path: with the dev-fixture's
+        // tech state, AM Spheres must appear in (FuelTanks, XL).
+        let tree = crate::colony::TechTree::load_default()
+            .expect("tech tree loads");
+        // Mimic the fixture's all-techs-unlocked state.
+        let mut all_unlocked: std::collections::HashSet<String> = tree.nodes.iter()
+            .map(|n| n.id.clone())
+            .collect();
+        all_unlocked.insert("basic_rocketry".to_string());
+        let mut tree_unlocked = tree;
+        tree_unlocked.apply_save_state(
+            all_unlocked,
+            std::collections::HashMap::new(),
+        );
+        let xl_fuel_tanks: Vec<&str> = defs
+            .by_category_and_size(PartCategory::FuelTanks, PartSize::XL)
+            .into_iter()
+            .filter(|p| tree_unlocked.is_part_available(&p.name))
+            .map(|p| p.name.as_str())
+            .collect();
+        for sphere in &["AM Sphere S", "AM Sphere M", "AM Sphere L"] {
+            assert!(xl_fuel_tanks.contains(sphere),
+                "Expected {} in (FuelTanks, XL) palette list. Got: {:?}",
+                sphere, xl_fuel_tanks);
+        }
+
+        // FuelType compatibility helper
+        assert!(!FuelType::Xenon.is_standard_tank_compatible());
+        assert!(!FuelType::Antimatter.is_standard_tank_compatible());
+        assert!(!FuelType::NuclearPulse.is_standard_tank_compatible());
+        assert!(FuelType::Rp1.is_standard_tank_compatible());
+        assert!(FuelType::FusionFuel.is_standard_tank_compatible());
+        assert!(FuelType::Monopropellant.is_standard_tank_compatible());
+        assert!(FuelType::PureHydrogen.is_standard_tank_compatible());
+
+        // Every engine SHALL set flight_hitbox_width and flight_hitbox_height
+        // (visible-content extents), so the flight collision matches the
+        // visible engine and the part doesn't appear to "float" above an
+        // empty hitbox region. See editor/parts/spec.md.
+        for (id, part) in &defs.parts {
+            if part.engine.is_none() { continue; }
+            assert!(part.flight_hitbox_width.is_some(),
+                "engine {} missing flight_hitbox_width", id);
+            assert!(part.flight_hitbox_height.is_some(),
+                "engine {} missing flight_hitbox_height", id);
+        }
+
+        // All interstellar engines have zero gimbal.
+        for (id, part) in &defs.parts {
+            if part.category != PartCategory::Interstellar { continue; }
+            let Some(eng) = part.engine.as_ref() else { continue };
+            assert_eq!(eng.gimbal_range, 0.0,
+                "interstellar engine {} has non-zero gimbal {}",
+                id, eng.gimbal_range);
+        }
+
+        // AM Torch and Gamma Converter consume Antimatter + Hydrogen (LH2) 50/50.
+        for id in &["engine_am_torch", "engine_gamma_conversion"] {
+            let part = defs.get(id).expect(id);
+            let eng = part.engine.as_ref().expect("engine data");
+            assert_eq!(eng.propellant, Propellant::Antimatter,
+                "{} primary propellant", id);
+            assert_eq!(eng.secondary_propellant, Some(Propellant::Hydrogen),
+                "{} secondary propellant (Propellant::Hydrogen = pure LH2)", id);
+            assert!((eng.secondary_fuel_fraction - 0.5).abs() < 1e-9,
+                "{} secondary fraction should be 0.5, got {}",
+                id, eng.secondary_fuel_fraction);
+        }
+
+        // AM reactors have ReactorFuelData configured with 50/50 AM+LH2 split.
+        for id in &["reactor_am_small", "reactor_am_large"] {
+            let part = defs.get(id).expect(id);
+            let reactor = part.reactor.as_ref().expect("reactor data");
+            let fuel = reactor.fuel.as_ref()
+                .unwrap_or_else(|| panic!("{} should consume fuel", id));
+            assert_eq!(fuel.primary, FuelType::Antimatter, "{} primary fuel", id);
+            assert_eq!(fuel.secondary, Some(FuelType::PureHydrogen),
+                "{} secondary fuel", id);
+            assert!((fuel.secondary_fraction - 0.5).abs() < 1e-9,
+                "{} should split 50/50, got {}", id, fuel.secondary_fraction);
+            assert!(fuel.total_kg_s > 0.0, "{} must have positive fuel flow", id);
+        }
+
+        // Endgame AM spheres: AM capacity must equal the matching fusion
+        // sphere's LH2 capacity, and dry mass must be 2× the fusion sphere.
+        for (am_id, fus_id) in &[
+            ("tank_am_sphere_s", "tank_sphere_s"),
+            ("tank_am_sphere_m", "tank_sphere_m"),
+            ("tank_am_sphere_l", "tank_sphere_l"),
+        ] {
+            let am = defs.get(am_id).expect(am_id);
+            let fus = defs.get(fus_id).expect(fus_id);
+            let am_cap = am.tank.as_ref().unwrap()
+                .propellant_capacity(FuelType::Antimatter).1;
+            let lh2_cap = fus.tank.as_ref().unwrap()
+                .propellant_capacity(FuelType::PureHydrogen).1;
+            assert!((am_cap - lh2_cap).abs() < 1.0,
+                "{} AM capacity {} should match {} LH2 capacity {}",
+                am_id, am_cap, fus_id, lh2_cap);
+            assert!((am.mass - 2.0 * fus.mass).abs() < 0.01,
+                "{} mass {} should be 2× {} mass {}",
+                am_id, am.mass, fus_id, fus.mass);
+        }
     }
 }

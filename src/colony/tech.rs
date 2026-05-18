@@ -220,6 +220,30 @@ impl TechTree {
     pub fn apply_save_state(&mut self, unlocked: HashSet<String>, line_tiers: HashMap<String, u32>) {
         self.unlocked = unlocked;
         self.line_tiers = line_tiers;
+        self.grant_patch_unlocks();
+    }
+
+    /// Auto-unlock tech nodes that were ADDED after this save was created and
+    /// whose prerequisites were already unlocked. Prevents an old save from
+    /// stranding the player without newly-added parts. Only listed node IDs
+    /// get this treatment, not every prereq-satisfied node — players may
+    /// have intentionally skipped some pre-existing nodes.
+    fn grant_patch_unlocks(&mut self) {
+        // Add a node ID here when introducing a new tech node whose parts
+        // should be available to players whose existing saves already meet
+        // its prerequisites.
+        const PATCH_GRANTS: &[&str] = &["bulk_am_storage"];
+        for &grant in PATCH_GRANTS {
+            if self.unlocked.contains(grant) {
+                continue;
+            }
+            let Some(node) = self.nodes.iter().find(|n| n.id == grant) else {
+                continue;
+            };
+            if node.prerequisites.iter().all(|p| self.unlocked.contains(p)) {
+                self.unlocked.insert(grant.to_string());
+            }
+        }
     }
 }
 

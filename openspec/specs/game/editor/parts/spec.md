@@ -179,11 +179,15 @@ For engines, the info panel SHALL display: propellant type (including secondary 
 
 ### Requirement: Tank info for palette selection
 
-For tanks selected in the palette, the info panel SHALL display: dry mass (from `def.mass`, the RON part mass) and propellant capacity for all three standard fuel types (RP-1, CH4, LH2).
+For tanks selected in the palette, the info panel SHALL display: dry mass (from `def.mass`, the RON part mass). Tanks without a `fixed_fuel_type` SHALL show propellant capacity for the three common chemical fuels (RP-1, CH4, LH2). Tanks with a `fixed_fuel_type` SHALL display a single locked-fuel label plus the capacity for that fuel.
 
 ### Requirement: Tank info for placed parts
 
-For placed tanks, the info panel SHALL additionally display: fuel type selector buttons, draggable fuel bars showing current and max amounts, Fill/Empty convenience buttons, and dry/propellant/total mass breakdown. Selecting a non-Empty fuel type SHALL automatically set `fill_fraction` to 1.0. Selecting Empty SHALL set `fill_fraction` to 0.0. Available fuel types for standard tanks: Empty, LOX/RP-1, LOX/CH4, LOX/LH2, Monopropellant, LH2 (pure), Xenon, D+He3 (fusion fuel).
+For placed tanks, the info panel SHALL additionally display: fuel type selector buttons (only for standard tanks), draggable fuel bars showing current and max amounts, Fill/Empty convenience buttons, and dry/propellant/total mass breakdown. Selecting a non-Empty fuel type SHALL automatically set `fill_fraction` to 1.0. Selecting Empty SHALL set `fill_fraction` to 0.0.
+
+The fuel-type selector SHALL filter `FuelType::all()` by `FuelType::is_standard_tank_compatible()`, exposing only the seven fuels valid for standard tanks: Empty, LOX/RP-1, LOX/CH4, LOX/LH2, Monopropellant, LH2 (pure), D+He3 (fusion fuel). Xenon, Antimatter, and Pulse Units SHALL be excluded — they require their dedicated specialized tanks.
+
+For tanks whose `TankData::fixed_fuel_type` is `Some(ft)` (Xenon, Antimatter, and Pulse magazines), the selector SHALL be replaced by a single "Fuel Type: {ft} (locked)" label, and the placed part SHALL be initialized with `fuel_type = ft` and `fill_fraction = 1.0` upon placement.
 
 ### Requirement: Draggable tank fill bars
 
@@ -367,6 +371,8 @@ All part editor hitbox widths SHALL be odd numbers. Odd widths snap parts to gri
 ### Requirement: Flight hitbox fields
 
 `PartDefinition` SHALL support optional `flight_hitbox_width: Option<f64>` and `flight_hitbox_height: Option<f64>` fields (serde-defaulting to `None`). When set, these define the flight collision box dimensions. When not set, they default to the editor hitbox dimensions. Values are in grid squares and can be fractional to allow precise collision boundaries matching the visible sprite content.
+
+**Every engine SHALL set both `flight_hitbox_width` and `flight_hitbox_height`**, measured from the visible content of the engine sprite. Engines without these fields fall back to the editor placement hitbox, which is typically larger than the engine sprite content and causes the engine to appear "floating" above an empty hitbox area beneath the nozzle. The convention applies to chemical, NTR, electric, and interstellar engines alike: visible content extent comes from `Image.getbbox()` on the source sprite PNG, converted to grid units by `pixel_count × grid_dim / canvas_pixel_dim`. The convention preserves "top of nozzle aligns with grid" — the engine sprite is top-aligned within the editor hitbox via `hitbox_y_offset` (see requirement below).
 
 For engines, `flight_hitbox_height` represents the visible content height (excluding transparent sprite padding), NOT the sprite quad height. The sprite quad height is computed from the image's natural aspect ratio (`flight_hitbox_width * pixel_height / pixel_width`) to avoid distortion. This decouples collision from rendering.
 

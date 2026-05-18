@@ -107,6 +107,15 @@
             grid_height: 7.0,
             reactor: Some((
                 output_watts: 800000000000.0,
+                // ~37.6 g/hr antimatter + 37.6 g/hr LH2 = 75.2 g/hr total mass
+                // flow, split 50/50.  Reactor produces no power if either fuel
+                // runs out.
+                fuel: Some((
+                    primary: Antimatter,
+                    secondary: Some(PureHydrogen),
+                    secondary_fraction: 0.5,
+                    total_kg_s: 0.0000209,
+                )),
             )),
             resources: {},
         ),
@@ -128,6 +137,15 @@
             grid_height: 9.0,
             reactor: Some((
                 output_watts: 2500000000000.0,
+                // ~118 g/hr antimatter + 118 g/hr LH2 = 236 g/hr total mass
+                // flow, split 50/50.  Reactor produces no power if either fuel
+                // runs out.
+                fuel: Some((
+                    primary: Antimatter,
+                    secondary: Some(PureHydrogen),
+                    secondary_fraction: 0.5,
+                    total_kg_s: 0.0000656,
+                )),
             )),
             resources: {},
         ),

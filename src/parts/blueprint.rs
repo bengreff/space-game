@@ -74,46 +74,18 @@ impl VesselBlueprint {
         Ok(())
     }
 
-    /// Calculate total cost of all parts (legacy: sum of part cost fields)
-    pub fn total_cost(&self, definitions: &super::PartDefinitions) -> u32 {
-        self.parts
-            .iter()
-            .filter_map(|p| definitions.get(&p.definition_id))
-            .map(|def| def.cost)
-            .sum()
-    }
-
-    /// Calculate the full vessel cost in dollars (material breakdown + fuel).
+    /// Calculate the full vessel cost in dollars (material breakdown + loaded fuel).
     /// Mirrors `EditorState::calculate_vessel_cost()`.
     pub fn calculate_cost(&self, part_defs: &super::PartDefinitions) -> f64 {
-        use crate::colony::economy::{material_breakdown, fuel_price_per_kg, LOX_PRICE_PER_KG};
+        use crate::colony::economy::{part_dry_earth_cost, part_filled_fuel_cost};
 
-        let mut total = 0.0;
-
-        for part in &self.parts {
-            let Some(def) = part_defs.get(&part.definition_id) else {
-                continue;
-            };
-
-            // Material cost from dry mass
-            let dry_mass_kg = def.mass * 1000.0; // tonnes → kg
-            let breakdown = material_breakdown(def);
-            let masses = breakdown.to_masses(dry_mass_kg);
-            total += masses.earth_cost();
-
-            // Fuel cost from filled tanks
-            if let Some(ref tank) = def.tank {
-                if part.fill_fraction > 0.0 && part.fuel_type != FuelType::Empty {
-                    let (ox_kg, fuel_kg) = tank.propellant_capacity(part.fuel_type);
-                    let filled_ox = ox_kg * part.fill_fraction;
-                    let filled_fuel = fuel_kg * part.fill_fraction;
-                    total += filled_ox * LOX_PRICE_PER_KG;
-                    total += filled_fuel * fuel_price_per_kg(part.fuel_type);
-                }
-            }
-        }
-
-        total
+        self.parts.iter()
+            .filter_map(|part| {
+                let def = part_defs.get(&part.definition_id)?;
+                Some(part_dry_earth_cost(def)
+                    + part_filled_fuel_cost(def, part.fuel_type, part.fill_fraction))
+            })
+            .sum()
     }
 
     /// Get the root part's definition ID

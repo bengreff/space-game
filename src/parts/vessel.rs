@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use super::{FuelType, Propellant, PartDefinitions, VesselBlueprint};
+use super::{FuelType, Propellant, PartDefinitions, ReactorFuelData, VesselBlueprint};
 use std::collections::HashMap;
 
 /// A vessel in flight - runtime representation with physics.
@@ -1353,6 +1353,65 @@ impl FlightVessel {
         }
     }
 
+    /// Sum a single fuel resource across all non-destroyed, non-decoupled parts.
+    pub fn sum_resource(&self, name: &str) -> f64 {
+        self.parts.iter()
+            .filter(|p| !p.destroyed && !p.decoupled)
+            .map(|p| p.resources.get(name).copied().unwrap_or(0.0))
+            .sum()
+    }
+
+    /// Drain `amount` kg of `name` proportionally from any non-destroyed,
+    /// non-decoupled part that holds it. Caller is responsible for verifying
+    /// availability first — this assumes the drain will succeed and silently
+    /// drains whatever is present (clamped at 0).
+    fn drain_resource(&mut self, name: &str, amount: f64) {
+        let total = self.sum_resource(name);
+        if total <= 0.0 || amount <= 0.0 {
+            return;
+        }
+        let ratio = (amount / total).min(1.0);
+        for part in self.parts.iter_mut() {
+            if part.destroyed || part.decoupled { continue; }
+            if let Some(avail) = part.resources.get_mut(name) {
+                if *avail > 0.0 {
+                    *avail = (*avail - *avail * ratio).max(0.0);
+                }
+            }
+        }
+    }
+
+    /// Try to consume one timestep's worth of reactor fuel.
+    /// Checks both primary and (optional) secondary fuel availability atomically;
+    /// returns false (without draining) if either is insufficient.
+    /// Returns true after successfully draining both.
+    fn try_consume_reactor_fuel(&mut self, fuel: &ReactorFuelData, dt: f64) -> bool {
+        let total = fuel.total_kg_s * dt;
+        let primary_needed = total * (1.0 - fuel.secondary_fraction);
+        let secondary_needed = total * fuel.secondary_fraction;
+
+        let primary_name = match fuel.primary.fuel_resource_name() {
+            Some(n) => n,
+            None => return false,
+        };
+        let secondary_name = fuel.secondary.and_then(|f| f.fuel_resource_name());
+
+        if self.sum_resource(primary_name) < primary_needed {
+            return false;
+        }
+        if let Some(sn) = secondary_name {
+            if self.sum_resource(sn) < secondary_needed {
+                return false;
+            }
+        }
+
+        self.drain_resource(primary_name, primary_needed);
+        if let Some(sn) = secondary_name {
+            self.drain_resource(sn, secondary_needed);
+        }
+        true
+    }
+
     /// Update power: generate from solar/RTG/alternators, consume from pods.
     /// Distributes net charge/drain proportionally across battery parts.
     /// `sun_distance_m` is ship-to-Sun distance in meters.
@@ -1363,7 +1422,25 @@ impl FlightVessel {
         let mut generation = 0.0_f64;
         let mut consumption = 0.0_f64;
 
-        // Calculate generation and consumption from active (non-decoupled, non-destroyed) parts
+        // Phase 1: Fuel-consuming reactors (mutable; runs only if fuel available).
+        // Collect demands first to avoid borrowing both immutably and mutably.
+        let fueled_reactor_demands: Vec<(ReactorFuelData, f64)> = self.parts.iter()
+            .filter(|p| !p.destroyed && !p.decoupled)
+            .filter_map(|p| {
+                let def = part_defs.get(&p.definition_id)?;
+                let reactor = def.reactor.as_ref()?;
+                let fuel = reactor.fuel.as_ref()?;
+                Some((fuel.clone(), reactor.output_watts))
+            })
+            .collect();
+        for (fuel_data, output_watts) in &fueled_reactor_demands {
+            if self.try_consume_reactor_fuel(fuel_data, dt) {
+                generation += output_watts;
+            }
+            // else: out of fuel, reactor produces nothing this tick
+        }
+
+        // Phase 2: All other generation/consumption (read-only over parts).
         for part in &self.parts {
             if part.destroyed || part.decoupled {
                 continue;
@@ -1381,9 +1458,12 @@ impl FlightVessel {
                 generation += rtg.output_watts;
             }
 
-            // Reactor: constant output (fission/fusion/antimatter)
+            // Reactor: constant output for fuel-less reactors (fission RTG-style).
+            // Fuel-consuming reactors (e.g. antimatter) are handled in Phase 1.
             if let Some(ref reactor) = def.reactor {
-                generation += reactor.output_watts;
+                if reactor.fuel.is_none() {
+                    generation += reactor.output_watts;
+                }
             }
 
             // Engine alternators: only when engine is active

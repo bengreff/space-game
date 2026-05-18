@@ -208,6 +208,81 @@ pub fn fuel_price_per_kg(fuel_type: FuelType) -> f64 {
 /// LOX price in $/kg.
 pub const LOX_PRICE_PER_KG: f64 = 0.50;
 
+/// Earth-launch resource cost of a single dry (empty) part, in dollars.
+/// Derived from the part's material breakdown × dry mass × per-material $/kg
+/// (per `colonies.md` §7). This is the single source of truth for the per-part
+/// cost shown in the editor and the per-part contribution to the vessel total.
+pub fn part_dry_earth_cost(def: &PartDefinition) -> f64 {
+    let dry_mass_kg = def.mass * 1000.0;
+    material_breakdown(def).to_masses(dry_mass_kg).earth_cost()
+}
+
+/// Earth-launch cost of the propellant currently loaded in a tank, in dollars.
+/// Returns 0 for non-tank parts, empty tanks, and zero fill fractions.
+pub fn part_filled_fuel_cost(
+    def: &PartDefinition,
+    fuel_type: FuelType,
+    fill_fraction: f64,
+) -> f64 {
+    let tank = match &def.tank {
+        Some(t) => t,
+        None => return 0.0,
+    };
+    if fuel_type == FuelType::Empty || fill_fraction <= 0.0 {
+        return 0.0;
+    }
+    let (ox_kg, fuel_kg) = tank.propellant_capacity(fuel_type);
+    let ox_cost = ox_kg * fill_fraction * LOX_PRICE_PER_KG;
+    let fuel_cost = fuel_kg * fill_fraction * fuel_price_per_kg(fuel_type);
+    ox_cost + fuel_cost
+}
+
+/// Combined Earth $/kg cost of a fuel type at full load (fuel + LOX, blended
+/// by mass ratio). The single $/kg number that determines how much fuel cost
+/// each kg of loaded propellant adds. Used for editor-selector unit-price
+/// displays. Returns 0 for Empty and for fuels with no Earth purchase price
+/// (Antimatter).
+pub fn fuel_blended_cost_per_kg(fuel_type: FuelType) -> f64 {
+    let (ox_per_sq, fuel_per_sq) = fuel_type.propellant_per_grid_square();
+    let total = ox_per_sq + fuel_per_sq;
+    if total <= 0.0 {
+        return 0.0;
+    }
+    let total_cost = ox_per_sq * LOX_PRICE_PER_KG
+        + fuel_per_sq * fuel_price_per_kg(fuel_type);
+    total_cost / total
+}
+
+/// Build the per-material lines for a part's dry composition. Each entry is
+/// already formatted ("Metal: 1.5 t @ $100/kg" etc.). Materials with zero
+/// fraction are skipped. Used to make the dry cost transparent in part info.
+pub fn material_breakdown_lines(def: &PartDefinition) -> Vec<String> {
+    let dry_kg = def.mass * 1000.0;
+    let bd = material_breakdown(def);
+    let mut lines = Vec::new();
+    let push = |lines: &mut Vec<String>, name: &str, kg: f64, price_per_kg: u64| {
+        if kg > 0.0 {
+            lines.push(format!("  {}: {} @ ${}/kg", name, format_mass(kg), price_per_kg));
+        }
+    };
+    push(&mut lines, "Metal",          dry_kg * bd.metal,  100);
+    push(&mut lines, "High-Temp Alloy", dry_kg * bd.hta,   1_000);
+    push(&mut lines, "Electronics",    dry_kg * bd.elec,   10_000);
+    push(&mut lines, "Superconductor", dry_kg * bd.super_, 50_000);
+    push(&mut lines, "Precision Inst.", dry_kg * bd.pi,    200_000);
+    lines
+}
+
+fn format_mass(kg: f64) -> String {
+    if kg >= 1000.0 {
+        format!("{:.1} t", kg / 1000.0)
+    } else if kg >= 1.0 {
+        format!("{:.0} kg", kg)
+    } else {
+        format!("{:.1} kg", kg)
+    }
+}
+
 /// Format a dollar amount for display: $1.2K, $3.5M, $12.4B, etc.
 pub fn format_money(dollars: f64) -> String {
     let abs = dollars.abs();

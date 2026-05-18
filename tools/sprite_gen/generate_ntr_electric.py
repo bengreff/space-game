@@ -78,12 +78,6 @@ ION_GLOW_BRIGHT = (140, 220, 255)
 HALL_GLOW = (100, 160, 255)
 MPD_GLOW = (160, 120, 255)
 
-# H2 tank MLI insulation
-MLI_DARK = (210, 205, 195)
-MLI_MID = (225, 220, 210)
-MLI_LIGHT = (240, 235, 225)
-MLI_HIGHLIGHT = (250, 248, 240)
-
 # Xenon tank
 XENON_DARK = (55, 58, 65)
 XENON_MID = (75, 78, 88)
@@ -970,110 +964,6 @@ def generate_small_reactor(size="tiny"):
 
 
 # ================================================================
-# Hydrogen Tank generators
-# ================================================================
-
-def generate_h2_tank(size="tiny"):
-    """Hydrogen tank with MLI (multi-layer insulation) blanket.
-
-    Warm white/cream palette. Visible plumbing fittings and insulation
-    layer texture (horizontal bands of slightly different cream tones).
-    """
-    sizes = {
-        "tiny":   (1, 2),
-        "small":  (3, 4),
-        "medium": (5, 6),
-        "large":  (9, 8),
-    }
-    GW, GH = sizes[size]
-    PX = _capped_px(GW, GH)
-
-    img_w = int(GW * PX) + PAD * 2
-    img_h = int(GH * PX) + PAD * 2
-    img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-
-    x0, y0 = PAD, PAD
-    w, h = int(GW * PX), int(GH * PX)
-    x1, y1 = x0 + w, y0 + h
-    cx = img_w // 2
-    scale = max(0.35, w / 270.0)
-
-    # Main body — cream MLI color
-    d.rectangle([x0, y0, x1, y1], fill=MLI_MID)
-
-    # End caps (slightly darker, metallic fittings)
-    cap_h = max(4, min(int(0.14 * PX), h // 4))
-    cap_color = (195, 190, 182)
-    d.rectangle([x0, y0, x1, y0 + cap_h], fill=cap_color)
-    d.rectangle([x0, y1 - cap_h, x1, y1], fill=cap_color)
-    d.line([(x0, y0 + cap_h), (x1, y0 + cap_h)], fill=MLI_DARK, width=1)
-    d.line([(x0, y1 - cap_h), (x1, y1 - cap_h)], fill=MLI_DARK, width=1)
-
-    # Fill port at top center
-    port_r = max(3, int(5 * scale))
-    circ(d, cx, y0 + cap_h // 2, port_r + 1, fill=STEEL_MID)
-    circ(d, cx, y0 + cap_h // 2, port_r, fill=STEEL_LIGHT)
-    circ(d, cx, y0 + cap_h // 2, max(1, port_r - 2), fill=STEEL_DARK)
-
-    # MLI insulation layer bands (horizontal bands of slightly varying cream)
-    n_bands = max(4, int((h - cap_h * 2) / (8 * scale)))
-    band_height = (h - cap_h * 2) / max(1, n_bands)
-    for i in range(n_bands):
-        by = y0 + cap_h + int(i * band_height)
-        bh = int(band_height) + 1
-        # Alternate between slightly different cream tones
-        if i % 3 == 0:
-            band_c = MLI_DARK
-        elif i % 3 == 1:
-            band_c = MLI_MID
-        else:
-            band_c = MLI_LIGHT
-        d.rectangle([x0 + 1, by, x1 - 1, by + bh], fill=band_c)
-        # Subtle seam line between layers
-        d.line([(x0 + 2, by + bh - 1), (x1 - 2, by + bh - 1)],
-               fill=MLI_DARK, width=1)
-
-    # Vertical seam (blanket overlap)
-    seam_x = cx + int(w * 0.15)
-    d.line([(seam_x, y0 + cap_h + 2), (seam_x, y1 - cap_h - 2)],
-           fill=(200, 195, 185), width=1)
-    d.line([(seam_x + 1, y0 + cap_h + 2), (seam_x + 1, y1 - cap_h - 2)],
-           fill=MLI_HIGHLIGHT, width=1)
-
-    # LH2 identifier markings (simple band pattern near middle)
-    marker_y = y0 + cap_h + int((h - cap_h * 2) * 0.4)
-    marker_h = max(4, int(8 * scale))
-    marker_w = max(20, int(w * 0.5))
-    marker_hw = int(marker_w / 2)
-    # Blue band for hydrogen identification
-    d.rectangle([cx - marker_hw, marker_y,
-                 cx + marker_hw, marker_y + marker_h],
-                fill=(120, 160, 200))
-    d.rectangle([cx - marker_hw, marker_y,
-                 cx + marker_hw, marker_y + marker_h],
-                outline=(100, 140, 180))
-
-    # Plumbing fittings on sides (only if wide enough)
-    if w > 100:
-        fitting_len = max(4, int(6 * scale))
-        fitting_h = max(3, int(4 * scale))
-        for s in [-1, 1]:
-            for frac in [0.35, 0.65]:
-                fy = y0 + cap_h + int((h - cap_h * 2) * frac)
-                fx = (x0 if s == -1 else x1)
-                fx2 = fx + s * fitting_len
-                d.rectangle([min(fx, fx2), fy - fitting_h // 2,
-                             max(fx, fx2), fy + fitting_h // 2],
-                            fill=STEEL_MID, outline=STEEL_DARK)
-
-    # Outline
-    d.rectangle([x0, y0, x1, y1], outline=(190, 185, 175))
-
-    return img
-
-
-# ================================================================
 # Xenon Tank generators
 # ================================================================
 
@@ -1221,20 +1111,6 @@ PARTS = {
                               "parts"),
     "reactor_crucible":      ("Reactor Crucible (Medium 5x5)",
                               lambda: generate_small_reactor("medium"),
-                              "parts"),
-
-    # Hydrogen Tanks -> parts/
-    "tank_h2_tiny":          ("H2 Tank Tiny (1x2)",
-                              lambda: generate_h2_tank("tiny"),
-                              "parts"),
-    "tank_h2_small":         ("H2 Tank Small (3x4)",
-                              lambda: generate_h2_tank("small"),
-                              "parts"),
-    "tank_h2_medium":        ("H2 Tank Medium (5x6)",
-                              lambda: generate_h2_tank("medium"),
-                              "parts"),
-    "tank_h2_large":         ("H2 Tank Large (9x8)",
-                              lambda: generate_h2_tank("large"),
                               "parts"),
 
     # Xenon Tanks -> parts/

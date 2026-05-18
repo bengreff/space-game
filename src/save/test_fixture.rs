@@ -203,7 +203,7 @@ pub fn build() -> SaveGame {
         "advanced_fusion", "geodesic_shielding", "swarm_power",
         "am_catalyzed", "am_production", "am_power", "heavy_mass_driver",
         "am_torch", "advanced_am_power", "ring_accelerator",
-        "planetary_mass_driver", "photon_drive",
+        "planetary_mass_driver", "photon_drive", "bulk_am_storage",
     ]
     .iter()
     .map(|s| s.to_string())

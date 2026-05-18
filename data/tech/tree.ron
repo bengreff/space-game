@@ -112,7 +112,7 @@
             prerequisites: ["heavy_lift", "medium_hydrolox"],
             col: 4,
             row: 2,
-            unlocks_parts: ["Salamander", "LH2-T", "LH2-S"],
+            unlocks_parts: ["Salamander"],
             unlocks_buildings: [],
         ),
         (
@@ -178,7 +178,7 @@
             prerequisites: ["fusion_full", "fusion_power"],
             col: 10,
             row: 2,
-            unlocks_parts: ["AM-Cat Fusion"],
+            unlocks_parts: ["AM-Cat Fusion", "AM-1", "AM-3", "AM-5", "AM-9"],
             unlocks_buildings: [ParticleAcceleratorMk1],
         ),
         (
@@ -225,6 +225,17 @@
             unlocks_parts: ["Gamma Converter"],
             unlocks_buildings: [],
         ),
+        (
+            id: "bulk_am_storage",
+            name: "Bulk Antimatter Containment",
+            era: 9,
+            cost: 14000.0,
+            prerequisites: ["am_torch"],
+            col: 14,
+            row: 3,
+            unlocks_parts: ["AM Sphere S", "AM Sphere M", "AM Sphere L"],
+            unlocks_buildings: [],
+        ),
 
         // === ROW 3: Branches below main highway ===
         (
@@ -246,7 +257,7 @@
             prerequisites: ["nuclear_thermal"],
             col: 5,
             row: 3,
-            unlocks_parts: ["Basilisk", "Wyvern", "LH2-M", "LH2-L"],
+            unlocks_parts: ["Basilisk", "Wyvern"],
             unlocks_buildings: [],
         ),
         (
@@ -257,7 +268,7 @@
             prerequisites: ["advanced_ntr", "compact_fission"],
             col: 6,
             row: 3,
-            unlocks_parts: ["Orion Pulse Drive"],
+            unlocks_parts: ["Orion Pulse Drive", "PU-1", "PU-3", "PU-5", "PU-9"],
             unlocks_buildings: [],
         ),
         (

@@ -77,15 +77,6 @@ struct PackedSprite {
     height: u32,
 }
 
-/// Round up to next power of 2
-fn next_power_of_2(v: u32) -> u32 {
-    let mut p = 1;
-    while p < v {
-        p *= 2;
-    }
-    p
-}
-
 /// Shelf-based atlas packer
 fn shelf_pack(entries: &mut Vec<SpriteEntry>, atlas_width: u32) -> (Vec<PackedSprite>, u32) {
     // Sort by height descending for better shelf packing
@@ -123,7 +114,11 @@ fn shelf_pack(entries: &mut Vec<SpriteEntry>, atlas_width: u32) -> (Vec<PackedSp
     }
 
     let total_height = shelf_y + shelf_height;
-    let atlas_height = next_power_of_2(total_height);
+    // Round to a multiple of 256 for friendly GPU buffer alignment; do NOT
+    // round to next power-of-2. wgpu has no POT requirement for D2 textures,
+    // and the POT-round used to double atlas_height (e.g. 8300 → 16384,
+    // quadrupling RGBA memory and atlas-cache PNG decode time on startup).
+    let atlas_height = ((total_height + 255) / 256) * 256;
     (packed, atlas_height)
 }
 
@@ -349,23 +344,57 @@ fn build_sprite_atlas(
         }
     }
 
+    // Sphere sprites are exempt from the halve loop below. They're rendered
+    // with fine geodesic-panel detail, and the player can zoom in on them at
+    // close range — halving leaves them visibly pixelated. Engines and
+    // other large parts are less detail-critical and absorb the halving fine.
+    const HIGH_RES_SPRITES: &[&str] = &[
+        "tank_sphere_s", "tank_sphere_m", "tank_sphere_l",
+        "tank_am_sphere_s", "tank_am_sphere_m", "tank_am_sphere_l",
+    ];
+
     let (mut packed, mut atlas_height) = shelf_pack(&mut entries, atlas_width);
 
-    // If atlas is too tall, downscale all sprites and repack
-    while atlas_height > max_dim {
-        log::warn!(
-            "Sprite atlas {}x{} exceeds GPU limit {}, downscaling sprites by 50%",
-            atlas_width, atlas_height, max_dim
-        );
+    // Halve all NON-EXEMPT sprites until the atlas fits a target height. The
+    // target is intentionally well below the GPU's `max_dim`: at max_dim the
+    // cached atlas PNG decodes to ~1 GB of raw RGBA on startup (15 s on Apple
+    // Silicon). 8192 keeps the cached atlas decode under ~1 s for ordinary
+    // sprites; spheres bypass this so they retain full source resolution at
+    // the cost of a somewhat taller atlas (around 16384×12000).
+    let target_height = max_dim.min(8192);
+    loop {
+        if atlas_height <= target_height { break; }
+        let mut halved_any = false;
         for entry in entries.iter_mut() {
+            if HIGH_RES_SPRITES.contains(&entry.id.as_str()) {
+                continue;
+            }
             let new_w = (entry.width / 2).max(1);
             let new_h = (entry.height / 2).max(1);
+            // Don't halve below a useful floor (no point: sprite becomes a
+            // pixel and packing won't get meaningfully smaller).
+            if new_w < 8 || new_h < 8 {
+                continue;
+            }
             entry.image = image::imageops::resize(
                 &entry.image, new_w, new_h, image::imageops::FilterType::Nearest,
             );
             entry.width = new_w;
             entry.height = new_h;
+            halved_any = true;
         }
+        if !halved_any {
+            log::info!(
+                "Sprite atlas {}x{} > target {} but no more sprites halve-able; \
+                 keeping current size",
+                atlas_width, atlas_height, target_height
+            );
+            break;
+        }
+        log::info!(
+            "Sprite atlas {}x{} > target {}; halved non-exempt sprites and repacking",
+            atlas_width, atlas_height, target_height
+        );
         let result = shelf_pack(&mut entries, atlas_width);
         packed = result.0;
         atlas_height = result.1;

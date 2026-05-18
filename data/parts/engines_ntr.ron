@@ -22,6 +22,8 @@
             grid_height: 4.5,
             top_width: Some(2.2),
             hitbox_width: Some(3),
+            flight_hitbox_width: Some(2.29),
+            flight_hitbox_height: Some(4.50),
             hitbox_height: Some(5),
             engine: Some((
                 thrust_vac: 67.0,
@@ -53,6 +55,8 @@
             grid_height: 6.5,
             top_width: Some(3.8),
             hitbox_width: Some(5),
+            flight_hitbox_width: Some(4.05),
+            flight_hitbox_height: Some(6.50),
             hitbox_height: Some(7),
             engine: Some((
                 thrust_vac: 334.0,
@@ -84,6 +88,8 @@
             grid_height: 8.5,
             top_width: Some(6.5),
             hitbox_width: Some(9),
+            flight_hitbox_width: Some(7.22),
+            flight_hitbox_height: Some(8.50),
             hitbox_height: Some(9),
             engine: Some((
                 thrust_vac: 890.0,

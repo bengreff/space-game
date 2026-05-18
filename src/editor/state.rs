@@ -674,6 +674,12 @@ impl EditorState {
         let mut part = PlacedPart::new(id, def_id.clone(), position);
         part.rotation = self.ghost_rotation;
 
+        // Tanks locked to a fuel type load full of that fuel by default
+        if let Some(ft) = def.and_then(|d| d.tank.as_ref()).and_then(|t| t.fixed_fuel_type) {
+            part.fuel_type = ft;
+            part.fill_fraction = 1.0;
+        }
+
         // First part becomes root
         if self.root_part.is_none() {
             self.root_part = Some(id);
@@ -689,9 +695,16 @@ impl EditorState {
 
             // Link the two parts
             part.mirror_partner = Some(mirror_id);
-            let mut mirror_part = PlacedPart::new(mirror_id, mirror_def_id, mirror_pos);
+            let mut mirror_part = PlacedPart::new(mirror_id, mirror_def_id.clone(), mirror_pos);
             mirror_part.rotation = -self.ghost_rotation;  // Mirror rotation
             mirror_part.mirror_partner = Some(id);
+            if let Some(ft) = part_defs.get(&mirror_def_id)
+                .and_then(|d| d.tank.as_ref())
+                .and_then(|t| t.fixed_fuel_type)
+            {
+                mirror_part.fuel_type = ft;
+                mirror_part.fill_fraction = 1.0;
+            }
 
             self.parts.insert(id, part);
             self.parts.insert(mirror_id, mirror_part);
@@ -1262,35 +1275,20 @@ impl EditorState {
     }
 
     /// Calculate the total vessel cost in dollars (material + fuel).
+    ///
+    /// Sum of per-part Earth-launch resource costs — exactly what the editor
+    /// info panel shows for each part. Tanks contribute their dry-material
+    /// cost plus the fuel currently loaded.
     pub fn calculate_vessel_cost(&self, part_defs: &PartDefinitions) -> f64 {
-        use crate::colony::economy::{material_breakdown, fuel_price_per_kg, LOX_PRICE_PER_KG};
+        use crate::colony::economy::{part_dry_earth_cost, part_filled_fuel_cost};
 
-        let mut total = 0.0;
-
-        for part in self.parts.values() {
-            let Some(def) = part_defs.get(&part.definition_id) else {
-                continue;
-            };
-
-            // Material cost from dry mass
-            let dry_mass_kg = def.mass * 1000.0; // tonnes → kg
-            let breakdown = material_breakdown(def);
-            let masses = breakdown.to_masses(dry_mass_kg);
-            total += masses.earth_cost();
-
-            // Fuel cost from filled tanks
-            if let Some(ref tank) = def.tank {
-                if part.fill_fraction > 0.0 && part.fuel_type != FuelType::Empty {
-                    let (ox_kg, fuel_kg) = tank.propellant_capacity(part.fuel_type);
-                    let filled_ox = ox_kg * part.fill_fraction;
-                    let filled_fuel = fuel_kg * part.fill_fraction;
-                    total += filled_ox * LOX_PRICE_PER_KG;
-                    total += filled_fuel * fuel_price_per_kg(part.fuel_type);
-                }
-            }
-        }
-
-        total
+        self.parts.values()
+            .filter_map(|part| {
+                let def = part_defs.get(&part.definition_id)?;
+                Some(part_dry_earth_cost(def)
+                    + part_filled_fuel_cost(def, part.fuel_type, part.fill_fraction))
+            })
+            .sum()
     }
 
     /// Compute fuel zones among non-decoupled editor parts.

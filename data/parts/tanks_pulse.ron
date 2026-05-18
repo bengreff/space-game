@@ -1,0 +1,99 @@
+// Nuclear Pulse Magazine Definitions
+// Shielded magazines for Orion-style fission pulse units.
+// Each pulse unit is a shaped-charge fission device.
+// Magazine structure is heavy radiation-shielded steel housing the
+// pulse-unit feed system and explosive-decoupling hatches.
+// Dimensions mirror the xenon tank lineup (Tiny/Small/Medium/Large).
+// Fuel type is locked to NuclearPulse — these tanks cannot hold anything else.
+
+(
+    parts: [
+        // ============================================
+        // TINY PULSE MAGAZINE (1x1 grid)
+        // ============================================
+
+        (
+            id: "tank_pulse_tiny",
+            name: "PU-1",
+            description: "Single-unit pulse magazine. A lead-shielded housing for one shaped-charge fission device, with an explosive ejection hatch on the underside. Useful for boost-only test articles or small Orion demonstrators.",
+            category: FuelTanks,
+            mass: 0.024,
+            cost: 15000,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 1.0,
+            tank: Some((
+                grid_area: 0.4,
+                fixed_fuel_type: Some(NuclearPulse),
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // SMALL PULSE MAGAZINE (3x1 grid)
+        // ============================================
+
+        (
+            id: "tank_pulse_small",
+            name: "PU-3",
+            description: "Triple-cell pulse magazine. Three radiation-shielded compartments share a vertical feed track that delivers pulse units to the ejector port one at a time. Sized for short hop-class Orion vessels.",
+            category: FuelTanks,
+            mass: 0.138,
+            cost: 40000,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 1.0,
+            tank: Some((
+                grid_area: 2.3,
+                fixed_fuel_type: Some(NuclearPulse),
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // MEDIUM PULSE MAGAZINE (5x1 grid)
+        // ============================================
+
+        (
+            id: "tank_pulse_medium",
+            name: "PU-5",
+            description: "Standard pulse magazine for mid-mass Orion missions. Five parallel feed tracks with redundant ejector hatches in case of misfire. The structural backbone of an interplanetary Orion stack.",
+            category: FuelTanks,
+            mass: 0.300,
+            cost: 70000,
+            size: Medium,
+            shape: Rectangle,
+            grid_width: 5.0,
+            grid_height: 1.0,
+            tank: Some((
+                grid_area: 5.0,
+                fixed_fuel_type: Some(NuclearPulse),
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // LARGE PULSE MAGAZINE (9x1 grid)
+        // ============================================
+
+        (
+            id: "tank_pulse_large",
+            name: "PU-9",
+            description: "Heavy-class pulse magazine. Nine-cell armored silo with overhead handling cranes that shuttle pulse units between storage cells and the firing track. Required for any sustained Orion burn — most interstellar Orion designs stack many of these.",
+            category: FuelTanks,
+            mass: 0.726,
+            cost: 120000,
+            size: Large,
+            shape: Rectangle,
+            grid_width: 9.0,
+            grid_height: 1.0,
+            tank: Some((
+                grid_area: 12.1,
+                fixed_fuel_type: Some(NuclearPulse),
+            )),
+            resources: {},
+        ),
+    ],
+)

@@ -1,0 +1,168 @@
+// Antimatter Containment Tank Definitions
+// Penning trap arrays for proton-antiproton storage.
+// Magnetic confinement in ultra-high-vacuum chambers cooled to ~4 K.
+// Mass is dominated by superconducting magnets, cryocoolers, and
+// radiation-hardened structural vessel.
+// Dimensions mirror the xenon tank lineup (Tiny/Small/Medium/Large).
+// Fuel type is locked to Antimatter — these tanks cannot hold anything else.
+
+(
+    parts: [
+        // ============================================
+        // TINY ANTIMATTER TANK (1x1 grid)
+        // ============================================
+
+        (
+            id: "tank_am_tiny",
+            name: "AM-1",
+            description: "Miniature Penning trap cell. A single magnetic-bottle chamber suspends a few grams of antiprotons for catalyst doses or research samples. Built-in cryocooler maintains 4 K. Not practical as a primary fuel store — its real role is feeding antimatter-catalyzed fusion engines.",
+            category: FuelTanks,
+            mass: 0.016,
+            cost: 150000,
+            size: Tiny,
+            shape: Rectangle,
+            grid_width: 1.0,
+            grid_height: 1.0,
+            tank: Some((
+                grid_area: 0.4,
+                fixed_fuel_type: Some(Antimatter),
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // SMALL ANTIMATTER TANK (3x1 grid)
+        // ============================================
+
+        (
+            id: "tank_am_small",
+            name: "AM-3",
+            description: "Triple-cell Penning trap array. Three parallel magnetic-bottle chambers share a common cryogenic envelope. Sized for probe-class antimatter-torch missions where every gram of antimatter counts.",
+            category: FuelTanks,
+            mass: 0.092,
+            cost: 400000,
+            size: Small,
+            shape: Rectangle,
+            grid_width: 3.0,
+            grid_height: 1.0,
+            tank: Some((
+                grid_area: 2.3,
+                fixed_fuel_type: Some(Antimatter),
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // MEDIUM ANTIMATTER TANK (5x1 grid)
+        // ============================================
+
+        (
+            id: "tank_am_medium",
+            name: "AM-5",
+            description: "Mid-scale Penning trap array. Five parallel magnetic-bottle cells with redundant containment interlocks survive single-cell quench without releasing the stored antimatter. Standard choice for crewed antimatter-torch vessels.",
+            category: FuelTanks,
+            mass: 0.200,
+            cost: 700000,
+            size: Medium,
+            shape: Rectangle,
+            grid_width: 5.0,
+            grid_height: 1.0,
+            tank: Some((
+                grid_area: 5.0,
+                fixed_fuel_type: Some(Antimatter),
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // LARGE ANTIMATTER TANK (9x1 grid)
+        // ============================================
+
+        (
+            id: "tank_am_large",
+            name: "AM-9",
+            description: "Heavy Penning trap complex. Nine-cell toroidal array surrounds a central cryogenic core. Triple-redundant active confinement and quench-resistant interlocks make this the largest antimatter store rated for combat-class deceleration burns.",
+            category: FuelTanks,
+            mass: 0.484,
+            cost: 1200000,
+            size: Large,
+            shape: Rectangle,
+            grid_width: 9.0,
+            grid_height: 1.0,
+            tank: Some((
+                grid_area: 12.1,
+                fixed_fuel_type: Some(Antimatter),
+            )),
+            resources: {},
+        ),
+
+        // ============================================
+        // ENDGAME ANTIMATTER SPHERES
+        // ============================================
+        // Same outer dimensions as the fusion spheres (20x20, 40x40, 60x60)
+        // but built around an advanced bulk-containment field rather than a
+        // Penning-trap array — they store antimatter at industrial scales,
+        // not gram quantities. Capacity per part matches what the matching
+        // fusion sphere would hold as LH2 (140 kg per sphere grid-square
+        // volume unit). To achieve that with the global Antimatter density
+        // of 5 kg/grid-area, the per-tank `grid_area` is inflated by 28×
+        // relative to the fusion sphere's value — this is a "containment
+        // efficiency" abstraction, not a physical-volume number. Dry mass
+        // is 2× the corresponding fusion sphere to reflect the heavier
+        // reinforcement and active-field generators.
+
+        (
+            id: "tank_am_sphere_s",
+            name: "AM Sphere S",
+            description: "Bulk antimatter storage vessel, small. Advanced topological-confinement field generators around a heavily reinforced 10 m spherical pressure hull replace the Penning-trap arrays of earlier tanks. Holds tonnes of antiprotons rather than grams. Sized for probe-class antimatter-torch missions.",
+            category: FuelTanks,
+            mass: 10.388,
+            cost: 50000000,
+            size: XL,
+            shape: Rectangle,
+            grid_width: 20.0,
+            grid_height: 20.0,
+            tank: Some((
+                grid_area: 18289.6,
+                fixed_fuel_type: Some(Antimatter),
+            )),
+            resources: {},
+        ),
+
+        (
+            id: "tank_am_sphere_m",
+            name: "AM Sphere M",
+            description: "Bulk antimatter storage vessel, medium. A geodesic-reinforced 20 m sphere whose containment field is powered directly by the ship's antimatter reactor — a runaway loop that nonetheless remains the most mass-efficient way to carry hundreds of tonnes of antimatter on a crewed vessel.",
+            category: FuelTanks,
+            mass: 58.768,
+            cost: 120000000,
+            size: XL,
+            shape: Rectangle,
+            grid_width: 40.0,
+            grid_height: 40.0,
+            tank: Some((
+                grid_area: 103460.0,
+                fixed_fuel_type: Some(Antimatter),
+            )),
+            resources: {},
+        ),
+
+        (
+            id: "tank_am_sphere_l",
+            name: "AM Sphere L",
+            description: "Bulk antimatter storage vessel, large. The 30 m capital-class tank carries enough antimatter for a one-way relativistic burn. Twin reinforcement trusses anchor the vessel against the field's structural stress; the active containment draws gigawatts of the ship's reactor output simply to keep the cargo from annihilating with the walls.",
+            category: FuelTanks,
+            mass: 161.944,
+            cost: 300000000,
+            size: XL,
+            shape: Rectangle,
+            grid_width: 60.0,
+            grid_height: 60.0,
+            tank: Some((
+                grid_area: 285104.4,
+                fixed_fuel_type: Some(Antimatter),
+            )),
+            resources: {},
+        ),
+    ],
+)

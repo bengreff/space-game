@@ -21,7 +21,12 @@ import math
 import os
 
 PX = 360  # pixels per grid square
-MAX_SPRITE_PX = 4096  # cap output image size to avoid multi-GB RGBA decode
+# Spheres need high detail because the player zooms in close. Cap at 4096
+# (the per-sprite GPU/cap_sprite_size limit). Sphere PNGs end up 4080×4080.
+# Spheres are exempt from the atlas halve loop (see HIGH_RES_SPRITES in
+# src/render/sprites.rs) so they remain at full source resolution in the
+# atlas; engines/other parts halve normally to keep atlas height bounded.
+MAX_SPRITE_PX = 4096
 
 # ================================================================
 # Palette — white/grey for cryogenic D+He3
